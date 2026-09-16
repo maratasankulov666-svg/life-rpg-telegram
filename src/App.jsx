@@ -360,14 +360,14 @@ function todayStr() { return new Date().toISOString().slice(0, 10); }
 function monthStr() { return new Date().toISOString().slice(0, 7); }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
-// --- Real AI calls (Anthropic API is proxied for artifacts, no key needed) ---
+// --- Real AI calls (proxied through our own /api/ai backend, which holds the key; backend is Gemini, free tier) ---
 async function callClaudeAPI(system, messages) {
   let response;
   try {
-    response = await fetch('https://api.anthropic.com/v1/messages', {
+    response = await fetch('/api/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1000, system, messages }),
+      body: JSON.stringify({ system, messages }),
     });
   } catch (networkErr) {
     throw new Error('NETWORK: ' + (networkErr && networkErr.message ? networkErr.message : 'fetch failed'));
