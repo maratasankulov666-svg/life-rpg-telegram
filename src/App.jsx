@@ -443,6 +443,62 @@ const GOAL_REALITY_SYSTEM_PROMPT = 'Ты — Reality Check Engine в прило�
   + 'pace — краткое описание темпа в 1 фразе, probability — вероятность успеха словами ("высокая"/"средняя"/"низкая"), '
   + 'risks — главный риск в 1 фразе, deadlineDays — предлагаемый срок в днях от сегодня для этого сценария.';
 
+const DAILY_QUEST_ENGINE_SYSTEM_PROMPT = 'Ты — Daily Quest Engine в приложении Life RPG. '
+  + 'По статам персонажа (особенно слабым местам), активным целям и уже существующим квестам придумай от 1 до 3 '
+  + 'НОВЫХ заданий. Главное правило: задания должны быть конкретными и однозначно выполнимыми — НИКАКИХ размытых '
+  + 'фраз вроде "внезапный прилив сил, самое время для важного дела" или "момент фокуса". Формулируй как чёткое '
+  + 'действие с понятным результатом ("прочитать 15 страниц книги по specialty", "сделать 20 отжиманий", '
+  + '"написать план на завтра перед сном"). Если есть активная цель — минимум одно задание должно двигать именно её. '
+  + 'Не повторяй уже существующие активные квесты по смыслу. '
+  + 'Отвечай СТРОГО JSON-массивом без пояснений, markdown или текста до/после. '
+  + 'Формат каждого элемента: {"title": string, "type": "Daily"|"Weekly"|"Monthly", '
+  + '"stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], '
+  + '"secondaryStat": одно из того же списка ИЛИ null (если задание реально качает второй аспект — например бег качает и physical, и discipline)}. '
+  + '"Daily" — выполнимо сегодня за 5-40 минут. "Weekly" — рассчитано на несколько дней в течение недели. '
+  + '"Monthly" — крупная веха на месяц вперёд. Обычно давай 1-2 Daily и не больше одного Weekly/Monthly за раз — не выдумывай лишнее ради количества.';
+
+async function aiDailyQuestSpecs(state) {
+  const activeTitles = state.quests.filter(q => q.status === 'active').map(q => `${q.title} (${q.type})`);
+  const userMsg = `Контекст персонажа:\n${buildContextSummary(state)}\n\n`
+    + `Активные квесты сейчас:\n${activeTitles.length ? activeTitles.map(t => `- ${t}`).join('\n') : '(нет)'}`;
+  const text = await callClaudeAPIWithRetry(DAILY_QUEST_ENGINE_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
+  const specs = parseJsonLoose(text);
+  if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: no quests returned');
+  const validStats = new Set(STATS_DEF.map(s => s.key));
+  const validTypes = new Set(['Daily', 'Weekly', 'Monthly']);
+  return specs
+    .filter(s => s && typeof s.title === 'string' && s.title.trim() && validStats.has(s.stat) && validTypes.has(s.type))
+    .map(s => ({
+      title: s.title.trim(), type: s.type, stat: s.stat,
+      secondaryStat: validStats.has(s.secondaryStat) && s.secondaryStat !== s.stat ? s.secondaryStat : null,
+    }))
+    .slice(0, 3);
+}
+
+const HABIT_SUGGEST_SYSTEM_PROMPT = 'Ты — Habit Engine в приложении Life RPG. По статам персонажа (особенно слабым местам) и '
+  + 'уже существующим привычкам предложи от 2 до 4 НОВЫХ привычек, которых пока нет в списке и которые реально помогут '
+  + 'именно слабым сторонам. Формулируй конкретно и коротко (3-6 слов), без воды. '
+  + 'Отвечай СТРОГО JSON-массивом без пояснений, markdown или текста до/после. '
+  + 'Формат каждого элемента: {"title": string, "stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], '
+  + '"secondaryStat": одно из того же списка ИЛИ null (если привычка реально качает второй аспект)}.';
+
+async function aiHabitSuggestions(state) {
+  const existing = state.habits.map(h => h.title);
+  const userMsg = `Контекст персонажа:\n${buildContextSummary(state)}\n\n`
+    + `Уже существующие привычки:\n${existing.length ? existing.map(t => `- ${t}`).join('\n') : '(нет)'}`;
+  const text = await callClaudeAPIWithRetry(HABIT_SUGGEST_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
+  const specs = parseJsonLoose(text);
+  if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: no habits returned');
+  const validStats = new Set(STATS_DEF.map(s => s.key));
+  return specs
+    .filter(s => s && typeof s.title === 'string' && s.title.trim() && validStats.has(s.stat))
+    .map(s => ({
+      title: s.title.trim(), stat: s.stat,
+      secondaryStat: validStats.has(s.secondaryStat) && s.secondaryStat !== s.stat ? s.secondaryStat : null,
+    }))
+    .slice(0, 4);
+}
+
 function parseJsonObjectLoose(text) {
   const cleaned = text.replace(/```json|```/g, '').trim();
   const start = cleaned.indexOf('{');
@@ -587,6 +643,7 @@ function defaultState() {
     lastBonusDate: null,
     lastMonthlyDate: null,
     lastEventDate: null,
+    lastAIQuestDate: null,
     lastOpenDate: null,
     hasSeenOnboarding: false,
     difficultyMode: 'normal',
@@ -631,6 +688,7 @@ function ensureDailyContent(s) {
         id: uid(), title: t.title, type: 'Bonus', difficulty: 'Normal',
         xp, coins: Math.round(xp * 0.4), stat: t.stat, status: 'active',
         deadline: today + 'T23:59', order: order++, createdAt: Date.now(),
+        source: 'pool', genDate: today,
       });
     });
     ns.lastBonusDate = today;
@@ -944,6 +1002,42 @@ export default function LifeRPG() {
     })();
   }, [state, loaded, storageStatus]);
 
+  // Раз в день: пробуем заменить шаблонные Bonus-квесты на персональные от AI,
+  // основанные на реальных статах/целях персонажа. Если AI недоступен — молча
+  // оставляем то, что уже создал ensureDailyContent (пул готовых заданий),
+  // и просто отметим сегодняшний день как "попытку сделали", чтобы не долбить AI каждый рендер.
+  useEffect(() => {
+    if (!loaded || !state) return;
+    const today = todayStr();
+    if (state.lastAIQuestDate === today) return;
+    (async () => {
+      try {
+        const specs = await aiDailyQuestSpecs(state);
+        setState(prev => {
+          if (prev.lastAIQuestDate === today) return prev; // уже подхватили в другом эффекте/вкладке
+          const keepQuests = prev.quests.filter(q => !(q.status === 'active' && q.source === 'pool' && q.genDate === today && q.type === 'Bonus'));
+          let order = prev.nextOrder || 1;
+          const aiQuests = specs.map(spec => {
+            const [lo, hi] = TYPE_XP_RANGE[spec.type];
+            const xp = Math.round(lo + (hi - lo) * 0.5);
+            return {
+              id: uid(), title: spec.title, type: spec.type, difficulty: 'Normal',
+              xp, coins: Math.round(xp * 0.4), stat: spec.stat, secondaryStat: spec.secondaryStat,
+              status: 'active', deadline: spec.type === 'Daily' ? today + 'T23:59' : null,
+              order: order++, createdAt: Date.now(), source: 'ai', genDate: today,
+            };
+          });
+          return {
+            ...prev, quests: [...keepQuests, ...aiQuests], nextOrder: order, lastAIQuestDate: today,
+            chronicle: pushChronicle(prev.chronicle, 'BONUS_QUESTS', `🧠 ${MENTOR_NAME} подготовил персональные задания на сегодня (${aiQuests.length}).`),
+          };
+        });
+      } catch (e) {
+        setState(prev => prev.lastAIQuestDate === today ? prev : { ...prev, lastAIQuestDate: today });
+      }
+    })();
+  }, [loaded, state && state.lastAIQuestDate]);
+
   function pushChronicle(list, type, text) {
     return [{ id: uid(), ts: Date.now(), type, text }, ...list].slice(0, 300);
   }
@@ -1232,7 +1326,7 @@ export default function LifeRPG() {
     setState(prev => ({
       ...prev,
       habits: [...prev.habits, {
-        id: uid(), title: data.title, stat: data.stat, level: 1,
+        id: uid(), title: data.title, stat: data.stat, secondaryStat: data.secondaryStat || null, level: 1,
         streakCurrent: 0, bestStreak: 0, lastDoneDate: null, createdAt: Date.now(),
       }],
       chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новая привычка: ${data.title}`),
@@ -1258,8 +1352,9 @@ export default function LifeRPG() {
       }
       const stats = { ...prev.stats };
       if (h.stat && stats[h.stat] !== undefined) stats[h.stat] = Math.min(100, stats[h.stat] + 1);
+      if (h.secondaryStat && stats[h.secondaryStat] !== undefined) stats[h.secondaryStat] = Math.min(100, stats[h.secondaryStat] + 1);
       const habits = prev.habits.map(x => x.id === h.id ? { ...x, streakCurrent, bestStreak, level, lastDoneDate: today } : x);
-      chronicle = pushChronicle(chronicle, 'SYSTEM', `Привычка «${h.title}» — день ${streakCurrent} подряд${h.stat && stats[h.stat] !== undefined ? ` (+1 ${STAT_LABEL[h.stat]})` : ''}.`);
+      chronicle = pushChronicle(chronicle, 'SYSTEM', `Привычка «${h.title}» — день ${streakCurrent} подряд${h.stat && stats[h.stat] !== undefined ? ` (+1 ${STAT_LABEL[h.stat]})` : ''}${h.secondaryStat && stats[h.secondaryStat] !== undefined ? ` (+1 ${STAT_LABEL[h.secondaryStat]})` : ''}.`);
       if (leveledHabit) {
         chronicle = pushChronicle(chronicle, 'SYSTEM', `Привычка «${h.title}» выросла до уровня ${level}!`);
       }
@@ -1706,7 +1801,7 @@ export default function LifeRPG() {
               />
             )}
             {subTab.actions === 'habits' && (
-              <HabitsTab habits={state.habits} addHabit={addHabit} completeHabit={completeHabit} deleteHabit={deleteHabit} />
+              <HabitsTab habits={state.habits} addHabit={addHabit} completeHabit={completeHabit} deleteHabit={deleteHabit} aiContextState={state} />
             )}
             {subTab.actions === 'events' && (
               <EventsTab
@@ -2706,16 +2801,62 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
   );
 }
 
-function HabitsTab({ habits, addHabit, completeHabit, deleteHabit }) {
+function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextState }) {
   const [showAdd, setShowAdd] = useState(false);
   const [title, setTitle] = useState('');
   const [stat, setStat] = useState(STATS_DEF[0].key);
+  const [secondaryStat, setSecondaryStat] = useState('');
+  const [suggestions, setSuggestions] = useState(null);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState(null);
   const today = todayStr();
+
+  async function handleSuggest() {
+    setSuggestLoading(true);
+    setSuggestError(null);
+    try {
+      const result = await aiHabitSuggestions(aiContextState);
+      setSuggestions(result);
+    } catch (e) {
+      setSuggestError(friendlyAIError(e));
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
         <Plus size={16} /> Новая привычка
       </button>
+      <button className="lrpg-btn" disabled={suggestLoading} onClick={handleSuggest} style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCardAlt,
+        color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 10, padding: '9px 0', fontWeight: 700, fontSize: 12,
+        opacity: suggestLoading ? 0.6 : 1,
+      }}>
+        <Sparkles size={14} /> {suggestLoading ? 'Мастер думает...' : 'Предложить привычки (AI)'}
+      </button>
+      {suggestError && (
+        <Card><div style={{ fontSize: 11, color: COLORS.textMuted }}>{suggestError}</div></Card>
+      )}
+      {suggestions && suggestions.length > 0 && (
+        <Card>
+          <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 6 }}>Исходя из твоих слабых статов и текущих привычек:</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {suggestions.map((s, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ fontSize: 12 }}>
+                  {s.title} <span style={{ color: COLORS.textMuted }}>({STAT_LABEL[s.stat]}{s.secondaryStat ? ` +${STAT_LABEL[s.secondaryStat]}` : ''})</span>
+                </div>
+                <button className="lrpg-btn" onClick={() => { addHabit({ title: s.title, stat: s.stat, secondaryStat: s.secondaryStat }); setSuggestions(list => list.filter((_, idx) => idx !== i)); }}
+                  style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 6, padding: '5px 10px', fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
+                  Добавить
+                </button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       {showAdd && (
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2729,10 +2870,16 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit }) {
               ))}
             </div>
             <input className="lrpg-input" placeholder="Например: лечь спать до 23:00" value={title} onChange={e => setTitle(e.target.value)} />
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>Основной стат:</div>
             <select className="lrpg-input" value={stat} onChange={e => setStat(e.target.value)}>
               {STATS_DEF.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
             </select>
-            <button className="lrpg-btn" disabled={!title.trim()} onClick={() => { addHabit({ title: title.trim(), stat }); setTitle(''); setShowAdd(false); }}
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>Второй стат (необязательно) — если привычка качает сразу два аспекта:</div>
+            <select className="lrpg-input" value={secondaryStat} onChange={e => setSecondaryStat(e.target.value)}>
+              <option value="">— нет —</option>
+              {STATS_DEF.filter(s => s.key !== stat).map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+            <button className="lrpg-btn" disabled={!title.trim()} onClick={() => { addHabit({ title: title.trim(), stat, secondaryStat: secondaryStat || null }); setTitle(''); setSecondaryStat(''); setShowAdd(false); }}
               style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
               Создать
             </button>
@@ -2747,8 +2894,9 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{h.title}</div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
                   <Tag color={COLORS.violet}>{STAT_LABEL[h.stat]}</Tag>
+                  {h.secondaryStat && STAT_LABEL[h.secondaryStat] && <Tag color={COLORS.teal}>+{STAT_LABEL[h.secondaryStat]}</Tag>}
                   <Tag color={COLORS.gold}>Level {h.level}</Tag>
                 </div>
               </div>
