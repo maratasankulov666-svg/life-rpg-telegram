@@ -1,25 +1,77 @@
 // api/ai.js
 //
 // Vercel Serverless Function. Игра стучится сюда (/api/ai), а функция сама
-// идёт в Google Gemini API с ключом, который хранится только на сервере
-// (переменная окружения GEMINI_API_KEY в настройках проекта на Vercel).
+// пробует несколько бесплатных AI-провайдеров по очереди:
+//   1. Groq — самый быстрый, бесплатный, без карты (GROQ_API_KEY)
+//   2. Google Gemini — запасной вариант, тоже бесплатный (GEMINI_API_KEY)
+// Если оба недоступны — отвечаем ошибкой, а игра сама покажет офлайн-совет
+// (это уже встроено во фронтенд, ничего дополнительно настраивать не надо).
 //
-// Почему Gemini, а не Claude API напрямую: у Gemini есть постоянный
-// бесплатный тариф (не 30-дневный пробный) — для простых задач вроде
-// разбивки цели на квесты или недельной выжимки этого достаточно, и это
-// ничего не будет стоить при личном использовании.
-//
-// Ответ приводится к тому же виду, что раньше отдавал Anthropic API
-// ({ content: [{ type: 'text', text }] }) — поэтому в самой игре (App.jsx)
-// логику разбора ответа менять не пришлось, только адрес запроса.
+// Ответ в любом случае приводится к виду { content: [{ type:'text', text }] } —
+// это формат, который ждёт App.jsx, так что сам фронтенд трогать не нужно.
+async function tryGemini(system, messages) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY не задан');
+  const contents = messages.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
+  }));
+  const model = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents,
+      ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+      generationConfig: { maxOutputTokens: 1000 },
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    const err = new Error(`Gemini HTTP ${response.status}: ${JSON.stringify(data)}`);
+    err.status = response.status;
+    throw err;
+  }
+  const text = (data.candidates || [])
+    .flatMap(c => (c.content && c.content.parts ? c.content.parts : []).map(p => p.text || ''))
+    .join('\n')
+    .trim();
+  if (!text) throw new Error('Gemini вернул пустой ответ');
+  return text;
+}
+async function tryGroq(system, messages) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY не задан');
+  const groqMessages = [
+    ...(system ? [{ role: 'system', content: system }] : []),
+    ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content })),
+  ];
+  const model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, messages: groqMessages, max_tokens: 1000 }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    const err = new Error(`Groq HTTP ${response.status}: ${JSON.stringify(data)}`);
+    err.status = response.status;
+    throw err;
+  }
+  const text = (data.choices || [])
+    .map(c => (c.message && c.message.content) || '')
+    .join('\n')
+    .trim();
+  if (!text) throw new Error('Groq вернул пустой ответ');
+  return text;
+}
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: 'GEMINI_API_KEY не задан на сервере (Vercel → Settings → Environment Variables)' });
     return;
   }
   const { system, messages } = req.body || {};
@@ -27,34 +79,20 @@ export default async function handler(req, res) {
     res.status(400).json({ error: 'Missing "messages" in request body' });
     return;
   }
-  // Anthropic использует роли 'user' | 'assistant', Gemini — 'user' | 'model'.
-  const contents = messages.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
-  }));
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents,
-        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        generationConfig: { maxOutputTokens: 1000 },
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      res.status(response.status).json(data);
+  const providers = [
+    { name: 'groq', run: tryGroq },
+    { name: 'gemini', run: tryGemini },
+  ];
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      const text = await provider.run(system, messages);
+      res.status(200).json({ content: [{ type: 'text', text }], _provider: provider.name });
       return;
+    } catch (e) {
+      errors.push(`${provider.name}: ${e && e.message ? e.message : e}`);
     }
-    const text = (data.candidates || [])
-      .flatMap(c => (c.content && c.content.parts ? c.content.parts : []).map(p => p.text || ''))
-      .join('\n')
-      .trim();
-    res.status(200).json({ content: [{ type: 'text', text }] });
-  } catch (e) {
-    res.status(502).json({ error: 'Upstream request failed', detail: String(e && e.message ? e.message : e) });
   }
+  // Оба провайдера не сработали — фронтенд сам переключится на офлайн-совет.
+  res.status(503).json({ error: 'Все AI-провайдеры недоступны', details: errors });
 }
