@@ -65,6 +65,8 @@ const COLORS = {
   crimsonSoft: 'rgba(194,68,68,0.15)',
   violet: '#8B7CD8',
   violetSoft: 'rgba(139,124,216,0.15)',
+  orange: '#E08A3C',
+  orangeSoft: 'rgba(224,138,60,0.15)',
 };
 
 const STATS_DEF = [
@@ -341,6 +343,59 @@ const DEBT_CATEGORY_OPTIONS = [
 // попадал в общий Cash Flow с правильным ярлыком (раздел 6 ТЗ).
 const GARAGE_TO_FINANCE_CATEGORY = { fuel: 'fuel', service: 'service', tires: 'other_car', fines: 'other_car', other: 'other_car' };
 
+// Раздел 16 ТЗ — типы активов. Cash/Savings/Car считаются автоматически из
+// остальной системы (не дублируются вручную), остальное пользователь добавляет сам.
+const ASSET_TYPES = [
+  { key: 'investments', label: 'Инвестиции', icon: '📈' },
+  { key: 'property', label: 'Недвижимость', icon: '🏠' },
+  { key: 'other', label: 'Другое', icon: '➕' },
+];
+const SAVINGS_GOAL_TYPES = [
+  { key: 'goal', label: 'Обычная цель' },
+  { key: 'emergency', label: 'Финансовая подушка' },
+];
+
+// Раздел 16-18 ТЗ: единый расчёт активов/обязательств/капитала.
+// Cash и Savings НЕ дублируются вручную — берутся из Cash Balance и целей накоплений,
+// чтобы деньги не считались дважды при переносе Cash -> Savings.
+function computeNetWorth(state) {
+  const f = state.finance;
+  const savingsTotal = f.savingsGoals.reduce((s, g) => s + (g.saved || 0), 0);
+  const carValue = state.garage?.currentValue || 0;
+  const customAssets = f.assets || [];
+  const customTotal = customAssets.reduce((s, a) => s + (Number(a.value) || 0), 0);
+  const assetBreakdown = [
+    { key: 'cash', label: 'Наличные', icon: '💵', value: f.cashBalance, liquid: true, auto: true },
+    { key: 'savings', label: 'Накопления', icon: '🏦', value: savingsTotal, liquid: true, auto: true },
+    ...(carValue > 0 ? [{ key: 'car', label: state.garage?.name || 'Машина', icon: '🚗', value: carValue, liquid: false, auto: true }] : []),
+    ...customAssets.map(a => ({ key: a.id, label: a.name, icon: (ASSET_TYPES.find(t => t.key === a.type) || {}).icon || '➕', value: Number(a.value) || 0, liquid: !!a.liquid, auto: false, id: a.id })),
+  ];
+  const totalAssets = f.cashBalance + savingsTotal + carValue + customTotal;
+  const totalLiabilities = f.debts.reduce((s, d) => s + Math.max(0, d.remaining || 0), 0);
+  const netWorth = totalAssets - totalLiabilities;
+  return { assetBreakdown, totalAssets, totalLiabilities, netWorth };
+}
+
+// Раздел 13-15 ТЗ: показатели финансового здоровья, никогда по одному изолированному числу.
+function financialHealth(state) {
+  const fm = financeMonthSummary(state.finance);
+  const th = state.finance.debtLoadThresholds || { low: 20, medium: 36, high: 50 };
+  const debtLoad = fm.income > 0 ? (fm.debtPay / fm.income) * 100 : 0;
+  const savingsRate = fm.income > 0 ? (fm.savingsContrib / fm.income) * 100 : 0;
+  const emergencySavings = state.finance.savingsGoals.filter(g => g.type === 'emergency').reduce((s, g) => s + (g.saved || 0), 0);
+  const emergencyMonths = fm.essentialExpenses > 0 ? emergencySavings / fm.essentialExpenses : (emergencySavings > 0 ? Infinity : 0);
+  const plan = state.finance.budgetPlan || {};
+  const plannedTotal = Object.values(plan).reduce((s, v) => s + (Number(v) || 0), 0);
+  const budgetHealth = plannedTotal > 0 ? Math.max(0, Math.min(100, 100 - Math.max(0, (fm.expenses - plannedTotal) / plannedTotal * 100))) : null;
+  let debtZone;
+  if (fm.income <= 0 || fm.debtPay <= 0) debtZone = { label: 'нет данных', color: COLORS.textMuted, emoji: '⚪' };
+  else if (debtLoad < th.low) debtZone = { label: 'низкая', color: COLORS.teal, emoji: '🟢' };
+  else if (debtLoad < th.medium) debtZone = { label: 'умеренная', color: COLORS.gold, emoji: '🟡' };
+  else if (debtLoad < th.high) debtZone = { label: 'высокая', color: COLORS.orange, emoji: '🟠' };
+  else debtZone = { label: 'очень высокая', color: COLORS.crimson, emoji: '🔴' };
+  return { ...fm, debtLoad, savingsRate, emergencySavings, emergencyMonths, plannedTotal, budgetHealth, debtZone };
+}
+
 function monthKeyOf(dateStr) { return (dateStr || todayStr()).slice(0, 7); }
 
 // Единый расчёт месячных финансовых итогов из транзакций (раздел 4 ТЗ:
@@ -447,7 +502,12 @@ function migrateFinance(rawFinance) {
   if (typeof f.cashBalance !== 'number') f.cashBalance = 0;
   if (!f.mode) f.mode = 'simple';
   if (!f.emergencyFundGoalMonths) f.emergencyFundGoalMonths = 3;
+  if (!Array.isArray(f.assets)) f.assets = [];
+  if (!Array.isArray(f.netWorthHistory)) f.netWorthHistory = [];
+  if (!f.budgetPlan || typeof f.budgetPlan !== 'object') f.budgetPlan = {};
+  if (!f.debtLoadThresholds) f.debtLoadThresholds = { low: 20, medium: 36, high: 50 };
   f.debts = (Array.isArray(f.debts) ? f.debts : []).map(d => ({ ...d, history: Array.isArray(d.history) ? d.history : [], category: d.category || 'debt_credit' }));
+  f.savingsGoals = (Array.isArray(f.savingsGoals) ? f.savingsGoals : []).map(g => ({ ...g, type: g.type || 'goal' }));
   return f;
 }
 
@@ -758,6 +818,10 @@ function defaultState() {
       incomeSources: [], // {id,name,type,fixed,amount,frequency} — раздел 5 ТЗ
       debts: [],
       savingsGoals: [],
+      assets: [], // {id,name,type,value,liquid} — раздел 16 ТЗ, кастомные активы сверх Cash/Savings/Car
+      netWorthHistory: [], // {month, netWorth} — раздел 18 ТЗ
+      budgetPlan: {}, // {categoryKey: plannedAmount} — раздел 12 ТЗ
+      debtLoadThresholds: { low: 20, medium: 36, high: 50 }, // раздел 14 ТЗ
       strategy: 'avalanche',
       taxi: { dailyTarget: 10000, orders: [] },
       emergencyFundGoalMonths: 3,
@@ -766,6 +830,7 @@ function defaultState() {
       photo: null,
       name: 'Моя машина',
       carDebtId: null,
+      currentValue: 0, // ориентировочная рыночная стоимость машины — раздел 16 ТЗ, для Net Worth
       expenses: [],
     },
     body: {
@@ -1183,6 +1248,20 @@ export default function LifeRPG() {
       }
     })();
   }, [loaded, state && state.lastAIQuestDate]);
+
+  // Раздел 18 ТЗ: раз в месяц (при первом заходе в новом месяце) фиксируем снимок Net Worth в историю.
+  useEffect(() => {
+    if (!loaded || !state) return;
+    const mk = monthStr();
+    const hist = state.finance.netWorthHistory || [];
+    if (hist.some(h => h.month === mk)) return;
+    const { netWorth } = computeNetWorth(state);
+    setState(prev => {
+      const prevHist = prev.finance.netWorthHistory || [];
+      if (prevHist.some(h => h.month === mk)) return prev;
+      return { ...prev, finance: { ...prev.finance, netWorthHistory: [...prevHist, { month: mk, netWorth, date: todayStr() }] } };
+    });
+  }, [loaded, state && monthStr()]);
 
   function pushChronicle(list, type, text) {
     return [{ id: uid(), ts: Date.now(), type, text }, ...list].slice(0, 300);
@@ -1640,7 +1719,7 @@ export default function LifeRPG() {
   function addSavingsGoal(data) {
     setState(prev => ({
       ...prev,
-      finance: { ...prev.finance, savingsGoals: [...prev.finance.savingsGoals, { id: uid(), title: data.title, target: data.target, saved: 0, deadline: data.deadline || null, createdAt: Date.now() }] },
+      finance: { ...prev.finance, savingsGoals: [...prev.finance.savingsGoals, { id: uid(), title: data.title, target: data.target, saved: 0, deadline: data.deadline || null, type: data.type || 'goal', createdAt: Date.now() }] },
       chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новая финансовая цель: ${data.title}`),
     }));
   }
@@ -1724,6 +1803,52 @@ export default function LifeRPG() {
 
   function setGarageCarDebtId(id) {
     setState(prev => ({ ...prev, garage: { ...prev.garage, carDebtId: id || null } }));
+  }
+
+  function setGarageCurrentValue(value) {
+    setState(prev => ({ ...prev, garage: { ...prev.garage, currentValue: Math.max(0, Number(value) || 0) } }));
+  }
+
+  // Раздел 16 ТЗ: кастомные активы (инвестиции, недвижимость, другое) — Cash/Savings/Car считаются автоматически.
+  function addCustomAsset(data) {
+    setState(prev => ({
+      ...prev,
+      finance: { ...prev.finance, assets: [...prev.finance.assets, { id: uid(), name: (data.name || '').trim() || 'Актив', type: data.type || 'other', value: Number(data.value) || 0, liquid: !!data.liquid, date: todayStr() }] },
+    }));
+  }
+
+  function deleteCustomAsset(id) {
+    setState(prev => ({ ...prev, finance: { ...prev.finance, assets: prev.finance.assets.filter(a => a.id !== id) } }));
+  }
+
+  // Раздел 18 ТЗ: история Net Worth по месяцам — одна запись на месяц, перезаписывается при повторном вызове в том же месяце.
+  function recordNetWorthSnapshot(netWorth) {
+    setState(prev => {
+      const mk = monthStr();
+      const hist = prev.finance.netWorthHistory || [];
+      const existing = hist.findIndex(h => h.month === mk);
+      const entry = { month: mk, netWorth, date: todayStr() };
+      const netWorthHistory = existing >= 0 ? hist.map((h, i) => i === existing ? entry : h) : [...hist, entry];
+      return { ...prev, finance: { ...prev.finance, netWorthHistory } };
+    });
+  }
+
+  // Раздел 12 ТЗ: план бюджета по категориям.
+  function setBudgetPlanItem(category, amount) {
+    setState(prev => ({ ...prev, finance: { ...prev.finance, budgetPlan: { ...prev.finance.budgetPlan, [category]: Math.max(0, Number(amount) || 0) } } }));
+  }
+
+  function removeBudgetPlanItem(category) {
+    setState(prev => {
+      const budgetPlan = { ...prev.finance.budgetPlan };
+      delete budgetPlan[category];
+      return { ...prev, finance: { ...prev.finance, budgetPlan } };
+    });
+  }
+
+  // Раздел 14 ТЗ: пороги Debt Load должны быть настраиваемыми.
+  function setDebtLoadThresholds(thresholds) {
+    setState(prev => ({ ...prev, finance: { ...prev.finance, debtLoadThresholds: { ...prev.finance.debtLoadThresholds, ...thresholds } } }));
   }
 
   function addGarageExpense(title, amount, category) {
@@ -2063,12 +2188,14 @@ export default function LifeRPG() {
 
         {tab === 'finance' && (
           <FinanceTab
-            finance={state.finance} setFinanceMode={setFinanceMode} addTransaction={addTransaction}
+            finance={state.finance} garage={state.garage} setFinanceMode={setFinanceMode} addTransaction={addTransaction}
             deleteTransaction={deleteTransaction} addIncomeSource={addIncomeSource} deleteIncomeSource={deleteIncomeSource}
             setDebtStrategy={setDebtStrategy} addDebt={addDebt}
             payDebt={payDebt} deleteDebt={deleteDebt} addSavingsGoal={addSavingsGoal}
             contributeSaving={contributeSaving} deleteSavingsGoal={deleteSavingsGoal}
             setTaxiTarget={setTaxiTarget} logOrder={logOrder} deleteOrder={deleteOrder}
+            addCustomAsset={addCustomAsset} deleteCustomAsset={deleteCustomAsset}
+            setBudgetPlanItem={setBudgetPlanItem} removeBudgetPlanItem={removeBudgetPlanItem} setDebtLoadThresholds={setDebtLoadThresholds}
           />
         )}
 
@@ -2076,6 +2203,7 @@ export default function LifeRPG() {
           <GarageTab
             garage={state.garage} debts={state.finance.debts} taxiOrders={state.finance.taxi.orders}
             setGaragePhoto={setGaragePhoto} setGarageName={setGarageName} setGarageCarDebtId={setGarageCarDebtId}
+            setGarageCurrentValue={setGarageCurrentValue}
             addGarageExpense={addGarageExpense} deleteGarageExpense={deleteGarageExpense}
           />
         )}
@@ -3287,12 +3415,14 @@ function AddDebtForm({ onSubmit, onCancel }) {
   );
 }
 
-function FinanceTab({ finance, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, logOrder, deleteOrder }) {
+function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, logOrder, deleteOrder, addCustomAsset, deleteCustomAsset, setBudgetPlanItem, removeBudgetPlanItem, setDebtLoadThresholds }) {
   const [showAddTx, setShowAddTx] = useState(false);
   const [txType, setTxType] = useState('expense');
   const [showAddIncomeSource, setShowAddIncomeSource] = useState(false);
   const [showAddDebt, setShowAddDebt] = useState(false);
   const [showAddSaving, setShowAddSaving] = useState(false);
+  const [showAddAsset, setShowAddAsset] = useState(false);
+  const [showBudgetEdit, setShowBudgetEdit] = useState(false);
   const [payAmounts, setPayAmounts] = useState({});
   const [saveAmounts, setSaveAmounts] = useState({});
   const [expandedSchedule, setExpandedSchedule] = useState(null);
@@ -3313,7 +3443,11 @@ function FinanceTab({ finance, setFinanceMode, addTransaction, deleteTransaction
   });
 
   const fm = financeMonthSummary(finance);
+  const health = financialHealth({ finance, garage });
+  const { assetBreakdown, totalAssets, totalLiabilities, netWorth } = computeNetWorth({ finance, garage });
   const thisMonthTx = finance.transactions.filter(t => monthKeyOf(t.date) === fm.monthKey).slice().sort((a, b) => (b.date + b.ts) > (a.date + a.ts) ? 1 : -1);
+  const actualByCategory = {};
+  thisMonthTx.filter(t => t.type === 'expense').forEach(t => { actualByCategory[t.category] = (actualByCategory[t.category] || 0) + t.amount; });
   const sortedDebts = sortDebts(finance.debts, finance.strategy);
   const isAdvanced = finance.mode === 'advanced';
   const txCategoryOptions = txType === 'income' ? INCOME_SOURCE_TYPES.map(t => ({ key: t.key, label: t.label })) : EXPENSE_CATEGORIES.filter(c => c.group !== 'fin');
@@ -3358,6 +3492,143 @@ function FinanceTab({ finance, setFinanceMode, addTransaction, deleteTransaction
           <div style={{ fontSize: 11, marginTop: 4, color: fm.cashFlow >= 0 ? COLORS.teal : COLORS.crimson, fontWeight: 700 }}>
             {fm.cashFlow >= 0 ? 'SURPLUS — профицит' : 'DEFICIT — дефицит'}
           </div>
+        </Card>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <HeartPulse size={15} color={COLORS.teal} /> Финансовое здоровье
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <Card style={{ padding: 10 }}>
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>💳 Долговая нагрузка</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: health.debtZone.color, marginTop: 2 }}>{health.income > 0 ? `${health.debtLoad.toFixed(1)}%` : '—'}</div>
+            <div style={{ fontSize: 10, color: health.debtZone.color, marginTop: 2 }}>{health.debtZone.emoji} {health.debtZone.label}</div>
+            {isAdvanced && (
+              <div style={{ display: 'flex', gap: 3, marginTop: 6 }}>
+                {[['low', 'до'], ['medium', 'до'], ['high', 'до']].map(([k]) => (
+                  <input key={k} className="lrpg-input" type="number" min={0} max={100} defaultValue={finance.debtLoadThresholds[k]}
+                    onBlur={e => setDebtLoadThresholds({ [k]: Number(e.target.value) || 0 })}
+                    style={{ width: 40, fontSize: 10, padding: '3px 4px' }} title={`Порог "${k}", %`} />
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card style={{ padding: 10 }}>
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>📈 Норма накоплений</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.gold, marginTop: 2 }}>{health.income > 0 ? `${health.savingsRate.toFixed(1)}%` : '—'}</div>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>от дохода за месяц</div>
+          </Card>
+          <Card style={{ padding: 10 }}>
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>🛡️ Финансовая подушка</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.teal, marginTop: 2 }}>
+              {Number.isFinite(health.emergencyMonths) ? health.emergencyMonths.toFixed(2) : '∞'} / {finance.emergencyFundGoalMonths} мес.
+            </div>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>покрытие обязательных расходов</div>
+          </Card>
+          <Card style={{ padding: 10 }}>
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>📊 Здоровье бюджета</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: health.budgetHealth === null ? COLORS.textMuted : (health.budgetHealth >= 80 ? COLORS.teal : health.budgetHealth >= 50 ? COLORS.gold : COLORS.crimson), marginTop: 2 }}>
+              {health.budgetHealth === null ? '—' : `${Math.round(health.budgetHealth)}%`}
+            </div>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{health.budgetHealth === null ? 'план не задан' : 'факт vs план'}</div>
+          </Card>
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Gem size={15} color={COLORS.violet} /> Активы и капитал
+        </div>
+        <Card>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700 }}>
+            <span>NET WORTH</span>
+            <span style={{ color: netWorth >= 0 ? COLORS.teal : COLORS.crimson }}>{netWorth}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: COLORS.textMuted, marginTop: 8 }}>
+            <span>Активы</span><span style={{ color: COLORS.teal }}>{totalAssets}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: COLORS.textMuted, marginTop: 3 }}>
+            <span>Обязательства</span><span style={{ color: COLORS.crimson }}>{totalLiabilities}</span>
+          </div>
+          <div style={{ borderTop: `1px dashed ${COLORS.border}`, margin: '8px 0' }} />
+          {assetBreakdown.map(a => (
+            <div key={a.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginTop: 4 }}>
+              <span>{a.icon} {a.label}{!a.auto && <button className="lrpg-btn" onClick={() => deleteCustomAsset(a.id)} style={{ background: 'none', marginLeft: 6 }}><Trash2 size={11} color={COLORS.textMuted} /></button>}</span>
+              <span>{a.value}</span>
+            </div>
+          ))}
+          {garage.currentValue === 0 && (
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 8 }}>Укажи стоимость машины во вкладке «Гараж», чтобы она попала в Net Worth.</div>
+          )}
+          {finance.netWorthHistory.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto' }}>
+              {finance.netWorthHistory.slice(-6).map(h => (
+                <div key={h.month} style={{ fontSize: 10, textAlign: 'center', flexShrink: 0, background: COLORS.bgCardAlt, borderRadius: 6, padding: '4px 8px' }}>
+                  <div style={{ color: COLORS.textMuted }}>{h.month.slice(5)}</div>
+                  <div style={{ fontWeight: 700, color: h.netWorth >= 0 ? COLORS.teal : COLORS.crimson }}>{h.netWorth}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="lrpg-btn" onClick={() => setShowAddAsset(v => !v)} style={{ marginTop: 10, background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить актив</button>
+          {showAddAsset && (
+            <div style={{ marginTop: 8 }}>
+              <AddInlineForm
+                fields={[
+                  { key: 'name', placeholder: 'Название (напр. «Депозит в банке»)', required: true },
+                  { key: 'type', type: 'select', options: ASSET_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'investments' },
+                  { key: 'value', placeholder: 'Стоимость', type: 'number', default: 0, required: true },
+                  { key: 'liquid', type: 'checkbox', label: 'Ликвидный (легко обналичить)' },
+                ]}
+                onSubmit={v => { addCustomAsset(v); setShowAddAsset(false); }}
+              />
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} color={COLORS.gold} /> Бюджет месяца</span>
+          <button className="lrpg-btn" onClick={() => setShowBudgetEdit(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700 }}>{showBudgetEdit ? 'Готово' : 'Настроить'}</button>
+        </div>
+        <Card>
+          {Object.keys(finance.budgetPlan).length === 0 && !showBudgetEdit && (
+            <div style={{ fontSize: 12, color: COLORS.textMuted }}>План не задан. Нажми «Настроить», чтобы задать план по категориям.</div>
+          )}
+          {EXPENSE_CATEGORIES.filter(c => c.group !== 'fin' && c.group !== 'debt').map(c => {
+            const planned = finance.budgetPlan[c.key];
+            const actual = actualByCategory[c.key] || 0;
+            if (!showBudgetEdit && planned === undefined) return null;
+            const diff = (planned || 0) - actual;
+            return (
+              <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 11, flex: 1 }}>{c.label}</span>
+                {showBudgetEdit ? (
+                  <input className="lrpg-input" type="number" min={0} placeholder="План" value={planned || ''}
+                    onChange={e => e.target.value ? setBudgetPlanItem(c.key, e.target.value) : removeBudgetPlanItem(c.key)}
+                    style={{ width: 90, fontSize: 11, padding: '4px 6px' }} />
+                ) : (
+                  <>
+                    <span style={{ fontSize: 11, color: COLORS.textMuted, width: 60, textAlign: 'right' }}>{planned}</span>
+                    <span style={{ fontSize: 11, width: 60, textAlign: 'right' }}>{actual}</span>
+                    <span style={{ fontSize: 11, width: 60, textAlign: 'right', color: diff >= 0 ? COLORS.teal : COLORS.crimson }}>{diff}</span>
+                  </>
+                )}
+              </div>
+            );
+          })}
+          {!showBudgetEdit && Object.keys(finance.budgetPlan).length > 0 && (
+            <div style={{ display: 'flex', gap: 8, fontSize: 9, color: COLORS.textMuted, justifyContent: 'flex-end', marginTop: 4 }}>
+              <span style={{ width: 60, textAlign: 'right' }}>План</span><span style={{ width: 60, textAlign: 'right' }}>Факт</span><span style={{ width: 60, textAlign: 'right' }}>Разница</span>
+            </div>
+          )}
+          {health.plannedTotal > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 12, fontWeight: 700 }}>
+              <span>Total Planned</span><span>{health.plannedTotal}</span>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -3621,9 +3892,18 @@ function FinanceTab({ finance, setFinanceMode, addTransaction, deleteTransaction
             fields={[
               { key: 'title', placeholder: 'На что копим', required: true },
               { key: 'target', placeholder: 'Целевая сумма', type: 'number', default: 0 },
+              { key: 'type', type: 'select', options: SAVINGS_GOAL_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'goal' },
             ]}
-            onSubmit={v => { addSavingsGoal({ title: v.title.trim(), target: Number(v.target) || 0 }); setShowAddSaving(false); }}
+            onSubmit={v => { addSavingsGoal({ title: v.title.trim(), target: Number(v.target) || 0, type: v.type }); setShowAddSaving(false); }}
           />
+        )}
+        {health.emergencySavings > 0 && (
+          <Card style={{ marginTop: 8, border: `1px solid ${COLORS.teal}55` }}>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>🛡️ Emergency Fund coverage</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.teal, marginTop: 2 }}>
+              {Number.isFinite(health.emergencyMonths) ? health.emergencyMonths.toFixed(2) : '∞'} / {finance.emergencyFundGoalMonths} мес. обязательных расходов
+            </div>
+          </Card>
         )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
           {finance.savingsGoals.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Финансовых целей пока нет.</div></Card>}
@@ -3632,7 +3912,7 @@ function FinanceTab({ finance, setFinanceMode, addTransaction, deleteTransaction
             return (
               <Card key={g.id}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{g.title} {done && '✅'}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{g.type === 'emergency' ? '🛡️ ' : ''}{g.title} {done && '✅'}</div>
                   <button className="lrpg-btn" onClick={() => deleteSavingsGoal(g.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -4140,7 +4420,7 @@ function resizeImageFile(file, maxDim = 700, quality = 0.8) {
   });
 }
 
-function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, setGarageCarDebtId, addGarageExpense, deleteGarageExpense }) {
+function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, setGarageCarDebtId, setGarageCurrentValue, addGarageExpense, deleteGarageExpense }) {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [expTitle, setExpTitle] = useState('');
   const [expAmount, setExpAmount] = useState('');
@@ -4215,6 +4495,12 @@ function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, s
           {debts.map(d => <option key={d.id} value={d.id}>{d.title}{d.remaining <= 0 ? ' (погашен)' : ''}</option>)}
         </select>
         {debts.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6 }}>Долгов пока нет — добавь автокредит во вкладке «Финансы», если он есть.</div>}
+      </Card>
+
+      <Card>
+        <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>Ориентировочная рыночная стоимость машины (для Net Worth)</div>
+        <input className="lrpg-input" type="number" min={0} defaultValue={garage.currentValue || ''} placeholder="напр. 12000000"
+          onBlur={e => setGarageCurrentValue(e.target.value)} />
       </Card>
 
       <div>
