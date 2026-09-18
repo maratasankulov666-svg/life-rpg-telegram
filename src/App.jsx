@@ -47,7 +47,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '11.0';
+const APP_VERSION = '12.0';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -92,6 +92,14 @@ const TYPE_COLOR = {
   Bonus: COLORS.gold, Monthly: COLORS.crimson, Goal: COLORS.gold,
   Event: COLORS.violet, Recovery: COLORS.teal, Boss: COLORS.crimson,
 };
+
+// Группировка активных квестов в списке — чтобы дневные дела не шли вперемешку
+// с месячными вехами (иначе список нечитаем, когда там всё сразу).
+const QUEST_GROUPS = [
+  { key: 'daily', label: 'Сегодня / рутина', types: ['Routine', 'Daily', 'Bonus'], color: COLORS.violet },
+  { key: 'weekly', label: 'На этой неделе', types: ['Weekly', 'Event'], color: COLORS.teal },
+  { key: 'monthly', label: 'Месяц и крупнее', types: ['Monthly', 'Goal', 'Boss', 'Recovery'], color: COLORS.crimson },
+];
 
 const TYPE_XP_RANGE = {
   Routine: [5, 20], Daily: [30, 100], Weekly: [60, 150],
@@ -292,6 +300,65 @@ const HABIT_LIBRARY = [
   { title: 'Записывать траты', stat: 'finance' },
 ];
 
+// Единые категории расходов для Finance (раздел 3 ТЗ) — сгруппированы, как в разделе.
+const EXPENSE_CATEGORIES = [
+  { key: 'housing', label: 'Жильё', group: 'essential' },
+  { key: 'utilities', label: 'Коммунальные услуги', group: 'essential' },
+  { key: 'phone', label: 'Связь', group: 'essential' },
+  { key: 'internet', label: 'Интернет', group: 'essential' },
+  { key: 'food', label: 'Еда', group: 'life' },
+  { key: 'transport', label: 'Транспорт', group: 'life' },
+  { key: 'clothes', label: 'Одежда', group: 'life' },
+  { key: 'entertainment', label: 'Развлечения', group: 'life' },
+  { key: 'other_life', label: 'Прочее', group: 'life' },
+  { key: 'fuel', label: 'Бензин', group: 'car' },
+  { key: 'carwash', label: 'Мойка', group: 'car' },
+  { key: 'repair', label: 'Ремонт', group: 'car' },
+  { key: 'service', label: 'Обслуживание', group: 'car' },
+  { key: 'insurance', label: 'Страховка', group: 'car' },
+  { key: 'other_car', label: 'Прочее (машина)', group: 'car' },
+  { key: 'debt_credit', label: 'Кредит', group: 'debt' },
+  { key: 'debt_micro', label: 'Микрозайм', group: 'debt' },
+  { key: 'debt_installment', label: 'Рассрочка', group: 'debt' },
+  { key: 'savings', label: 'Накопления', group: 'fin' },
+  { key: 'investments', label: 'Инвестиции', group: 'fin' },
+];
+const EXPENSE_GROUP_LABELS = { essential: '🏠 Обязательные', life: '🍔 Жизнь', car: '🚗 Машина', debt: '💳 Долги', fin: '💰 Финансовые' };
+// Источники дохода (раздел 5 ТЗ)
+const INCOME_SOURCE_TYPES = [
+  { key: 'salary', label: 'Основная работа', icon: '💼' },
+  { key: 'taxi', label: 'Такси', icon: '🚕' },
+  { key: 'youtube', label: 'YouTube', icon: '▶️' },
+  { key: 'business', label: 'Бизнес', icon: '💼' },
+  { key: 'other', label: 'Другое', icon: '➕' },
+];
+const DEBT_CATEGORY_OPTIONS = [
+  { key: 'debt_credit', label: 'Кредит' },
+  { key: 'debt_micro', label: 'Микрозайм' },
+  { key: 'debt_installment', label: 'Рассрочка' },
+];
+// Карта категорий Гаража -> единая категория Finance, чтобы расход машины
+// попадал в общий Cash Flow с правильным ярлыком (раздел 6 ТЗ).
+const GARAGE_TO_FINANCE_CATEGORY = { fuel: 'fuel', service: 'service', tires: 'other_car', fines: 'other_car', other: 'other_car' };
+
+function monthKeyOf(dateStr) { return (dateStr || todayStr()).slice(0, 7); }
+
+// Единый расчёт месячных финансовых итогов из транзакций (раздел 4 ТЗ:
+// нельзя суммировать за всё время, только за конкретный месяц).
+function financeMonthSummary(finance, monthKey) {
+  const mk = monthKey || monthStr();
+  const txs = (finance.transactions || []).filter(t => monthKeyOf(t.date) === mk);
+  const isDebtCat = c => c === 'debt_credit' || c === 'debt_micro' || c === 'debt_installment';
+  const isFinCat = c => c === 'savings' || c === 'investments';
+  const income = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const debtPay = txs.filter(t => t.type === 'expense' && (t.source === 'debt' || isDebtCat(t.category))).reduce((s, t) => s + t.amount, 0);
+  const savingsContrib = txs.filter(t => t.type === 'expense' && (t.source === 'savings' || isFinCat(t.category))).reduce((s, t) => s + t.amount, 0);
+  const expenses = txs.filter(t => t.type === 'expense' && !isDebtCat(t.category) && !isFinCat(t.category)).reduce((s, t) => s + t.amount, 0);
+  const essentialExpenses = txs.filter(t => t.type === 'expense' && t.essential && !isDebtCat(t.category) && !isFinCat(t.category)).reduce((s, t) => s + t.amount, 0);
+  const cashFlow = income - expenses - debtPay - savingsContrib;
+  return { income, expenses, debtPay, savingsContrib, essentialExpenses, cashFlow, monthKey: mk };
+}
+
 const GARAGE_EXPENSE_CATEGORIES = [
   { key: 'fuel', label: 'Топливо/газ', icon: Fuel },
   { key: 'service', label: 'Масло/ТО', icon: Wrench },
@@ -354,6 +421,34 @@ function buildAmortizationSchedule(principal, annualRatePct, months) {
     rows.push({ month: m, payment, interest, principalPart, balance });
   }
   return rows;
+}
+
+// Переносит старую плоскую финансовую структуру (monthlyIncome + expenses без дат)
+// в новую систему транзакций, ничего не ломая для пользователя (раздел "ВАЖНО" ТЗ v12).
+function migrateFinance(rawFinance) {
+  const f = { ...(rawFinance || {}) };
+  const alreadyMigrated = Array.isArray(f.transactions);
+  if (!alreadyMigrated) {
+    const today = todayStr();
+    const transactions = [];
+    const legacyIncome = typeof f.monthlyIncome === 'number' ? f.monthlyIncome : 0;
+    if (legacyIncome > 0) {
+      transactions.push({ id: uid(), type: 'income', title: 'Основной доход (перенесено)', amount: legacyIncome, category: 'salary', date: today, recurring: true, essential: false, source: 'migration', ts: Date.now() });
+    }
+    (Array.isArray(f.expenses) ? f.expenses : []).forEach(e => {
+      transactions.push({ id: uid(), type: 'expense', title: e.title, amount: e.amount, category: 'other_life', date: today, recurring: true, essential: false, source: 'migration', ts: Date.now() });
+    });
+    f.transactions = transactions;
+    f.incomeSources = legacyIncome > 0 ? [{ id: uid(), name: 'Основная работа', type: 'salary', fixed: true, amount: legacyIncome, frequency: 'monthly' }] : [];
+    f.cashBalance = 0;
+  }
+  if (!Array.isArray(f.incomeSources)) f.incomeSources = [];
+  if (!Array.isArray(f.transactions)) f.transactions = [];
+  if (typeof f.cashBalance !== 'number') f.cashBalance = 0;
+  if (!f.mode) f.mode = 'simple';
+  if (!f.emergencyFundGoalMonths) f.emergencyFundGoalMonths = 3;
+  f.debts = (Array.isArray(f.debts) ? f.debts : []).map(d => ({ ...d, history: Array.isArray(d.history) ? d.history : [], category: d.category || 'debt_credit' }));
+  return f;
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -430,6 +525,13 @@ const MENTOR_SYSTEM_PROMPT = `Тебя зовут ${MENTOR_NAME}, ${MENTOR_TITLE
 
 const GOAL_ENGINE_SYSTEM_PROMPT = 'Ты — Goal Engine в приложении Life RPG. Пользователь даёт крупную жизненную цель, '
   + 'а ты разбиваешь её на 3-6 конкретных выполнимых квестов-шагов с учётом срока цели. '
+  + 'КРИТИЧЕСКИ ВАЖНО про логику сроков: шаги идут по возрастанию dueInDays, и тип должен соответствовать сроку — '
+  + 'если dueInDays до 14 дней, тип "Weekly"; если больше 14 дней, тип "Monthly"; последний шаг ближе к дедлайну цели '
+  + 'обычно "Goal". НЕЛЬЗЯ давать простому короткому действию (например "сделать 10 отжиманий", "выпить стакан воды") '
+  + 'срок в 1 месяц — это разовые квесты-шаги на пути к цели, а не повторяющиеся привычки. Если шаг по смыслу должен '
+  + 'повторяться каждый день (тренировка, чтение, диета) — сформулируй его как ОДНОРАЗОВОЕ действие вида "составить и '
+  + 'начать план тренировок 3 раза в неделю" или "пройти первую неделю по плану питания", а не как саму ежедневную '
+  + 'повторяющуюся активность — регулярные действия относятся к привычкам (Habits), а не к квестам цели. '
   + 'Отвечай СТРОГО JSON-массивом, без пояснений, markdown или текста до/после. '
   + 'Формат каждого элемента: {"title": string, "type": "Weekly"|"Monthly"|"Goal", "difficulty": "Easy"|"Normal"|"Hard", '
   + '"stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], "dueInDays": number}. '
@@ -549,6 +651,39 @@ function ruleBasedGoalSplit(goal) {
   }));
 }
 
+// Защитная нормализация шагов цели — не доверяем AI на 100%, даже если промпт
+// просит логичные сроки. Гарантируем: сроки строго возрастают, не превышают
+// срок самой цели, и тип квеста (Weekly/Monthly/Goal) реально соответствует
+// тому, через сколько дней шаг должен быть закрыт — иначе получается ерунда
+// вида "10 отжиманий" со сроком в месяц.
+function normalizeGoalSteps(specs, goal) {
+  const goalDays = goal.deadline ? Math.max(3, Math.ceil((new Date(goal.deadline) - Date.now()) / 86400000)) : 30;
+  const cleaned = specs
+    .filter(s => s && typeof s.title === 'string' && s.title.trim())
+    .map(s => ({
+      title: s.title.trim(),
+      difficulty: DIFF_MULT[s.difficulty] !== undefined ? s.difficulty : 'Normal',
+      stat: STATS_DEF.some(st => st.key === s.stat) ? s.stat : 'discipline',
+      dueInDays: Math.max(1, Math.min(goalDays, Math.round(Number(s.dueInDays) || 7))),
+    }))
+    .sort((a, b) => a.dueInDays - b.dueInDays);
+
+  let prevDue = 0;
+  cleaned.forEach(s => {
+    if (s.dueInDays <= prevDue) s.dueInDays = Math.min(goalDays, prevDue + 1);
+    prevDue = s.dueInDays;
+  });
+
+  return cleaned.map((s, i) => {
+    const isLast = i === cleaned.length - 1;
+    let type;
+    if (isLast && goalDays > 21) type = 'Goal';
+    else if (s.dueInDays <= 14) type = 'Weekly';
+    else type = 'Monthly';
+    return { ...s, type };
+  });
+}
+
 // --- Body / calories math ---
 const ACTIVITY_LEVELS = [
   { key: 'sedentary', label: 'Сидячий образ жизни', mult: 1.2 },
@@ -617,12 +752,15 @@ function defaultState() {
     recoveryMode: false,
     availableHoursPerWeek: null,
     finance: {
-      monthlyIncome: 0,
-      expenses: [],
+      mode: 'simple', // 'simple' | 'advanced' — раздел 11 ТЗ
+      cashBalance: 0, // реальный баланс наличных UZS, раздел 10 ТЗ — отдельно от Gold
+      transactions: [], // {id,type,title,amount,category,date,recurring,essential,source,ts} — раздел 3 ТЗ
+      incomeSources: [], // {id,name,type,fixed,amount,frequency} — раздел 5 ТЗ
       debts: [],
       savingsGoals: [],
       strategy: 'avalanche',
       taxi: { dailyTarget: 10000, orders: [] },
+      emergencyFundGoalMonths: 3,
     },
     garage: {
       photo: null,
@@ -883,10 +1021,9 @@ function CheckinForm({ initial, onSubmit }) {
 }
 
 function StatusStrip({ state, energy, weakestStat }) {
-  const totalExpenses = state.finance.expenses.reduce((s, e) => s + e.amount, 0);
-  const totalDebtPay = state.finance.debts.filter(d => d.remaining > 0).reduce((s, d) => s + d.monthlyPayment, 0);
-  const hasFinanceData = state.finance.monthlyIncome > 0 || totalExpenses > 0 || state.finance.debts.length > 0;
-  const free = state.finance.monthlyIncome - totalExpenses - totalDebtPay;
+  const fm = financeMonthSummary(state.finance);
+  const hasFinanceData = state.finance.incomeSources.length > 0 || fm.income > 0 || fm.expenses > 0 || state.finance.debts.length > 0;
+  const free = fm.cashFlow;
   let financeChip;
   if (!hasFinanceData) financeChip = { label: 'Нет данных', color: COLORS.textMuted };
   else if (free < 0) financeChip = { label: 'Слабый', color: COLORS.crimson };
@@ -972,6 +1109,7 @@ export default function LifeRPG() {
       s = { ...defs, ...(s || {}) };
       s.finance = { ...defs.finance, ...(s.finance || {}) };
       s.finance.taxi = { ...defs.finance.taxi, ...(s.finance.taxi || {}) };
+      s.finance = migrateFinance(s.finance);
       s.garage = { ...defs.garage, ...(s.garage || {}) };
       s.body = { ...defs.body, ...(s.body || {}) };
       const result = ensureDailyContent(s);
@@ -984,23 +1122,31 @@ export default function LifeRPG() {
   useEffect(() => {
     if (!loaded || !state) return;
     if (storageStatus === 'unavailable') return;
-    (async () => {
-      try {
-        const res = await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
-        if (!res) {
-          setStorageStatus('error');
-          setStorageError('set() вернул null — платформа отклонила запись');
-        } else {
-          setStorageStatus('ok');
-          setStorageError(null);
-          setLastSavedAt(Date.now());
-        }
-      } catch (e) {
-        setStorageStatus('error');
-        setStorageError(e && e.message ? e.message : String(e));
-      }
-    })();
+    saveNow();
   }, [state, loaded, storageStatus]);
+
+  async function saveNow() {
+    if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
+      setStorageStatus('unavailable');
+      return false;
+    }
+    try {
+      const res = await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
+      if (!res) {
+        setStorageStatus('error');
+        setStorageError('set() вернул null — платформа отклонила запись');
+        return false;
+      }
+      setStorageStatus('ok');
+      setStorageError(null);
+      setLastSavedAt(Date.now());
+      return true;
+    } catch (e) {
+      setStorageStatus('error');
+      setStorageError(e && e.message ? e.message : String(e));
+      return false;
+    }
+  }
 
   // Раз в день: пробуем заменить шаблонные Bonus-квесты на персональные от AI,
   // основанные на реальных статах/целях персонажа. Если AI недоступен — молча
@@ -1191,7 +1337,10 @@ export default function LifeRPG() {
 
   function movePriority(q, dir) {
     setState(prev => {
-      const active = prev.quests.filter(x => x.status === 'active').sort((a, b) => a.order - b.order);
+      // сортировка идёт только среди квестов ТОГО ЖЕ типа — иначе кнопки
+      // "выше/ниже" в сгруппированном списке будут не глазами не совпадать с тем,
+      // что реально произошло (порядок менялся бы с квестом другого типа).
+      const active = prev.quests.filter(x => x.status === 'active' && x.type === q.type).sort((a, b) => a.order - b.order);
       const idx = active.findIndex(x => x.id === q.id);
       const swapIdx = idx + dir;
       if (swapIdx < 0 || swapIdx >= active.length) return prev;
@@ -1380,23 +1529,62 @@ export default function LifeRPG() {
     }));
   }
 
-  function setMonthlyIncome(val) {
-    setState(prev => ({ ...prev, finance: { ...prev.finance, monthlyIncome: val } }));
+  function setFinanceMode(mode) {
+    setState(prev => ({ ...prev, finance: { ...prev.finance, mode } }));
   }
 
   function setDebtStrategy(strategy) {
     setState(prev => ({ ...prev, finance: { ...prev.finance, strategy } }));
   }
 
-  function addExpense(title, amount) {
+  // Раздел 3+10 ТЗ: единая точка входа для любой операции — двигает Cash Balance
+  // и попадает во все месячные расчёты Finance. Даёт немного XP за сам факт учёта (раздел 19).
+  function addTransaction(data) {
+    setState(prev => {
+      const amount = Math.abs(Number(data.amount) || 0);
+      if (amount <= 0) return prev;
+      const type = data.type === 'income' ? 'income' : 'expense';
+      const tx = {
+        id: uid(), type, title: (data.title || '').trim() || (type === 'income' ? 'Доход' : 'Расход'),
+        amount, category: data.category || (type === 'income' ? 'other' : 'other_life'),
+        date: data.date || todayStr(), recurring: !!data.recurring, essential: !!data.essential,
+        source: data.source || 'manual', ts: Date.now(),
+      };
+      const cashBalance = prev.finance.cashBalance + (type === 'income' ? amount : -amount);
+      const { character, bonusCoins } = applyXP(prev.character, 8);
+      const chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `${type === 'income' ? '💰 Доход' : '💸 Расход'}: ${tx.title} — ${amount}`);
+      return {
+        ...prev, character, coins: prev.coins + bonusCoins, chronicle,
+        finance: { ...prev.finance, transactions: [...prev.finance.transactions, tx], cashBalance },
+      };
+    });
+  }
+
+  function deleteTransaction(id) {
+    setState(prev => {
+      const tx = prev.finance.transactions.find(t => t.id === id);
+      if (!tx) return prev;
+      const cashBalance = prev.finance.cashBalance - (tx.type === 'income' ? tx.amount : -tx.amount);
+      return { ...prev, finance: { ...prev.finance, transactions: prev.finance.transactions.filter(t => t.id !== id), cashBalance } };
+    });
+  }
+
+  // Раздел 5 ТЗ: источники дохода — профили, из которых можно быстро залогировать доход.
+  function addIncomeSource(data) {
     setState(prev => ({
       ...prev,
-      finance: { ...prev.finance, expenses: [...prev.finance.expenses, { id: uid(), title, amount }] },
+      finance: {
+        ...prev.finance,
+        incomeSources: [...prev.finance.incomeSources, {
+          id: uid(), name: (data.name || '').trim() || 'Источник', type: data.type || 'other',
+          fixed: !!data.fixed, amount: Number(data.amount) || 0, frequency: data.frequency || 'monthly',
+        }],
+      },
     }));
   }
 
-  function deleteExpense(id) {
-    setState(prev => ({ ...prev, finance: { ...prev.finance, expenses: prev.finance.expenses.filter(e => e.id !== id) } }));
+  function deleteIncomeSource(id) {
+    setState(prev => ({ ...prev, finance: { ...prev.finance, incomeSources: prev.finance.incomeSources.filter(s => s.id !== id) } }));
   }
 
   function addDebt(data) {
@@ -1408,6 +1596,7 @@ export default function LifeRPG() {
           id: uid(), title: data.title, total: data.total, remaining: data.total,
           monthlyPayment: data.monthlyPayment, interestRate: data.interestRate || 0,
           termMonths: data.termMonths || null, isAnnuity: !!data.isAnnuity, createdAt: Date.now(),
+          category: data.category || 'debt_credit', history: [],
         }],
       },
       chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый Debt Boss: ${data.title} (HP ${data.total})`),
@@ -1418,19 +1607,33 @@ export default function LifeRPG() {
     setState(prev => ({ ...prev, finance: { ...prev.finance, debts: prev.finance.debts.filter(d => d.id !== id) } }));
   }
 
+  // Раздел 7 ТЗ: платёж = проценты + тело долга, вычитать весь платёж из
+  // основного долга нельзя. Проценты считаем от текущего остатка по годовой ставке.
   function payDebt(id, amount) {
     setState(prev => {
       const debt = prev.finance.debts.find(d => d.id === id);
       if (!debt || amount <= 0) return prev;
       const wasAlive = debt.remaining > 0;
-      const remaining = Math.max(0, debt.remaining - amount);
-      const debts = prev.finance.debts.map(d => d.id === id ? { ...d, remaining } : d);
+      const monthlyRate = (debt.interestRate || 0) / 100 / 12;
+      const interest = Math.min(amount, Math.round(debt.remaining * monthlyRate));
+      const principal = Math.max(0, amount - interest);
+      const remaining = Math.max(0, debt.remaining - principal);
+      const paymentRecord = { id: uid(), date: todayStr(), totalPayment: amount, interest, principal, remainingAfter: remaining };
+      const debts = prev.finance.debts.map(d => d.id === id ? { ...d, remaining, history: [...(d.history || []), paymentRecord] } : d);
+      const tx = {
+        id: uid(), type: 'expense', title: `Платёж по долгу: ${debt.title}`, amount, category: debt.category || 'debt_credit',
+        date: todayStr(), recurring: false, essential: true, source: 'debt', ts: Date.now(),
+      };
+      const cashBalance = prev.finance.cashBalance - amount;
       const { character, bonusCoins } = applyXP(prev.character, 20);
-      let chronicle = pushChronicle(prev.chronicle, 'DEBT_PAYMENT', `Удар по «${debt.title}»: -${amount} к HP боса (осталось ${remaining})`);
+      let chronicle = pushChronicle(prev.chronicle, 'DEBT_PAYMENT', `Удар по «${debt.title}»: -${principal} к HP боса (проценты ${interest}, осталось ${remaining})`);
       if (remaining <= 0 && wasAlive) {
         chronicle = pushChronicle(chronicle, 'DEBT_DEFEATED', `💀 Debt Boss «${debt.title}» повержен!`);
       }
-      return { ...prev, finance: { ...prev.finance, debts }, character, coins: prev.coins + bonusCoins, chronicle };
+      return {
+        ...prev, character, coins: prev.coins + bonusCoins, chronicle,
+        finance: { ...prev.finance, debts, transactions: [...prev.finance.transactions, tx], cashBalance },
+      };
     });
   }
 
@@ -1442,6 +1645,7 @@ export default function LifeRPG() {
     }));
   }
 
+  // Раздел 9 ТЗ: деньги в накопления реально уходят из Cash, а не появляются из воздуха.
   function contributeSaving(id, amount) {
     setState(prev => {
       const goal = prev.finance.savingsGoals.find(g => g.id === id);
@@ -1449,6 +1653,11 @@ export default function LifeRPG() {
       const wasComplete = goal.saved >= goal.target;
       const saved = goal.saved + amount;
       const savingsGoals = prev.finance.savingsGoals.map(g => g.id === id ? { ...g, saved } : g);
+      const tx = {
+        id: uid(), type: 'expense', title: `Накопление: ${goal.title}`, amount, category: 'savings',
+        date: todayStr(), recurring: false, essential: false, source: 'savings', ts: Date.now(),
+      };
+      const cashBalance = prev.finance.cashBalance - amount;
       let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `Отложено ${amount} к цели «${goal.title}» (${saved}/${goal.target})`);
       let character = prev.character, coins = prev.coins;
       if (saved >= goal.target && !wasComplete) {
@@ -1456,7 +1665,7 @@ export default function LifeRPG() {
         character = res.character; coins += res.bonusCoins + 40;
         chronicle = pushChronicle(chronicle, 'GOAL_COMPLETED', `💰 Финансовая цель «${goal.title}» достигнута!`);
       }
-      return { ...prev, finance: { ...prev.finance, savingsGoals }, character, coins, chronicle };
+      return { ...prev, finance: { ...prev.finance, savingsGoals, transactions: [...prev.finance.transactions, tx], cashBalance }, character, coins, chronicle };
     });
   }
 
@@ -1474,19 +1683,35 @@ export default function LifeRPG() {
       const today = todayStr();
       const todayBefore = prev.finance.taxi.orders.filter(o => o.ts >= new Date(today + 'T00:00:00').getTime())
         .reduce((s, o) => s + o.amount, 0);
-      const orders = [...prev.finance.taxi.orders, { id: uid(), amount, ts: Date.now() }];
+      const oid = uid();
+      const orders = [...prev.finance.taxi.orders, { id: oid, amount, ts: Date.now() }];
+      // Раздел 6 ТЗ: доход такси не изолирован — зеркалим в общие транзакции и Cash Balance.
+      const tx = { id: uid(), type: 'income', title: 'Заказ такси', amount, category: 'taxi', date: today, recurring: false, essential: false, source: 'taxi', mirrorSourceId: oid, ts: Date.now() };
+      const cashBalance = prev.finance.cashBalance + amount;
       const { character, bonusCoins } = applyXP(prev.character, 8);
       const coins = prev.coins + bonusCoins + Math.max(1, Math.round(amount * 0.03));
       let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `🚕 Заказ: +${amount} (сегодня: ${todayBefore + amount})`);
       if (todayBefore < prev.finance.taxi.dailyTarget && todayBefore + amount >= prev.finance.taxi.dailyTarget) {
         chronicle = pushChronicle(chronicle, 'SYSTEM', '🎯 Дневная цель по заказам выполнена!');
       }
-      return { ...prev, character, coins, chronicle, finance: { ...prev.finance, taxi: { ...prev.finance.taxi, orders } } };
+      return { ...prev, character, coins, chronicle, finance: { ...prev.finance, taxi: { ...prev.finance.taxi, orders }, transactions: [...prev.finance.transactions, tx], cashBalance } };
     });
   }
 
   function deleteOrder(id) {
-    setState(prev => ({ ...prev, finance: { ...prev.finance, taxi: { ...prev.finance.taxi, orders: prev.finance.taxi.orders.filter(o => o.id !== id) } } }));
+    setState(prev => {
+      const mirrored = prev.finance.transactions.find(t => t.mirrorSourceId === id);
+      const cashBalance = mirrored ? prev.finance.cashBalance - mirrored.amount : prev.finance.cashBalance;
+      return {
+        ...prev,
+        finance: {
+          ...prev.finance,
+          taxi: { ...prev.finance.taxi, orders: prev.finance.taxi.orders.filter(o => o.id !== id) },
+          transactions: prev.finance.transactions.filter(t => t.mirrorSourceId !== id),
+          cashBalance,
+        },
+      };
+    });
   }
 
   function setGaragePhoto(dataUrl) {
@@ -1502,15 +1727,30 @@ export default function LifeRPG() {
   }
 
   function addGarageExpense(title, amount, category) {
-    setState(prev => ({
-      ...prev,
-      garage: { ...prev.garage, expenses: [...prev.garage.expenses, { id: uid(), title, amount, category, ts: Date.now() }] },
-      chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `🚗 Расход по машине: ${title} (-${amount})`),
-    }));
+    setState(prev => {
+      const eid = uid();
+      // Раздел 6 ТЗ: расход машины не изолирован — зеркалим в общие транзакции и Cash Balance.
+      const tx = { id: uid(), type: 'expense', title: `Машина: ${title}`, amount, category: GARAGE_TO_FINANCE_CATEGORY[category] || 'other_car', date: todayStr(), recurring: false, essential: false, source: 'garage', mirrorSourceId: eid, ts: Date.now() };
+      const cashBalance = prev.finance.cashBalance - amount;
+      return {
+        ...prev,
+        garage: { ...prev.garage, expenses: [...prev.garage.expenses, { id: eid, title, amount, category, ts: Date.now() }] },
+        finance: { ...prev.finance, transactions: [...prev.finance.transactions, tx], cashBalance },
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `🚗 Расход по машине: ${title} (-${amount})`),
+      };
+    });
   }
 
   function deleteGarageExpense(id) {
-    setState(prev => ({ ...prev, garage: { ...prev.garage, expenses: prev.garage.expenses.filter(e => e.id !== id) } }));
+    setState(prev => {
+      const mirrored = prev.finance.transactions.find(t => t.mirrorSourceId === id);
+      const cashBalance = mirrored ? prev.finance.cashBalance + mirrored.amount : prev.finance.cashBalance;
+      return {
+        ...prev,
+        garage: { ...prev.garage, expenses: prev.garage.expenses.filter(e => e.id !== id) },
+        finance: { ...prev.finance, transactions: prev.finance.transactions.filter(t => t.mirrorSourceId !== id), cashBalance },
+      };
+    });
   }
 
   function setBodyProfile(patch) {
@@ -1564,12 +1804,11 @@ export default function LifeRPG() {
     });
   }
 
-  function addCustomEvent(title, stat, delta) {
+  function addCustomEvent(title, effects) {
     setState(prev => ({
       ...prev,
       customEvents: [...prev.customEvents, {
-        id: uid(), label: title, stat, delta,
-        effects: [{ stat, delta }],
+        id: uid(), label: title, effects,
       }],
     }));
   }
@@ -1600,6 +1839,7 @@ export default function LifeRPG() {
       parsed = { ...defs, ...parsed };
       parsed.finance = { ...defs.finance, ...(parsed.finance || {}) };
       parsed.finance.taxi = { ...defs.finance.taxi, ...(parsed.finance.taxi || {}) };
+      parsed.finance = migrateFinance(parsed.finance);
       parsed.garage = { ...defs.garage, ...(parsed.garage || {}) };
       parsed.body = { ...defs.body, ...(parsed.body || {}) };
       const result = ensureDailyContent(parsed);
@@ -1823,8 +2063,9 @@ export default function LifeRPG() {
 
         {tab === 'finance' && (
           <FinanceTab
-            finance={state.finance} setMonthlyIncome={setMonthlyIncome} addExpense={addExpense}
-            deleteExpense={deleteExpense} setDebtStrategy={setDebtStrategy} addDebt={addDebt}
+            finance={state.finance} setFinanceMode={setFinanceMode} addTransaction={addTransaction}
+            deleteTransaction={deleteTransaction} addIncomeSource={addIncomeSource} deleteIncomeSource={deleteIncomeSource}
+            setDebtStrategy={setDebtStrategy} addDebt={addDebt}
             payDebt={payDebt} deleteDebt={deleteDebt} addSavingsGoal={addSavingsGoal}
             contributeSaving={contributeSaving} deleteSavingsGoal={deleteSavingsGoal}
             setTaxiTarget={setTaxiTarget} logOrder={logOrder} deleteOrder={deleteOrder}
@@ -1884,7 +2125,7 @@ export default function LifeRPG() {
                 character={state.character} setCharacterName={setCharacterName} resetAllData={resetAllData}
                 availableHoursPerWeek={state.availableHoursPerWeek} setAvailableHours={setAvailableHours}
                 storageStatus={storageStatus} storageError={storageError} lastSavedAt={lastSavedAt}
-                state={state} importSaveData={importSaveData}
+                state={state} importSaveData={importSaveData} saveNow={saveNow}
                 onExported={() => { setHasExportedThisSession(true); setShowExportReminder(false); }}
                 difficultyMode={state.difficultyMode} setDifficultyMode={setDifficultyMode}
               />
@@ -2153,15 +2394,22 @@ function QuestsTab({ activeQuests, laterQuests, completeQuest, postponeQuest, sk
       )}
 
       <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>Активные ({activeQuests.length})</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {activeQuests.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Пока пусто. Добавь квест выше.</div></Card>}
-        {activeQuests.filter(matches).length === 0 && activeQuests.length > 0 && <div style={{ fontSize: 12, color: COLORS.textMuted, textAlign: 'center', padding: '10px 0' }}>Ничего не найдено.</div>}
-        {activeQuests.map((q, i) => matches(q) && (
-          <QuestCard key={q.id} q={q} priority={i + 1} completeQuest={completeQuest} postponeQuest={postponeQuest}
-            skipTarget={skipTarget} setSkipTarget={setSkipTarget} skipQuest={skipQuest} movePriority={movePriority}
-            canMoveUp={i > 0} canMoveDown={i < activeQuests.length - 1} showDelete deleteQuest={deleteQuest} hitBossQuest={hitBossQuest} />
-        ))}
-      </div>
+      {activeQuests.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Пока пусто. Добавь квест выше.</div></Card>}
+      {activeQuests.filter(matches).length === 0 && activeQuests.length > 0 && <div style={{ fontSize: 12, color: COLORS.textMuted, textAlign: 'center', padding: '10px 0' }}>Ничего не найдено.</div>}
+      {QUEST_GROUPS.map(group => {
+        const items = activeQuests.filter(q => group.types.includes(q.type) && matches(q));
+        if (items.length === 0) return null;
+        return (
+          <div key={group.key} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: group.color, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 }}>{group.label} ({items.length})</div>
+            {items.map((q, i) => (
+              <QuestCard key={q.id} q={q} priority={i + 1} completeQuest={completeQuest} postponeQuest={postponeQuest}
+                skipTarget={skipTarget} setSkipTarget={setSkipTarget} skipQuest={skipQuest} movePriority={movePriority}
+                canMoveUp={i > 0} canMoveDown={i < items.length - 1} showDelete deleteQuest={deleteQuest} hitBossQuest={hitBossQuest} />
+            ))}
+          </div>
+        );
+      })}
 
       {laterQuests.length > 0 && (
         <>
@@ -2321,7 +2569,7 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
       const text = await callClaudeAPIWithRetry(GOAL_ENGINE_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
       const specs = parseJsonLoose(text);
       if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: model returned no valid steps');
-      addQuestsFromGoal(goal, specs);
+      addQuestsFromGoal(goal, normalizeGoalSteps(specs, goal));
     } catch (e) {
       setFallbackNoticeId(goal.id);
       setFallbackReason(friendlyAIError(e));
@@ -2331,7 +2579,7 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
   }
 
   function useOfflinePlan(goal) {
-    addQuestsFromGoal(goal, ruleBasedGoalSplit(goal));
+    addQuestsFromGoal(goal, normalizeGoalSteps(ruleBasedGoalSplit(goal), goal));
     setFallbackNoticeId(null);
     setFallbackReason(null);
   }
@@ -2411,6 +2659,22 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
               <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>{g.progress}%{g.deadline ? ` · до ${fmtDeadline(g.deadline)}` : ''}</div>
               <GoalProgressControl goal={g} updateGoalProgress={updateGoalProgress} />
             </div>
+            {linkedQuests.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Квесты этой цели ({linkedQuests.filter(q => q.status === 'active').length} активных)</div>
+                {[...linkedQuests].sort((a, b) => new Date(a.deadline || 0) - new Date(b.deadline || 0)).map(q => (
+                  <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      {q.status === 'done'
+                        ? <Check size={12} color={COLORS.teal} style={{ flexShrink: 0 }} />
+                        : <span style={{ width: 8, height: 8, borderRadius: 99, border: `1px solid ${COLORS.textMuted}`, flexShrink: 0 }} />}
+                      <span style={{ fontSize: 11, textDecoration: q.status === 'done' ? 'line-through' : 'none', color: q.status === 'done' ? COLORS.textMuted : COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.title}</span>
+                    </div>
+                    <Tag color={TYPE_COLOR[q.type]}>{TYPE_LABELS[q.type]}</Tag>
+                  </div>
+                ))}
+              </div>
+            )}
             {realityText && <div style={{ fontSize: 11, color: COLORS.gold, marginTop: 8, fontStyle: 'italic' }}>{realityText}</div>}
             <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
               <button className="lrpg-btn" disabled={checkingId === g.id} onClick={() => handleRealityCheck(g)} style={{
@@ -2922,15 +3186,34 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
 }
 
 function AddInlineForm({ fields, onSubmit, submitLabel = 'Добавить' }) {
-  const [values, setValues] = useState(() => Object.fromEntries(fields.map(f => [f.key, f.default !== undefined ? f.default : ''])));
+  const [values, setValues] = useState(() => Object.fromEntries(fields.map(f => [f.key, f.default !== undefined ? f.default : (f.type === 'checkbox' ? false : '')])));
   const valid = fields.every(f => !f.required || String(values[f.key] || '').trim());
   return (
     <Card>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {fields.map(f => (
-          <input key={f.key} className="lrpg-input" type={f.type || 'text'} placeholder={f.placeholder}
-            value={values[f.key]} onChange={e => setValues(v => ({ ...v, [f.key]: f.type === 'number' ? Number(e.target.value) : e.target.value }))} />
-        ))}
+        {fields.map(f => {
+          if (f.type === 'select') {
+            return (
+              <select key={f.key} className="lrpg-input" value={values[f.key]}
+                onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}>
+                {(f.options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            );
+          }
+          if (f.type === 'checkbox') {
+            return (
+              <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: COLORS.textMuted }}>
+                <input type="checkbox" checked={!!values[f.key]}
+                  onChange={e => setValues(v => ({ ...v, [f.key]: e.target.checked }))} />
+                {f.label || f.key}
+              </label>
+            );
+          }
+          return (
+            <input key={f.key} className="lrpg-input" type={f.type || 'text'} placeholder={f.placeholder}
+              value={values[f.key]} onChange={e => setValues(v => ({ ...v, [f.key]: f.type === 'number' ? Number(e.target.value) : e.target.value }))} />
+          );
+        })}
         <button className="lrpg-btn" disabled={!valid} onClick={() => onSubmit(values)}
           style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
           {submitLabel}
@@ -2943,6 +3226,7 @@ function AddInlineForm({ fields, onSubmit, submitLabel = 'Добавить' }) {
 function AddDebtForm({ onSubmit, onCancel }) {
   const [isAnnuity, setIsAnnuity] = useState(true);
   const [title, setTitle] = useState('');
+  const [category, setCategory] = useState('debt_credit');
   const [total, setTotal] = useState('');
   const [rate, setRate] = useState('');
   const [months, setMonths] = useState('');
@@ -2969,6 +3253,9 @@ function AddDebtForm({ onSubmit, onCancel }) {
           }}>Обычный долг</button>
         </div>
         <input className="lrpg-input" placeholder="Название" value={title} onChange={e => setTitle(e.target.value)} />
+        <select className="lrpg-input" value={category} onChange={e => setCategory(e.target.value)}>
+          {DEBT_CATEGORY_OPTIONS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
         <input className="lrpg-input" type="number" min={0} placeholder="Сумма долга (основной долг)" value={total} onChange={e => setTotal(e.target.value)} />
         {isAnnuity ? (
           <>
@@ -2986,7 +3273,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
         )}
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <button className="lrpg-btn" disabled={!valid} onClick={() => onSubmit({
-            title: title.trim(), total: totalNum, monthlyPayment: computedPayment,
+            title: title.trim(), category, total: totalNum, monthlyPayment: computedPayment,
             interestRate: isAnnuity ? rateNum : 0, termMonths: isAnnuity ? monthsNum : null, isAnnuity,
           })} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
             Создать
@@ -3000,13 +3287,16 @@ function AddDebtForm({ onSubmit, onCancel }) {
   );
 }
 
-function FinanceTab({ finance, setMonthlyIncome, addExpense, deleteExpense, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, logOrder, deleteOrder }) {
-  const [showAddExpense, setShowAddExpense] = useState(false);
+function FinanceTab({ finance, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, logOrder, deleteOrder }) {
+  const [showAddTx, setShowAddTx] = useState(false);
+  const [txType, setTxType] = useState('expense');
+  const [showAddIncomeSource, setShowAddIncomeSource] = useState(false);
   const [showAddDebt, setShowAddDebt] = useState(false);
   const [showAddSaving, setShowAddSaving] = useState(false);
   const [payAmounts, setPayAmounts] = useState({});
   const [saveAmounts, setSaveAmounts] = useState({});
   const [expandedSchedule, setExpandedSchedule] = useState(null);
+  const [expandedHistory, setExpandedHistory] = useState(null);
   const [orderAmount, setOrderAmount] = useState('');
 
   const today = todayStr();
@@ -3022,32 +3312,143 @@ function FinanceTab({ finance, setMonthlyIncome, addExpense, deleteExpense, setD
     return { key, sum, label: d.toLocaleDateString('ru-RU', { weekday: 'short' }) };
   });
 
-  const totalExpenses = finance.expenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalDebtPayments = finance.debts.filter(d => d.remaining > 0).reduce((sum, d) => sum + d.monthlyPayment, 0);
-  const free = finance.monthlyIncome - totalExpenses - totalDebtPayments;
+  const fm = financeMonthSummary(finance);
+  const thisMonthTx = finance.transactions.filter(t => monthKeyOf(t.date) === fm.monthKey).slice().sort((a, b) => (b.date + b.ts) > (a.date + a.ts) ? 1 : -1);
   const sortedDebts = sortDebts(finance.debts, finance.strategy);
+  const isAdvanced = finance.mode === 'advanced';
+  const txCategoryOptions = txType === 'income' ? INCOME_SOURCE_TYPES.map(t => ({ key: t.key, label: t.label })) : EXPENSE_CATEGORIES.filter(c => c.group !== 'fin');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Wallet size={15} color={COLORS.gold} /> Бюджет
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Wallet size={15} color={COLORS.gold} /> Обзор Finance</span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {['simple', 'advanced'].map(m => (
+              <button key={m} className="lrpg-btn" onClick={() => setFinanceMode(m)} style={{
+                fontSize: 10, padding: '3px 8px', borderRadius: 6, fontWeight: 700,
+                background: finance.mode === m ? COLORS.violet : COLORS.bgCardAlt,
+                color: finance.mode === m ? '#fff' : COLORS.textMuted,
+              }}>
+                {m === 'simple' ? 'Просто' : 'Подробно'}
+              </button>
+            ))}
+          </div>
         </div>
         <Card>
-          <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>Доход в месяц</div>
-          <input className="lrpg-input" type="number" min={0} value={finance.monthlyIncome}
-            onChange={e => setMonthlyIncome(Number(e.target.value))} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, fontSize: 12 }}>
-            <span style={{ color: COLORS.textMuted }}>Расходы</span><span>{totalExpenses}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+            <span style={{ color: COLORS.textMuted }}>💵 Cash Balance</span>
+            <span style={{ fontWeight: 700, color: finance.cashBalance >= 0 ? COLORS.text : COLORS.crimson }}>{finance.cashBalance}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 12 }}>
-            <span style={{ color: COLORS.textMuted }}>Платежи по долгам</span><span>{totalDebtPayments}</span>
-          </div>
+          <div style={{ borderTop: `1px dashed ${COLORS.border}`, margin: '6px 0 8px' }} />
+          {[
+            ['Доход за месяц', fm.income, COLORS.teal],
+            ['Расходы за месяц', fm.expenses, COLORS.crimson],
+            ['Платежи по долгам', fm.debtPay, COLORS.crimson],
+            ['Накопления', fm.savingsContrib, COLORS.gold],
+          ].map(([label, val, color]) => (
+            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
+              <span style={{ color: COLORS.textMuted }}>{label}</span><span style={{ color }}>{val}</span>
+            </div>
+          ))}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 13, fontWeight: 700 }}>
-            <span>Свободно в месяц</span>
-            <span style={{ color: free >= 0 ? COLORS.teal : COLORS.crimson }}>{free}</span>
+            <span>Свободный остаток</span>
+            <span style={{ color: fm.cashFlow >= 0 ? COLORS.teal : COLORS.crimson }}>{fm.cashFlow}</span>
+          </div>
+          <div style={{ fontSize: 11, marginTop: 4, color: fm.cashFlow >= 0 ? COLORS.teal : COLORS.crimson, fontWeight: 700 }}>
+            {fm.cashFlow >= 0 ? 'SURPLUS — профицит' : 'DEFICIT — дефицит'}
           </div>
         </Card>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><TrendingDown size={15} color={COLORS.violet} /> Операции</span>
+          <button className="lrpg-btn" onClick={() => setShowAddTx(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
+        </div>
+        {showAddTx && (
+          <Card style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+              {[['income', 'Доход'], ['expense', 'Расход']].map(([k, l]) => (
+                <button key={k} className="lrpg-btn" onClick={() => setTxType(k)} style={{
+                  flex: 1, padding: '6px 0', borderRadius: 8, fontWeight: 700, fontSize: 12,
+                  background: txType === k ? (k === 'income' ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
+                  color: txType === k ? '#0B1F1D' : COLORS.textMuted,
+                }}>{l}</button>
+              ))}
+            </div>
+            <AddInlineForm
+              key={txType}
+              fields={[
+                { key: 'title', placeholder: 'Название (необязательно)' },
+                { key: 'amount', placeholder: 'Сумма', type: 'number', default: 0, required: true },
+                { key: 'category', type: 'select', options: txCategoryOptions.map(c => ({ value: c.key, label: c.label })), default: txCategoryOptions[0]?.key },
+                ...(isAdvanced ? [
+                  { key: 'date', type: 'date', default: today },
+                  { key: 'essential', type: 'checkbox', label: 'Обязательный расход' },
+                  { key: 'recurring', type: 'checkbox', label: 'Повторяющийся' },
+                ] : []),
+              ]}
+              onSubmit={v => {
+                addTransaction({ type: txType, title: v.title, amount: v.amount, category: v.category, date: v.date, essential: v.essential, recurring: v.recurring });
+                setShowAddTx(false);
+              }}
+            />
+          </Card>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {thisMonthTx.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>За этот месяц операций пока нет.</div></Card>}
+          {thisMonthTx.slice(0, 30).map(t => {
+            const catLabel = t.type === 'income'
+              ? (INCOME_SOURCE_TYPES.find(c => c.key === t.category)?.label || t.category)
+              : (EXPENSE_CATEGORIES.find(c => c.key === t.category)?.label || t.category);
+            return (
+              <Card key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{catLabel} · {t.date}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: t.type === 'income' ? COLORS.teal : COLORS.crimson }}>{t.type === 'income' ? '+' : '-'}{t.amount}</span>
+                  <button className="lrpg-btn" onClick={() => deleteTransaction(t.id)} style={{ background: 'none' }}><Trash2 size={13} color={COLORS.textMuted} /></button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Briefcase size={15} color={COLORS.gold} /> Источники дохода</span>
+          <button className="lrpg-btn" onClick={() => setShowAddIncomeSource(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
+        </div>
+        {showAddIncomeSource && (
+          <AddInlineForm
+            fields={[
+              { key: 'name', placeholder: 'Название источника', required: true },
+              { key: 'type', type: 'select', options: INCOME_SOURCE_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'salary' },
+              { key: 'amount', placeholder: 'Сумма (для фикс. дохода)', type: 'number', default: 0 },
+              { key: 'fixed', type: 'checkbox', label: 'Фиксированный доход (не переменный)' },
+            ]}
+            onSubmit={v => { addIncomeSource(v); setShowAddIncomeSource(false); }}
+          />
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          {finance.incomeSources.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Источников дохода пока нет.</div></Card>}
+          {finance.incomeSources.map(s => {
+            const typeInfo = INCOME_SOURCE_TYPES.find(t => t.key === s.type) || INCOME_SOURCE_TYPES[4];
+            return (
+              <Card key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{typeInfo.icon} {s.name}</div>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{s.fixed ? `${s.amount} / ${s.frequency === 'monthly' ? 'месяц' : s.frequency}` : 'переменный доход'}</div>
+                </div>
+                <button className="lrpg-btn" onClick={() => deleteIncomeSource(s.id)} style={{ background: 'none' }}><Trash2 size={13} color={COLORS.textMuted} /></button>
+              </Card>
+            );
+          })}
+        </div>
       </div>
 
       <div>
@@ -3100,31 +3501,6 @@ function FinanceTab({ finance, setMonthlyIncome, addExpense, deleteExpense, setD
             ))}
           </div>
         )}
-      </div>
-
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><TrendingDown size={15} color={COLORS.crimson} /> Расходы</span>
-          <button className="lrpg-btn" onClick={() => setShowAddExpense(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
-        </div>
-        {showAddExpense && (
-          <AddInlineForm
-            fields={[{ key: 'title', placeholder: 'Название расхода', required: true }, { key: 'amount', placeholder: 'Сумма в месяц', type: 'number', default: 0 }]}
-            onSubmit={v => { addExpense(v.title.trim(), Number(v.amount) || 0); setShowAddExpense(false); }}
-          />
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-          {finance.expenses.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Расходов пока нет.</div></Card>}
-          {finance.expenses.map(e => (
-            <Card key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 13 }}>{e.title}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.crimson }}>-{e.amount}</span>
-                <button className="lrpg-btn" onClick={() => deleteExpense(e.id)} style={{ background: 'none' }}><Trash2 size={13} color={COLORS.textMuted} /></button>
-              </div>
-            </Card>
-          ))}
-        </div>
       </div>
 
       <div>
@@ -3205,6 +3581,30 @@ function FinanceTab({ finance, setMonthlyIncome, addExpense, deleteExpense, setD
                     ))}
                   </div>
                 )}
+                {d.history && d.history.length > 0 && (
+                  <div
+                    onClick={() => setExpandedHistory(expandedHistory === d.id ? null : d.id)}
+                    style={{ fontSize: 11, color: COLORS.teal, marginTop: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
+                  >
+                    {expandedHistory === d.id ? 'Скрыть историю платежей' : `История платежей (${d.history.length})`} <ChevronRight size={12} style={{ transform: expandedHistory === d.id ? 'rotate(90deg)' : 'none' }} />
+                  </div>
+                )}
+                {expandedHistory === d.id && d.history && (
+                  <div style={{ marginTop: 8, maxHeight: 180, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', fontSize: 10, color: COLORS.textMuted, padding: '4px 8px', borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, background: COLORS.bgCard }}>
+                      <span>Дата</span><span>Платёж</span><span>%</span><span>Тело</span><span>Остаток</span>
+                    </div>
+                    {d.history.slice().reverse().map(row => (
+                      <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', fontSize: 11, padding: '4px 8px' }}>
+                        <span>{row.date}</span>
+                        <span>{row.totalPayment}</span>
+                        <span style={{ color: COLORS.crimson }}>{row.interest}</span>
+                        <span style={{ color: COLORS.teal }}>{row.principal}</span>
+                        <span>{row.remainingAfter}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             );
           })}
@@ -3277,9 +3677,8 @@ function computeTraits(state) {
   const completedGoals = state.goals.filter(g => g.progress >= 100).length;
   if (completedGoals >= 3) traits.push({ label: 'Целеустремлённый', desc: `Завершённых целей: ${completedGoals}`, icon: Target });
   if (state.unlockedAchievements.length >= 5) traits.push({ label: 'Коллекционер', desc: `Разблокировано достижений: ${state.unlockedAchievements.length}`, icon: Trophy });
-  const totalExpenses = state.finance.expenses.reduce((s, e) => s + e.amount, 0);
-  const totalDebtPay = state.finance.debts.filter(d => d.remaining > 0).reduce((s, d) => s + d.monthlyPayment, 0);
-  if (state.finance.monthlyIncome > 0 && (state.finance.monthlyIncome - totalExpenses - totalDebtPay) >= 0) {
+  const fm = financeMonthSummary(state.finance);
+  if (fm.income > 0 && fm.cashFlow >= 0) {
     traits.push({ label: 'Экономный', desc: 'Бюджет не уходит в минус', icon: PiggyBank });
   }
   return traits;
@@ -3587,17 +3986,30 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
   const [newTitle, setNewTitle] = useState('');
   const [newStat, setNewStat] = useState(STATS_DEF[0].key);
   const [newDelta, setNewDelta] = useState(2);
+  const [addSecond, setAddSecond] = useState(false);
+  const [newStat2, setNewStat2] = useState(STATS_DEF[1].key);
+  const [newDelta2, setNewDelta2] = useState(-2);
 
+  const netDelta = e => e.effects.reduce((sum, ef) => sum + ef.delta, 0);
   const normalizedCustom = customEvents.map(e => ({
-    ...e, icon: Sparkles, color: e.delta >= 0 ? COLORS.teal : COLORS.crimson, isCustom: true,
+    ...e, icon: Sparkles, color: netDelta(e) >= 0 ? COLORS.teal : COLORS.crimson, isCustom: true,
   }));
-  const positive = [...LIFE_EVENTS.filter(e => e.effects.some(ef => ef.delta > 0)), ...normalizedCustom.filter(e => e.delta >= 0)];
-  const negative = [...LIFE_EVENTS.filter(e => e.effects.every(ef => ef.delta < 0)), ...normalizedCustom.filter(e => e.delta < 0)];
+  const positive = [...LIFE_EVENTS.filter(e => e.effects.some(ef => ef.delta > 0)), ...normalizedCustom.filter(e => netDelta(e) >= 0)];
+  const negative = [...LIFE_EVENTS.filter(e => e.effects.every(ef => ef.delta < 0)), ...normalizedCustom.filter(e => netDelta(e) < 0)];
 
   function handleLog(event) {
     logLifeEvent(event);
     setLastLogged(event.id);
     setTimeout(() => setLastLogged(null), 1500);
+  }
+
+  function handleCreate() {
+    const effects = [{ stat: newStat, delta: newDelta }];
+    if (addSecond && newStat2 !== newStat) effects.push({ stat: newStat2, delta: newDelta2 });
+    addCustomEvent(newTitle.trim(), effects);
+    setNewTitle('');
+    setAddSecond(false);
+    setShowAddEvent(false);
   }
 
   function renderGrid(events) {
@@ -3644,6 +4056,7 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input className="lrpg-input" placeholder="Название события" value={newTitle} onChange={e => setNewTitle(e.target.value)} />
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>Стат 1:</div>
             <select className="lrpg-input" value={newStat} onChange={e => setNewStat(e.target.value)}>
               {STATS_DEF.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
             </select>
@@ -3655,7 +4068,36 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
                 }}>{d > 0 ? `+${d}` : d}</button>
               ))}
             </div>
-            <button className="lrpg-btn" disabled={!newTitle.trim()} onClick={() => { addCustomEvent(newTitle.trim(), newStat, newDelta); setNewTitle(''); setShowAddEvent(false); }}
+
+            {!addSecond && (
+              <button className="lrpg-btn" onClick={() => setAddSecond(true)} style={{
+                background: 'none', color: COLORS.teal, border: `1px dashed ${COLORS.teal}55`, borderRadius: 6,
+                padding: '6px 0', fontSize: 11, fontWeight: 600,
+              }}>
+                + Добавить второй стат (например: энергетик — Physical -2 и Discipline -1)
+              </button>
+            )}
+            {addSecond && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>Стат 2:</div>
+                  <button className="lrpg-btn" onClick={() => setAddSecond(false)} style={{ background: 'none' }}><X size={12} color={COLORS.textMuted} /></button>
+                </div>
+                <select className="lrpg-input" value={newStat2} onChange={e => setNewStat2(e.target.value)}>
+                  {STATS_DEF.filter(s => s.key !== newStat).map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[-3, -2, -1, 1, 2, 3].map(d => (
+                    <button key={d} className="lrpg-btn" onClick={() => setNewDelta2(d)} style={{
+                      flex: 1, background: newDelta2 === d ? (d > 0 ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
+                      color: newDelta2 === d ? '#100E1C' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
+                    }}>{d > 0 ? `+${d}` : d}</button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <button className="lrpg-btn" disabled={!newTitle.trim()} onClick={handleCreate}
               style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newTitle.trim() ? 1 : 0.5 }}>
               Создать
             </button>
@@ -3919,8 +4361,20 @@ function SaveManagerCard({ state, importSaveData, onExported }) {
   );
 }
 
-function SettingsTab({ character, setCharacterName, resetAllData, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, state, importSaveData, onExported, difficultyMode, setDifficultyMode }) {
+function SettingsTab({ character, setCharacterName, resetAllData, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualSaveResult, setManualSaveResult] = useState(null); // 'ok' | 'fail' | null
+
+  async function handleManualSave() {
+    setManualSaving(true);
+    setManualSaveResult(null);
+    const ok = await saveNow();
+    setManualSaveResult(ok ? 'ok' : 'fail');
+    setManualSaving(false);
+    setTimeout(() => setManualSaveResult(null), 2500);
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700 }}>
@@ -3931,11 +4385,19 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
           <Save size={14} color={storageStatus === 'ok' ? COLORS.teal : COLORS.crimson} />
           Автосохранение: {storageStatus === 'ok' ? 'работает' : storageStatus === 'unavailable' ? 'недоступно для этого артефакта' : storageStatus === 'checking' ? 'проверяю...' : 'ошибка'}
         </div>
-        {lastSavedAt && <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>Последнее автосохранение: {fmtTime(lastSavedAt)}</div>}
+        {lastSavedAt && <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>Последнее сохранение: {fmtTime(lastSavedAt)}</div>}
         {storageError && <div style={{ fontSize: 10, color: COLORS.crimson, marginTop: 4 }}>{storageError}</div>}
         {storageStatus !== 'ok' && (
           <div style={{ fontSize: 10, color: COLORS.gold, marginTop: 6 }}>Пока это так — используй Экспорт/Импорт ниже, это работает независимо от автосохранения.</div>
         )}
+        <button className="lrpg-btn" disabled={manualSaving} onClick={handleManualSave} style={{
+          marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          background: manualSaveResult === 'ok' ? COLORS.teal : manualSaveResult === 'fail' ? COLORS.crimson : COLORS.bgCardAlt,
+          color: manualSaveResult ? '#100E1C' : COLORS.text, border: `1px solid ${COLORS.border}`,
+          borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: manualSaving ? 0.6 : 1,
+        }}>
+          <Save size={13} /> {manualSaving ? 'Сохраняю...' : manualSaveResult === 'ok' ? 'Сохранено!' : manualSaveResult === 'fail' ? 'Не вышло — используй Экспорт' : 'Сохранить сейчас'}
+        </button>
       </Card>
       <SaveManagerCard state={state} importSaveData={importSaveData} onExported={onExported} />
       <Card>
