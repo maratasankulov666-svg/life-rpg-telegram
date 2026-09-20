@@ -473,6 +473,109 @@ function applyCoinLedger(prev, type, amount, source, title, sourceId) {
 }
 
 const STORAGE_KEY = 'liferpg_state_v1';
+const CLOUD_CHUNK_SIZE = 3500; // запас от лимита Telegram CloudStorage — 4096 символов на одно значение
+const CLOUD_MAX_CHUNKS = 200;  // защита от переполнения (лимит Telegram — 1024 ключа на всё приложение)
+const STORAGE_TIMEOUT_MS = 8000; // чтобы кнопка "Сохранить" никогда не зависала навечно, если бридж не ответил
+
+// Реальное персистентное хранилище для Telegram Mini App.
+// `window.storage` — API песочницы Claude-артефактов, его нет в реальном Telegram.
+// localStorage тоже ненадёжен здесь: Telegram может очищать данные WebView при
+// полном закрытии мини-приложения (особенно на iOS) — из-за этого сохранение то
+// "зависало", то прогресс слетал после закрытия.
+// Правильное хранилище для Mini App — Telegram Cloud Storage: данные лежат на
+// стороне Telegram, привязаны к аккаунту, переживают закрытие приложения и смену
+// устройства. У него callback-API и лимит в 4096 символов на значение — поэтому
+// большое состояние режется на пронумерованные части (key__c0, key__c1, ...).
+// localStorage оставлен как запасной вариант — например, при тестировании вне Telegram.
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}: нет ответа за ${Math.round(ms / 1000)}с`)), ms);
+    promise.then(
+      v => { clearTimeout(timer); resolve(v); },
+      e => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
+function getCloudStorage() {
+  try {
+    const tg = typeof window !== 'undefined' ? window.Telegram : null;
+    return (tg && tg.WebApp && tg.WebApp.CloudStorage) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function cloudGetKeys(cs) {
+  return withTimeout(new Promise((resolve, reject) => {
+    cs.getKeys((err, keys) => err ? reject(err) : resolve(keys || []));
+  }), STORAGE_TIMEOUT_MS, 'CloudStorage.getKeys');
+}
+function cloudGetItem(cs, key) {
+  return withTimeout(new Promise((resolve, reject) => {
+    cs.getItem(key, (err, value) => err ? reject(err) : resolve(value));
+  }), STORAGE_TIMEOUT_MS, 'CloudStorage.getItem');
+}
+function cloudSetItem(cs, key, value) {
+  return withTimeout(new Promise((resolve, reject) => {
+    cs.setItem(key, value, (err, ok) => err ? reject(err) : resolve(ok));
+  }), STORAGE_TIMEOUT_MS, 'CloudStorage.setItem');
+}
+function cloudRemoveItems(cs, keys) {
+  if (!keys.length) return Promise.resolve(true);
+  return withTimeout(new Promise((resolve, reject) => {
+    cs.removeItems(keys, (err, ok) => err ? reject(err) : resolve(ok));
+  }), STORAGE_TIMEOUT_MS, 'CloudStorage.removeItems');
+}
+
+const storageAdapter = {
+  async get(key) {
+    const cs = getCloudStorage();
+    if (cs) {
+      const prefix = key + '__c';
+      const allKeys = await cloudGetKeys(cs);
+      const chunkKeys = allKeys
+        .filter(k => k.indexOf(prefix) === 0)
+        .sort((a, b) => parseInt(a.slice(prefix.length), 10) - parseInt(b.slice(prefix.length), 10));
+      if (chunkKeys.length === 0) return null;
+      let combined = '';
+      for (const k of chunkKeys) {
+        combined += (await cloudGetItem(cs, k)) || '';
+      }
+      return combined ? { value: combined } : null;
+    }
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = window.localStorage.getItem(key);
+      return raw !== null ? { value: raw } : null;
+    }
+    return null;
+  },
+  async set(key, value) {
+    const cs = getCloudStorage();
+    if (cs) {
+      const prefix = key + '__c';
+      const chunks = [];
+      for (let i = 0; i < value.length; i += CLOUD_CHUNK_SIZE) chunks.push(value.slice(i, i + CLOUD_CHUNK_SIZE));
+      if (chunks.length === 0) chunks.push(''); // пустое состояние — сохраняем хотя бы одну часть
+      if (chunks.length > CLOUD_MAX_CHUNKS) {
+        throw new Error(`Сохранение слишком большое для Telegram Cloud Storage (${chunks.length} частей) — используй Экспорт ниже.`);
+      }
+      // если новое сохранение короче предыдущего — подчистить лишние "хвостовые" части
+      const existingKeys = await cloudGetKeys(cs);
+      const staleKeys = existingKeys.filter(k => k.indexOf(prefix) === 0 && parseInt(k.slice(prefix.length), 10) >= chunks.length);
+      if (staleKeys.length) await cloudRemoveItems(cs, staleKeys);
+      for (let i = 0; i < chunks.length; i++) {
+        await cloudSetItem(cs, `${prefix}${i}`, chunks[i]);
+      }
+      return { value };
+    }
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(key, value);
+      return { value };
+    }
+    return null;
+  },
+};
 
 function xpNeeded(level) {
   return Math.round(90 + level * 25 + Math.pow(level, 1.5) * 3);
@@ -553,8 +656,18 @@ function migrateFinance(rawFinance) {
   return f;
 }
 
-function todayStr() { return new Date().toISOString().slice(0, 10); }
-function monthStr() { return new Date().toISOString().slice(0, 7); }
+// Локальная дата, а не UTC: toISOString() отдаёт дату по Гринвичу, из-за чего
+// в Казахстане (UTC+5) с полуночи до ~5 утра по местному времени запись
+// уходила под "вчера" и пропадала из сегодняшнего списка (Тело/Калории).
+function pad2(n) { return String(n).padStart(2, '0'); }
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function monthStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
 // --- Real AI calls (proxied through our own /api/ai backend, which holds the key; backend is Gemini, free tier) ---
@@ -1302,12 +1415,12 @@ export default function LifeRPG() {
   useEffect(() => {
     (async () => {
       let s = null;
-      const hasStorage = typeof window !== 'undefined' && window.storage && typeof window.storage.get === 'function';
+      const hasStorage = typeof window !== 'undefined' && (getCloudStorage() || typeof window.localStorage !== 'undefined');
       if (!hasStorage) {
         setStorageStatus('unavailable');
       } else {
         try {
-          const res = await window.storage.get(STORAGE_KEY, false);
+          const res = await storageAdapter.get(STORAGE_KEY);
           if (res && res.value) s = JSON.parse(res.value);
           setStorageStatus('ok');
         } catch (e) {
@@ -1346,12 +1459,12 @@ export default function LifeRPG() {
   }, [state, loaded, storageStatus]);
 
   async function saveNow() {
-    if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
+    if (typeof window === 'undefined' || (!getCloudStorage() && typeof window.localStorage === 'undefined')) {
       setStorageStatus('unavailable');
       return false;
     }
     try {
-      const res = await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
+      const res = await storageAdapter.set(STORAGE_KEY, JSON.stringify(state));
       if (!res) {
         setStorageStatus('error');
         setStorageError('set() вернул null — платформа отклонила запись');
