@@ -475,18 +475,18 @@ function applyCoinLedger(prev, type, amount, source, title, sourceId) {
 const STORAGE_KEY = 'liferpg_state_v1';
 const CLOUD_CHUNK_SIZE = 3500; // запас от лимита Telegram CloudStorage — 4096 символов на одно значение
 const CLOUD_MAX_CHUNKS = 200;  // защита от переполнения (лимит Telegram — 1024 ключа на всё приложение)
-const STORAGE_TIMEOUT_MS = 8000; // чтобы кнопка "Сохранить" никогда не зависала навечно, если бридж не ответил
+const CLOUD_TIMEOUT_MS = 4000; // фоновая попытка — не должна ничего задерживать, поэтому таймаут короткий
 
 // Реальное персистентное хранилище для Telegram Mini App.
 // `window.storage` — API песочницы Claude-артефактов, его нет в реальном Telegram.
-// localStorage тоже ненадёжен здесь: Telegram может очищать данные WebView при
-// полном закрытии мини-приложения (особенно на iOS) — из-за этого сохранение то
-// "зависало", то прогресс слетал после закрытия.
-// Правильное хранилище для Mini App — Telegram Cloud Storage: данные лежат на
-// стороне Telegram, привязаны к аккаунту, переживают закрытие приложения и смену
-// устройства. У него callback-API и лимит в 4096 символов на значение — поэтому
-// большое состояние режется на пронумерованные части (key__c0, key__c1, ...).
-// localStorage оставлен как запасной вариант — например, при тестировании вне Telegram.
+// Telegram Cloud Storage теоретически правильный вариант (данные на стороне
+// Telegram, переживают закрытие и смену устройства), но на практике его
+// callback иногда вообще не отвечает (проверено — CloudStorage.setItem висел
+// без ответа), и раньше это вешало кнопку "Сохранить" намертво.
+// Поэтому теперь так: localStorage — ОСНОВНОЕ и ОБЯЗАТЕЛЬНОЕ хранилище (быстрый,
+// синхронный вызов, не может зависнуть) — от него зависит статус "сохранено/ошибка".
+// Cloud Storage — доп. попытка синхронизации в фоне, "и хорошо, если получится":
+// она никогда не блокирует сохранение и не портит статус, если Telegram не отвечает.
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label}: нет ответа за ${Math.round(ms / 1000)}с`)), ms);
@@ -500,7 +500,11 @@ function withTimeout(promise, ms, label) {
 function getCloudStorage() {
   try {
     const tg = typeof window !== 'undefined' ? window.Telegram : null;
-    return (tg && tg.WebApp && tg.WebApp.CloudStorage) || null;
+    // isVersionAtLeast('6.9') — минимальная версия Bot API с Cloud Storage;
+    // если клиент старый/десктопный и не тянет — сразу не лезем в этот мост.
+    if (!tg || !tg.WebApp || !tg.WebApp.CloudStorage) return null;
+    if (typeof tg.WebApp.isVersionAtLeast === 'function' && !tg.WebApp.isVersionAtLeast('6.9')) return null;
+    return tg.WebApp.CloudStorage;
   } catch (e) {
     return null;
   }
@@ -509,71 +513,93 @@ function getCloudStorage() {
 function cloudGetKeys(cs) {
   return withTimeout(new Promise((resolve, reject) => {
     cs.getKeys((err, keys) => err ? reject(err) : resolve(keys || []));
-  }), STORAGE_TIMEOUT_MS, 'CloudStorage.getKeys');
+  }), CLOUD_TIMEOUT_MS, 'CloudStorage.getKeys');
 }
 function cloudGetItem(cs, key) {
   return withTimeout(new Promise((resolve, reject) => {
     cs.getItem(key, (err, value) => err ? reject(err) : resolve(value));
-  }), STORAGE_TIMEOUT_MS, 'CloudStorage.getItem');
+  }), CLOUD_TIMEOUT_MS, 'CloudStorage.getItem');
 }
 function cloudSetItem(cs, key, value) {
   return withTimeout(new Promise((resolve, reject) => {
     cs.setItem(key, value, (err, ok) => err ? reject(err) : resolve(ok));
-  }), STORAGE_TIMEOUT_MS, 'CloudStorage.setItem');
+  }), CLOUD_TIMEOUT_MS, 'CloudStorage.setItem');
 }
 function cloudRemoveItems(cs, keys) {
   if (!keys.length) return Promise.resolve(true);
   return withTimeout(new Promise((resolve, reject) => {
     cs.removeItems(keys, (err, ok) => err ? reject(err) : resolve(ok));
-  }), STORAGE_TIMEOUT_MS, 'CloudStorage.removeItems');
+  }), CLOUD_TIMEOUT_MS, 'CloudStorage.removeItems');
+}
+
+// Фоновая, не блокирующая попытка зеркалировать сохранение в Cloud Storage.
+// Любая ошибка/таймаут здесь молча проглатывается — localStorage уже отработал
+// основное сохранение к этому моменту, статус пользователю на это не завязан.
+let cloudSyncInFlight = false;
+async function trySyncToCloud(key, value) {
+  if (cloudSyncInFlight) return; // не запускаем вторую синхронизацию поверх незавершённой
+  const cs = getCloudStorage();
+  if (!cs) return;
+  cloudSyncInFlight = true;
+  try {
+    const prefix = key + '__c';
+    const chunks = [];
+    for (let i = 0; i < value.length; i += CLOUD_CHUNK_SIZE) chunks.push(value.slice(i, i + CLOUD_CHUNK_SIZE));
+    if (chunks.length === 0) chunks.push('');
+    if (chunks.length > CLOUD_MAX_CHUNKS) return; // слишком большое для Cloud Storage — просто пропускаем фоновую копию
+    const existingKeys = await cloudGetKeys(cs);
+    const staleKeys = existingKeys.filter(k => k.indexOf(prefix) === 0 && parseInt(k.slice(prefix.length), 10) >= chunks.length);
+    if (staleKeys.length) await cloudRemoveItems(cs, staleKeys);
+    for (let i = 0; i < chunks.length; i++) {
+      await cloudSetItem(cs, `${prefix}${i}`, chunks[i]);
+    }
+  } catch (e) {
+    // тихо игнорируем — это необязательная фоновая копия
+  } finally {
+    cloudSyncInFlight = false;
+  }
+}
+
+async function tryReadFromCloud(key) {
+  const cs = getCloudStorage();
+  if (!cs) return null;
+  try {
+    const prefix = key + '__c';
+    const allKeys = await cloudGetKeys(cs);
+    const chunkKeys = allKeys
+      .filter(k => k.indexOf(prefix) === 0)
+      .sort((a, b) => parseInt(a.slice(prefix.length), 10) - parseInt(b.slice(prefix.length), 10));
+    if (chunkKeys.length === 0) return null;
+    let combined = '';
+    for (const k of chunkKeys) {
+      combined += (await cloudGetItem(cs, k)) || '';
+    }
+    return combined || null;
+  } catch (e) {
+    return null;
+  }
 }
 
 const storageAdapter = {
   async get(key) {
-    const cs = getCloudStorage();
-    if (cs) {
-      const prefix = key + '__c';
-      const allKeys = await cloudGetKeys(cs);
-      const chunkKeys = allKeys
-        .filter(k => k.indexOf(prefix) === 0)
-        .sort((a, b) => parseInt(a.slice(prefix.length), 10) - parseInt(b.slice(prefix.length), 10));
-      if (chunkKeys.length === 0) return null;
-      let combined = '';
-      for (const k of chunkKeys) {
-        combined += (await cloudGetItem(cs, k)) || '';
-      }
-      return combined ? { value: combined } : null;
-    }
     if (typeof window !== 'undefined' && window.localStorage) {
       const raw = window.localStorage.getItem(key);
-      return raw !== null ? { value: raw } : null;
+      if (raw !== null) return { value: raw };
+    }
+    // В localStorage пусто (например, впервые открыли на новом устройстве) —
+    // как запасной шанс пробуем то, что могло раньше уехать в Cloud Storage.
+    const cloudValue = await tryReadFromCloud(key);
+    if (cloudValue) {
+      try { if (window.localStorage) window.localStorage.setItem(key, cloudValue); } catch (e) {}
+      return { value: cloudValue };
     }
     return null;
   },
   async set(key, value) {
-    const cs = getCloudStorage();
-    if (cs) {
-      const prefix = key + '__c';
-      const chunks = [];
-      for (let i = 0; i < value.length; i += CLOUD_CHUNK_SIZE) chunks.push(value.slice(i, i + CLOUD_CHUNK_SIZE));
-      if (chunks.length === 0) chunks.push(''); // пустое состояние — сохраняем хотя бы одну часть
-      if (chunks.length > CLOUD_MAX_CHUNKS) {
-        throw new Error(`Сохранение слишком большое для Telegram Cloud Storage (${chunks.length} частей) — используй Экспорт ниже.`);
-      }
-      // если новое сохранение короче предыдущего — подчистить лишние "хвостовые" части
-      const existingKeys = await cloudGetKeys(cs);
-      const staleKeys = existingKeys.filter(k => k.indexOf(prefix) === 0 && parseInt(k.slice(prefix.length), 10) >= chunks.length);
-      if (staleKeys.length) await cloudRemoveItems(cs, staleKeys);
-      for (let i = 0; i < chunks.length; i++) {
-        await cloudSetItem(cs, `${prefix}${i}`, chunks[i]);
-      }
-      return { value };
-    }
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(key, value);
-      return { value };
-    }
-    return null;
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    window.localStorage.setItem(key, value); // основное сохранение — быстрое, синхронное, не может зависнуть
+    trySyncToCloud(key, value); // фоном, без ожидания — пусть пробует, но ни на что не влияет
+    return { value };
   },
 };
 
@@ -1415,7 +1441,7 @@ export default function LifeRPG() {
   useEffect(() => {
     (async () => {
       let s = null;
-      const hasStorage = typeof window !== 'undefined' && (getCloudStorage() || typeof window.localStorage !== 'undefined');
+      const hasStorage = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
       if (!hasStorage) {
         setStorageStatus('unavailable');
       } else {
@@ -1459,7 +1485,7 @@ export default function LifeRPG() {
   }, [state, loaded, storageStatus]);
 
   async function saveNow() {
-    if (typeof window === 'undefined' || (!getCloudStorage() && typeof window.localStorage === 'undefined')) {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
       setStorageStatus('unavailable');
       return false;
     }
