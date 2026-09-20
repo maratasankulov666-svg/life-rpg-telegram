@@ -831,14 +831,6 @@ const FOOD_PHOTO_SYSTEM_PROMPT = 'Ты — нутрициолог-ассисте
   + 'Отвечай СТРОГО одним JSON-объектом, без пояснений, markdown или текста до/после: '
   + '{"title": string (кратко, по-русски, что на фото), "calories": number, "protein": number, "fat": number, "carbs": number}';
 
-function parseJsonObjectLoose(text) {
-  const cleaned = text.replace(/```json|```/g, '').trim();
-  const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start === -1 || end === -1) throw new Error('no JSON object found');
-  return JSON.parse(cleaned.slice(start, end + 1));
-}
-
 function normalizeFoodSpec(spec) {
   return {
     title: (spec && typeof spec.title === 'string' && spec.title.trim()) || 'Приём пищи',
