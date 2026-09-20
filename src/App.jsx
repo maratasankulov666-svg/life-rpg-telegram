@@ -820,6 +820,17 @@ function dailyCalorieTarget(body, currentWeight) {
   return { calories: Math.round(tdee), tdee: Math.round(tdee), mode: 'maintain' };
 }
 
+// Ориентировочные цели по БЖУ, отталкиваясь от целевых калорий и веса: белок — под сохранение
+// мышц при дефиците (~1.6 г/кг), жир — ~27% калорий, углеводы — остаток.
+function macroTargets(target, weight) {
+  if (!target) return null;
+  const proteinG = weight ? Math.round(weight * 1.6) : Math.round((target * 0.3) / 4);
+  const fatG = Math.round((target * 0.27) / 9);
+  const carbsCal = Math.max(0, target - proteinG * 4 - fatG * 9);
+  const carbsG = Math.round(carbsCal / 4);
+  return { proteinG, fatG, carbsG };
+}
+
 // --- AI: подсчёт калорий по тексту или по фото еды ---
 const FOOD_TEXT_SYSTEM_PROMPT = 'Ты — нутрициолог-ассистент в приложении Life RPG. Пользователь словами описывает, что съел '
   + '(порция может быть не указана явно). Оцени по обычным взрослым порциям примерное количество калорий и БЖУ. '
@@ -952,6 +963,7 @@ function defaultState() {
     lastBonusDate: null,
     lastMonthlyDate: null,
     lastEventDate: null,
+    lastNutritionCheckDate: null,
     lastAIQuestDate: null,
     lastOpenDate: null,
     hasSeenOnboarding: false,
@@ -1043,6 +1055,34 @@ function ensureDailyContent(s) {
     });
     chronicle.unshift({ id: uid(), ts: Date.now(), type: 'SYSTEM', text: `Возвращение после ${daysAway} дн. отсутствия — старые задания не сгорели, добавлено несколько лёгких Recovery Quest.` });
   }
+
+  // Итог вчерашнего дня по калориям -> реально влияет на Discipline (раз в день, один раз за переход даты).
+  const closingDay = ns.lastOpenDate;
+  if (closingDay && closingDay !== today && ns.lastNutritionCheckDate !== closingDay) {
+    const dayEntries = (ns.nutrition && ns.nutrition.entries || []).filter(e => e.date === closingDay);
+    if (dayEntries.length > 0) {
+      const totalCal = dayEntries.reduce((sum, e) => sum + e.calories, 0);
+      const sortedW = [...(ns.body.weightLog || [])].sort((a, b) => a.date.localeCompare(b.date));
+      const weightOnDay = sortedW.length ? sortedW[sortedW.length - 1].weight : null;
+      const calTarget = dailyCalorieTarget(ns.body, weightOnDay);
+      if (calTarget) {
+        const stats = { ...ns.stats };
+        if (totalCal <= calTarget.calories * 1.05) {
+          stats.discipline = Math.min(100, (stats.discipline || 0) + 1);
+          ns.stats = stats;
+          const res = applyXP(ns.character, 15);
+          ns.character = res.character;
+          chronicle.unshift({ id: uid(), ts: Date.now(), type: 'SYSTEM', text: `🥗 Вчера уложился в лимит калорий (${totalCal}/${calTarget.calories}) — +1 Discipline, +15 XP` });
+        } else {
+          stats.discipline = Math.max(0, (stats.discipline || 0) - 1);
+          ns.stats = stats;
+          chronicle.unshift({ id: uid(), ts: Date.now(), type: 'SYSTEM', text: `🍔 Вчера перебор по калориям (${totalCal}/${calTarget.calories}) — -1 Discipline` });
+        }
+      }
+    }
+    ns.lastNutritionCheckDate = closingDay;
+  }
+
   ns.lastOpenDate = today;
   if (ns.lastStatsSnapshotDate !== today) {
     ns.lastStatsSnapshotDate = today;
@@ -5107,15 +5147,16 @@ function PreviewWeightCard({ heightCm, startWeight }) {
 
 // Раздел «Калории»: дневник питания с оценкой по тексту/фото через AI (тот же бесплатный
 // провайдер, что и остальной AI в приложении) и обычным ручным вводом.
-function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
+function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteFoodEntry }) {
   const [mode, setMode] = useState(null); // null | 'text' | 'manual'
   const [textInput, setTextInput] = useState('');
   const [manualTitle, setManualTitle] = useState('');
   const [manualCal, setManualCal] = useState('');
   const [loading, setLoading] = useState(false);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [error, setError] = useState(null);
   const [pending, setPending] = useState(null); // {title,calories,protein,fat,carbs,source}
+  const [photoPreview, setPhotoPreview] = useState(null); // dataUrl, ждёт комментария перед отправкой в AI
+  const [photoNote, setPhotoNote] = useState('');
 
   const today = todayStr();
   const todayEntries = nutrition.entries.filter(e => e.date === today).sort((a, b) => b.ts - a.ts);
@@ -5123,6 +5164,11 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
   const remaining = target - eaten;
   const pct = Math.min(100, Math.round((eaten / target) * 100));
   const over = eaten > target;
+
+  const macroT = macroTargets(target, currentWeight);
+  const eatenProtein = todayEntries.reduce((s, e) => s + (e.protein || 0), 0);
+  const eatenFat = todayEntries.reduce((s, e) => s + (e.fat || 0), 0);
+  const eatenCarbs = todayEntries.reduce((s, e) => s + (e.carbs || 0), 0);
 
   async function handleTextSubmit() {
     if (!textInput.trim()) return;
@@ -5138,14 +5184,24 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
   async function handlePhotoChange(e) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    setUploadingPhoto(true); setError(null);
+    setError(null);
     try {
       const dataUrl = await resizeImageFile(file, 700, 0.75);
-      const spec = await estimateFoodFromPhoto(dataUrl);
-      setPending({ ...spec, source: 'photo' });
+      setPhotoPreview(dataUrl);
+      setPhotoNote('');
     } catch (err) { setError(friendlyAIError(err)); }
-    setUploadingPhoto(false);
     e.target.value = '';
+  }
+
+  async function handlePhotoSubmit() {
+    if (!photoPreview) return;
+    setLoading(true); setError(null);
+    try {
+      const spec = await estimateFoodFromPhoto(photoPreview, photoNote.trim());
+      setPending({ ...spec, source: 'photo' });
+      setPhotoPreview(null); setPhotoNote('');
+    } catch (err) { setError(friendlyAIError(err)); }
+    setLoading(false);
   }
 
   function confirmPending() {
@@ -5172,6 +5228,24 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
         <span style={{ color: over ? COLORS.crimson : COLORS.gold }}>{over ? `+${-remaining}` : remaining} ккал</span>
       </div>
 
+      {macroT && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 12 }}>
+          {[
+            ['Белки', eatenProtein, macroT.proteinG, COLORS.teal],
+            ['Жиры', eatenFat, macroT.fatG, COLORS.gold],
+            ['Углеводы', eatenCarbs, macroT.carbsG, COLORS.violet],
+          ].map(([label, val, tgt, color]) => (
+            <div key={label} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 8px' }}>
+              <div style={{ fontSize: 9, color: COLORS.textMuted }}>{label}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginTop: 2 }}>{val}<span style={{ color: COLORS.textMuted, fontWeight: 400 }}>/{tgt} г</span></div>
+              <div style={{ height: 4, borderRadius: 99, background: COLORS.bgCard, marginTop: 4, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.min(100, Math.round((val / tgt) * 100))}%`, background: color }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {error && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 8 }}>{error}</div>}
 
       {pending && (
@@ -5187,7 +5261,24 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
         </div>
       )}
 
-      {!pending && mode === 'text' && (
+      {!pending && photoPreview && (
+        <div style={{ marginTop: 10, background: COLORS.bgCardAlt, borderRadius: 10, padding: 10, border: `1px solid ${COLORS.violet}55` }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <img src={photoPreview} alt="" style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+            <textarea className="lrpg-input" placeholder="Комментарий (необязательно): без риса, маленькая порция, две штуки..."
+              value={photoNote} onChange={e => setPhotoNote(e.target.value)} rows={3} style={{ resize: 'none', fontSize: 12 }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="lrpg-btn" disabled={loading} onClick={handlePhotoSubmit}
+              style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: loading ? 0.6 : 1 }}>
+              {loading ? 'Смотрю...' : 'Посчитать (AI)'}
+            </button>
+            <button className="lrpg-btn" onClick={() => { setPhotoPreview(null); setPhotoNote(''); }} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
+          </div>
+        </div>
+      )}
+
+      {!pending && !photoPreview && mode === 'text' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <input className="lrpg-input" placeholder="Что съел? напр. «плов, большая тарелка»" value={textInput} onChange={e => setTextInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleTextSubmit()} autoFocus />
@@ -5201,7 +5292,7 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
         </div>
       )}
 
-      {!pending && mode === 'manual' && (
+      {!pending && !photoPreview && mode === 'manual' && (
         <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <input className="lrpg-input" placeholder="Название" value={manualTitle} onChange={e => setManualTitle(e.target.value)} autoFocus />
           <input className="lrpg-input" type="number" min={0} placeholder="Калорий" value={manualCal} onChange={e => setManualCal(e.target.value)} />
@@ -5217,14 +5308,14 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
         </div>
       )}
 
-      {!pending && !mode && (
+      {!pending && !photoPreview && !mode && (
         <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
           <button className="lrpg-btn" onClick={() => setMode('text')} style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <MessageCircle size={13} /> Текстом
           </button>
-          <label className="lrpg-btn" style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, opacity: uploadingPhoto ? 0.6 : 1 }}>
-            <Camera size={13} /> {uploadingPhoto ? 'Смотрю...' : 'Фото'}
-            <input type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} disabled={uploadingPhoto} style={{ display: 'none' }} />
+          <label className="lrpg-btn" style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+            <Camera size={13} /> Фото
+            <input type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} style={{ display: 'none' }} />
           </label>
           <button className="lrpg-btn" onClick={() => setMode('manual')} style={{ flex: 1, background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted, borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11 }}>
             Вручную
@@ -5248,7 +5339,7 @@ function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
         </div>
       )}
       <div style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 10 }}>
-        AI оценивает калории приблизительно по описанию/фото — сверяй с этикеткой, если важна точность.
+        AI оценивает калории приблизительно по описанию/фото — сверяй с этикеткой, если важна точность. Уложился в лимит за день — +1 Discipline на следующий день, перебор — −1.
       </div>
     </Card>
   );
@@ -5366,7 +5457,7 @@ function BodyTab({ body, setBodyProfile, logWeight, nutrition, addFoodEntry, del
       )}
 
       {deficitCalories && (
-        <NutritionCard target={deficitCalories} nutrition={nutrition} addFoodEntry={addFoodEntry} deleteFoodEntry={deleteFoodEntry} />
+        <NutritionCard target={deficitCalories} currentWeight={currentWeight} nutrition={nutrition} addFoodEntry={addFoodEntry} deleteFoodEntry={deleteFoodEntry} />
       )}
     </div>
   );
