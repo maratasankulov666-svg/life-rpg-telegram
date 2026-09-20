@@ -423,12 +423,54 @@ const GARAGE_EXPENSE_CATEGORIES = [
 ];
 
 const DEFAULT_REWARDS = [
-  { id: 'r1', title: '30 минут игры', cost: 90 },
-  { id: 'r2', title: 'Любимая еда', cost: 260 },
-  { id: 'r3', title: 'Фильм вечером', cost: 260 },
-  { id: 'r4', title: 'Поспать на час дольше', cost: 200 },
-  { id: 'r5', title: 'Пропустить одну рутину', cost: 340 },
+  { id: 'r1', title: '30 минут игры', cost: 90, category: 'reallife', description: '', icon: '🎮', enabled: true, custom: false },
+  { id: 'r2', title: 'Любимая еда', cost: 260, category: 'reallife', description: '', icon: '🍔', enabled: true, custom: false },
+  { id: 'r3', title: 'Фильм вечером', cost: 260, category: 'reallife', description: '', icon: '🎬', enabled: true, custom: false },
+  { id: 'r4', title: 'Поспать на час дольше', cost: 200, category: 'reallife', description: '', icon: '😴', enabled: true, custom: false },
+  { id: 'r5', title: 'Пропустить одну рутину', cost: 340, category: 'reallife', description: '', icon: '⏭️', enabled: true, custom: false },
 ];
+
+// Раздел 15 ТЗ Coins Economy — каталог косметики. Хранится как статичный каталог (не в save),
+// покупка добавляет id в cosmetics.unlocked. Никогда не влияет на Stats/XP/Level.
+const COSMETIC_CATALOG = [
+  { id: 'frame_common', name: 'Обычная рамка', type: 'frame', cost: 100, rarity: 'Common', preview: '⬜' },
+  { id: 'frame_rare', name: 'Редкая рамка', type: 'frame', cost: 500, rarity: 'Rare', preview: '🟦' },
+  { id: 'frame_epic', name: 'Эпическая рамка', type: 'frame', cost: 1500, rarity: 'Epic', preview: '🟪' },
+  { id: 'title_adventurer', name: 'Титул: Авантюрист', type: 'title', cost: 300, rarity: 'Common', preview: 'Авантюрист' },
+  { id: 'title_legend', name: 'Титул: Легенда', type: 'title', cost: 1000, rarity: 'Rare', preview: 'Легенда' },
+  { id: 'bg_dusk', name: 'Фон: Сумерки', type: 'background', cost: 500, rarity: 'Common', preview: '🌆' },
+  { id: 'bg_void', name: 'Фон: Пустота', type: 'background', cost: 2000, rarity: 'Epic', preview: '🌌' },
+  { id: 'name_gold', name: 'Золотое имя', type: 'nameColor', cost: 400, rarity: 'Common', preview: COLORS.gold },
+  { id: 'name_violet', name: 'Фиолетовое имя', type: 'nameColor', cost: 400, rarity: 'Common', preview: COLORS.violet },
+];
+const REWARD_CATEGORIES = [
+  { key: 'reallife', label: 'Реальные награды', icon: '🎁' },
+  { key: 'cosmetic', label: 'Косметика', icon: '✨' },
+  { key: 'collection', label: 'Коллекции', icon: '🏺' },
+];
+
+// Раздел 7+21 ТЗ Coins Economy: единая точка изменения баланса Coins — ВСЕ операции
+// (заработал/потратил/вернул/скорректировал) проходят сюда и попадают в Coin Ledger.
+// amount для earn/spend/refund всегда положительный (направление задаёт type);
+// для adjustment amount — со знаком (штрафы за пропуск квеста и т.п.).
+function applyCoinLedger(prev, type, amount, source, title, sourceId) {
+  const noop = { coins: prev.coins, coinsEarnedAllTime: prev.coinsEarnedAllTime, coinsSpentAllTime: prev.coinsSpentAllTime, coinTransactions: prev.coinTransactions };
+  let coins = prev.coins, earned = prev.coinsEarnedAllTime, spent = prev.coinsSpentAllTime, amt;
+  if (type === 'adjustment') {
+    amt = Math.round(amount);
+    if (amt === 0) return noop;
+    coins = Math.max(0, coins + amt);
+  } else {
+    amt = Math.abs(Math.round(amount));
+    if (amt <= 0) return noop;
+    if (type === 'earn') { coins += amt; earned += amt; }
+    else if (type === 'spend') { coins = Math.max(0, coins - amt); spent += amt; }
+    else if (type === 'refund') { coins += amt; spent = Math.max(0, spent - amt); }
+  }
+  const entry = { id: uid(), type, amount: amt, source, sourceId: sourceId || null, title, timestamp: Date.now() };
+  const coinTransactions = [...prev.coinTransactions, entry].slice(-300); // храним последние 300 операций, чтобы не раздувать save
+  return { coins, coinsEarnedAllTime: earned, coinsSpentAllTime: spent, coinTransactions };
+}
 
 const STORAGE_KEY = 'liferpg_state_v1';
 
@@ -763,6 +805,67 @@ function computeTDEE(bmr, activityLevel) {
   return bmr * lvl.mult;
 }
 
+// Раздел «Калории»: дневная цель по ккал с учётом того, худеет/набирает/держит вес пользователь.
+function dailyCalorieTarget(body, currentWeight) {
+  if (!currentWeight || !body.heightCm) return null;
+  const bmr = computeBMR(currentWeight, body.heightCm, body.age, body.sex);
+  const tdee = computeTDEE(bmr, body.activityLevel);
+  const floor = body.sex === 'female' ? 1200 : 1500;
+  if (body.targetWeight && body.targetWeight < currentWeight - 0.5) {
+    return { calories: Math.max(Math.round(tdee - 500), floor), tdee: Math.round(tdee), mode: 'cut' };
+  }
+  if (body.targetWeight && body.targetWeight > currentWeight + 0.5) {
+    return { calories: Math.round(tdee + 300), tdee: Math.round(tdee), mode: 'bulk' };
+  }
+  return { calories: Math.round(tdee), tdee: Math.round(tdee), mode: 'maintain' };
+}
+
+// --- AI: подсчёт калорий по тексту или по фото еды ---
+const FOOD_TEXT_SYSTEM_PROMPT = 'Ты — нутрициолог-ассистент в приложении Life RPG. Пользователь словами описывает, что съел '
+  + '(порция может быть не указана явно). Оцени по обычным взрослым порциям примерное количество калорий и БЖУ. '
+  + 'Отвечай СТРОГО одним JSON-объектом, без пояснений, markdown или текста до/после: '
+  + '{"title": string (кратко, по-русски), "calories": number, "protein": number, "fat": number, "carbs": number}';
+
+const FOOD_PHOTO_SYSTEM_PROMPT = 'Ты — нутрициолог-ассистент в приложении Life RPG. Пользователь прислал фото еды. '
+  + 'Определи, что на фото, оцени размер порции на глаз и посчитай примерные калории и БЖУ (если еды несколько — сложи всё в одну оценку). '
+  + 'Отвечай СТРОГО одним JSON-объектом, без пояснений, markdown или текста до/после: '
+  + '{"title": string (кратко, по-русски, что на фото), "calories": number, "protein": number, "fat": number, "carbs": number}';
+
+function parseJsonObjectLoose(text) {
+  const cleaned = text.replace(/```json|```/g, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('no JSON object found');
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+function normalizeFoodSpec(spec) {
+  return {
+    title: (spec && typeof spec.title === 'string' && spec.title.trim()) || 'Приём пищи',
+    calories: Math.max(0, Math.round(Number(spec && spec.calories) || 0)),
+    protein: Math.max(0, Math.round(Number(spec && spec.protein) || 0)),
+    fat: Math.max(0, Math.round(Number(spec && spec.fat) || 0)),
+    carbs: Math.max(0, Math.round(Number(spec && spec.carbs) || 0)),
+  };
+}
+
+async function estimateFoodFromText(description) {
+  const text = await callClaudeAPIWithRetry(FOOD_TEXT_SYSTEM_PROMPT, [{ role: 'user', content: description }]);
+  return normalizeFoodSpec(parseJsonObjectLoose(text));
+}
+
+async function estimateFoodFromPhoto(dataUrl, note) {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
+  if (!match) throw new Error('bad image data');
+  const [, mediaType, base64] = match;
+  const content = [
+    { type: 'text', text: note ? `Комментарий пользователя: ${note}` : 'Оцени калории и БЖУ по этому фото еды.' },
+    { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+  ];
+  const text = await callClaudeAPIWithRetry(FOOD_PHOTO_SYSTEM_PROMPT, [{ role: 'user', content }]);
+  return normalizeFoodSpec(parseJsonObjectLoose(text));
+}
+
 const BODY_SHAPES = [
   { torsoW: 26, bellyR: 0, shoulderW: 40, limbW: 10, headR: 20 },
   { torsoW: 32, bellyR: 0, shoulderW: 44, limbW: 12, headR: 21 },
@@ -799,6 +902,14 @@ function defaultState() {
   return {
     character: { name: 'Герой', level: 1, xp: 0, title: null, photo: null },
     coins: 50,
+    // Coin Ledger — раздел 7+21 ТЗ Coins Economy. Игровая экономика полностью отделена
+    // от реального прогресса (XP/Stats/Level/Finance) и от реальных денег (UZS).
+    coinsEarnedAllTime: 50,
+    coinsSpentAllTime: 0,
+    coinTransactions: [], // {id,type:'earn'|'spend'|'refund'|'adjustment',amount,source,sourceId,title,timestamp}
+    cosmetics: { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } },
+    lastRefundAt: null, // раздел 14 ТЗ — ограничение: один refund за период
+    lastPurchase: null, // {id,rewardId,title,cost,ts,isCustom} — для Refund
     dailyCheckin: null,
     stats,
     quests: [],
@@ -840,6 +951,9 @@ function defaultState() {
       activityLevel: 'moderate',
       targetWeight: null,
       weightLog: [],
+    },
+    nutrition: {
+      entries: [], // {id,title,calories,protein,fat,carbs,date,source:'text'|'photo'|'manual',ts}
     },
     rewards: DEFAULT_REWARDS,
     chronicle: [{ id: uid(), ts: Date.now(), type: 'SYSTEM', text: 'Персонаж создан. Путь начался.' }],
@@ -1172,11 +1286,20 @@ export default function LifeRPG() {
       }
       const defs = defaultState();
       s = { ...defs, ...(s || {}) };
+      // Coin Ledger — если сохранение старое (до этого ТЗ), инициализируем историю с текущего баланса,
+      // а не с нуля/50, чтобы не занижать реальный накопленный прогресс игрока.
+      if (typeof s.coinsEarnedAllTime !== 'number') s.coinsEarnedAllTime = s.coins || 0;
+      if (typeof s.coinsSpentAllTime !== 'number') s.coinsSpentAllTime = 0;
+      if (!Array.isArray(s.coinTransactions)) s.coinTransactions = [];
+      if (!s.cosmetics) s.cosmetics = { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } };
+      s.rewards = (Array.isArray(s.rewards) ? s.rewards : DEFAULT_REWARDS).map(r => ({ category: 'reallife', description: '', icon: '🎁', enabled: true, ...r }));
       s.finance = { ...defs.finance, ...(s.finance || {}) };
       s.finance.taxi = { ...defs.finance.taxi, ...(s.finance.taxi || {}) };
       s.finance = migrateFinance(s.finance);
       s.garage = { ...defs.garage, ...(s.garage || {}) };
       s.body = { ...defs.body, ...(s.body || {}) };
+      s.nutrition = { ...defs.nutrition, ...(s.nutrition || {}) };
+      if (!Array.isArray(s.nutrition.entries)) s.nutrition.entries = [];
       const result = ensureDailyContent(s);
       setState(result.state);
       setWelcomeBackDays(result.welcomeBackDays);
@@ -1314,7 +1437,9 @@ export default function LifeRPG() {
         setLevelUpFlash(character.level);
         setTimeout(() => setLevelUpFlash(null), 3200);
       }
-      return { ...prev, character, coins: prev.coins + awardedCoins + bonusCoins, stats, quests, chronicle };
+      const ledger1 = applyCoinLedger(prev, 'earn', awardedCoins, 'quest', q.title, q.id);
+      const ledger2 = bonusCoins > 0 ? applyCoinLedger({ ...prev, ...ledger1 }, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : ledger1;
+      return { ...prev, ...ledger2, character, stats, quests, chronicle };
     });
   }
 
@@ -1324,7 +1449,7 @@ export default function LifeRPG() {
       if (!q || amount <= 0) return prev;
       const remaining = Math.max(0, (q.bossHPRemaining ?? q.bossHP) - amount);
       const defeated = remaining <= 0;
-      let quests, chronicle = prev.chronicle, character = prev.character, coins = prev.coins;
+      let quests, chronicle = prev.chronicle, character = prev.character, ledger = { coins: prev.coins, coinsEarnedAllTime: prev.coinsEarnedAllTime, coinsSpentAllTime: prev.coinsSpentAllTime, coinTransactions: prev.coinTransactions };
       const stats = { ...prev.stats };
       if (defeated) {
         const mult = antiFarmMultiplier(prev.chronicle, q.title, prev.difficultyMode);
@@ -1332,7 +1457,8 @@ export default function LifeRPG() {
         const awardedCoins = Math.max(0, Math.round(q.coins * mult));
         const res = applyXP(character, awardedXp);
         character = res.character;
-        coins += awardedCoins + res.bonusCoins;
+        ledger = applyCoinLedger(prev, 'earn', awardedCoins, 'quest', q.title, q.id);
+        if (res.bonusCoins > 0) ledger = applyCoinLedger({ ...prev, ...ledger }, 'earn', res.bonusCoins, 'levelup', 'Level-Up Bonus');
         if (q.stat && stats[q.stat] !== undefined) stats[q.stat] = Math.min(100, stats[q.stat] + 2);
         if (q.secondaryStat && stats[q.secondaryStat] !== undefined) stats[q.secondaryStat] = Math.min(100, stats[q.secondaryStat] + 1);
         quests = prev.quests.map(x => x.id === id ? { ...x, status: 'completed', completedAt: Date.now(), bossHPRemaining: 0 } : x);
@@ -1346,15 +1472,14 @@ export default function LifeRPG() {
         quests = prev.quests.map(x => x.id === id ? { ...x, bossHPRemaining: remaining } : x);
         chronicle = pushChronicle(chronicle, 'SYSTEM', `⚔️ Удар по «${q.title}»: -${amount} HP (осталось ${remaining})`);
       }
-      return { ...prev, quests, chronicle, character, coins, stats };
+      return { ...prev, quests, chronicle, character, stats, ...ledger };
     });
   }
 
   function skipQuest(q, reason) {
     setState(prev => {
-      let coins = prev.coins;
       const stats = { ...prev.stats };
-      let text;
+      let text, ledger = { coins: prev.coins, coinsEarnedAllTime: prev.coinsEarnedAllTime, coinsSpentAllTime: prev.coinsSpentAllTime, coinTransactions: prev.coinTransactions };
       if (reason) {
         text = `${q.title} — пропущено (уважительная причина: ${reason})`;
       } else {
@@ -1363,15 +1488,15 @@ export default function LifeRPG() {
         const recoveryMult = prev.recoveryMode ? 0.5 : 1;
         const finalMult = diffMult * recoveryMult;
         const pen = { coins: Math.round(base.coins * finalMult), stat: Math.max(base.stat ? 1 : 0, Math.round(base.stat * finalMult)) };
-        const deduct = Math.min(coins, pen.coins);
-        coins -= deduct;
+        const deduct = Math.min(prev.coins, pen.coins);
+        ledger = applyCoinLedger(prev, 'adjustment', -deduct, 'penalty', `Штраф: ${q.title}`, q.id);
         if (pen.stat && q.stat && stats[q.stat] !== undefined) {
           stats[q.stat] = Math.max(0, stats[q.stat] - pen.stat);
         }
         text = `${q.title} — пропущено (-${deduct} Coins${pen.stat && q.stat ? `, -${pen.stat} ${STAT_LABEL[q.stat]}` : ''})`;
       }
       const quests = prev.quests.map(x => x.id === q.id ? { ...x, status: 'skipped', skipReason: reason || null } : x);
-      return { ...prev, coins, stats, quests, chronicle: pushChronicle(prev.chronicle, 'QUEST_SKIPPED', text) };
+      return { ...prev, ...ledger, stats, quests, chronicle: pushChronicle(prev.chronicle, 'QUEST_SKIPPED', text) };
     });
     setSkipTarget(null);
   }
@@ -1511,23 +1636,71 @@ export default function LifeRPG() {
     });
   }
 
+  // Раздел 13 ТЗ: покупка — проверка баланса, списание через Ledger, запись в Chronicle,
+  // фиксация последней покупки для возможного Refund (раздел 14).
   function buyReward(r) {
     setState(prev => {
+      if (r.enabled === false) return prev;
       if (prev.coins < r.cost) return prev;
+      const ledger = applyCoinLedger(prev, 'spend', r.cost, 'shop', r.title, r.id);
       return {
-        ...prev, coins: prev.coins - r.cost,
+        ...prev, ...ledger,
+        lastPurchase: { id: uid(), rewardId: r.id, title: r.title, cost: r.cost, ts: Date.now(), isCustom: !!r.custom },
         chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `Куплено: ${r.title} (-${r.cost} Coins)`),
       };
     });
   }
 
-  function addReward(title, cost) {
-    setState(prev => ({ ...prev, rewards: [...prev.rewards, { id: uid(), title, cost }] }));
+  // Раздел 14 ТЗ: ограниченный Refund — только для пользовательских наград, одна отмена в сутки,
+  // не возвращает XP/Stats/Level (это Coins-only операция).
+  function refundLastPurchase() {
+    setState(prev => {
+      const lp = prev.lastPurchase;
+      if (!lp || !lp.isCustom) return prev;
+      if (prev.lastRefundAt && Date.now() - prev.lastRefundAt < 86400000) return prev;
+      const ledger = applyCoinLedger(prev, 'refund', lp.cost, 'refund', `Возврат: ${lp.title}`, lp.rewardId);
+      return {
+        ...prev, ...ledger, lastPurchase: null, lastRefundAt: Date.now(),
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `↩️ Возврат покупки: ${lp.title} (+${lp.cost} Coins)`),
+      };
+    });
+  }
+
+  function addReward(data) {
+    setState(prev => ({
+      ...prev,
+      rewards: [...prev.rewards, {
+        id: uid(), title: data.title, cost: Math.max(1, Math.round(Number(data.cost) || 0)),
+        category: data.category || 'reallife', description: data.description || '', icon: data.icon || '🎁',
+        enabled: true, custom: true,
+      }],
+    }));
     setShowAddReward(false);
   }
 
   function deleteReward(id) {
     setState(prev => ({ ...prev, rewards: prev.rewards.filter(r => r.id !== id) }));
+  }
+
+  function setRewardEnabled(id, enabled) {
+    setState(prev => ({ ...prev, rewards: prev.rewards.map(r => r.id === id ? { ...r, enabled } : r) }));
+  }
+
+  // Раздел 15 ТЗ: покупка косметики — тот же Ledger, никогда не трогает Stats/XP/Level.
+  function buyCosmetic(item) {
+    setState(prev => {
+      if (prev.cosmetics.unlocked.includes(item.id) || prev.coins < item.cost) return prev;
+      const ledger = applyCoinLedger(prev, 'spend', item.cost, 'shop_cosmetic', item.name, item.id);
+      return {
+        ...prev, ...ledger,
+        cosmetics: { ...prev.cosmetics, unlocked: [...prev.cosmetics.unlocked, item.id] },
+        chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `✨ Косметика: ${item.name} (-${item.cost} Coins)`),
+      };
+    });
+  }
+
+  function equipCosmetic(type, id) {
+    setState(prev => ({ ...prev, cosmetics: { ...prev.cosmetics, equipped: { ...prev.cosmetics.equipped, [type]: id } } }));
   }
 
   function setDailyCheckin(data) {
@@ -1632,8 +1805,9 @@ export default function LifeRPG() {
       const cashBalance = prev.finance.cashBalance + (type === 'income' ? amount : -amount);
       const { character, bonusCoins } = applyXP(prev.character, 8);
       const chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `${type === 'income' ? '💰 Доход' : '💸 Расход'}: ${tx.title} — ${amount}`);
+      const ledger = bonusCoins > 0 ? applyCoinLedger(prev, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : {};
       return {
-        ...prev, character, coins: prev.coins + bonusCoins, chronicle,
+        ...prev, character, ...ledger, chronicle,
         finance: { ...prev.finance, transactions: [...prev.finance.transactions, tx], cashBalance },
       };
     });
@@ -1710,7 +1884,7 @@ export default function LifeRPG() {
         chronicle = pushChronicle(chronicle, 'DEBT_DEFEATED', `💀 Debt Boss «${debt.title}» повержен!`);
       }
       return {
-        ...prev, character, coins: prev.coins + bonusCoins, chronicle,
+        ...prev, character, ...(bonusCoins > 0 ? applyCoinLedger(prev, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : {}), chronicle,
         finance: { ...prev.finance, debts, transactions: [...prev.finance.transactions, tx], cashBalance },
       };
     });
@@ -1738,13 +1912,19 @@ export default function LifeRPG() {
       };
       const cashBalance = prev.finance.cashBalance - amount;
       let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `Отложено ${amount} к цели «${goal.title}» (${saved}/${goal.target})`);
-      let character = prev.character, coins = prev.coins;
+      let character = prev.character, ledgerState = prev;
       if (saved >= goal.target && !wasComplete) {
         const res = applyXP(character, 60);
-        character = res.character; coins += res.bonusCoins + 40;
+        character = res.character;
+        ledgerState = applyCoinLedger(ledgerState, 'earn', 40, 'finance_goal', `Цель достигнута: ${goal.title}`, goal.id);
+        if (res.bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', res.bonusCoins, 'levelup', 'Level-Up Bonus');
         chronicle = pushChronicle(chronicle, 'GOAL_COMPLETED', `💰 Финансовая цель «${goal.title}» достигнута!`);
       }
-      return { ...prev, finance: { ...prev.finance, savingsGoals, transactions: [...prev.finance.transactions, tx], cashBalance }, character, coins, chronicle };
+      return {
+        ...prev, finance: { ...prev.finance, savingsGoals, transactions: [...prev.finance.transactions, tx], cashBalance },
+        character, chronicle, coins: ledgerState.coins, coinsEarnedAllTime: ledgerState.coinsEarnedAllTime,
+        coinsSpentAllTime: ledgerState.coinsSpentAllTime, coinTransactions: ledgerState.coinTransactions,
+      };
     });
   }
 
@@ -1768,12 +1948,18 @@ export default function LifeRPG() {
       const tx = { id: uid(), type: 'income', title: 'Заказ такси', amount, category: 'taxi', date: today, recurring: false, essential: false, source: 'taxi', mirrorSourceId: oid, ts: Date.now() };
       const cashBalance = prev.finance.cashBalance + amount;
       const { character, bonusCoins } = applyXP(prev.character, 8);
-      const coins = prev.coins + bonusCoins + Math.max(1, Math.round(amount * 0.03));
+      const tipCoins = Math.max(1, Math.round(amount * 0.03));
+      let ledgerState = applyCoinLedger(prev, 'earn', tipCoins, 'taxi', 'Заказ такси', oid);
+      if (bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus');
       let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `🚕 Заказ: +${amount} (сегодня: ${todayBefore + amount})`);
       if (todayBefore < prev.finance.taxi.dailyTarget && todayBefore + amount >= prev.finance.taxi.dailyTarget) {
         chronicle = pushChronicle(chronicle, 'SYSTEM', '🎯 Дневная цель по заказам выполнена!');
       }
-      return { ...prev, character, coins, chronicle, finance: { ...prev.finance, taxi: { ...prev.finance.taxi, orders }, transactions: [...prev.finance.transactions, tx], cashBalance } };
+      return {
+        ...prev, character, chronicle, coins: ledgerState.coins, coinsEarnedAllTime: ledgerState.coinsEarnedAllTime,
+        coinsSpentAllTime: ledgerState.coinsSpentAllTime, coinTransactions: ledgerState.coinTransactions,
+        finance: { ...prev.finance, taxi: { ...prev.finance.taxi, orders }, transactions: [...prev.finance.transactions, tx], cashBalance },
+      };
     });
   }
 
@@ -1893,6 +2079,32 @@ export default function LifeRPG() {
     });
   }
 
+  // Раздел «Калории»: запись в дневник питания — небольшой XP за сам факт учёта,
+  // без Coins и без бонуса за число, чтобы не превращать это в фарм.
+  function addFoodEntry(data) {
+    setState(prev => {
+      const entry = {
+        id: uid(), title: (data.title || '').trim() || 'Приём пищи',
+        calories: Math.max(0, Math.round(Number(data.calories) || 0)),
+        protein: Math.max(0, Math.round(Number(data.protein) || 0)),
+        fat: Math.max(0, Math.round(Number(data.fat) || 0)),
+        carbs: Math.max(0, Math.round(Number(data.carbs) || 0)),
+        date: data.date || todayStr(), source: data.source || 'manual', ts: Date.now(),
+      };
+      const { character, bonusCoins } = applyXP(prev.character, 5);
+      const ledger = bonusCoins > 0 ? applyCoinLedger(prev, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : {};
+      return {
+        ...prev, character, ...ledger,
+        nutrition: { ...prev.nutrition, entries: [...prev.nutrition.entries, entry] },
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `🍽️ ${entry.title} — ${entry.calories} ккал`),
+      };
+    });
+  }
+
+  function deleteFoodEntry(id) {
+    setState(prev => ({ ...prev, nutrition: { ...prev.nutrition, entries: prev.nutrition.entries.filter(e => e.id !== id) } }));
+  }
+
   function addQuestsFromGoal(goal, specs) {
     setState(prev => {
       let order = prev.nextOrder;
@@ -1962,11 +2174,18 @@ export default function LifeRPG() {
       }
       const defs = defaultState();
       parsed = { ...defs, ...parsed };
+      if (typeof parsed.coinsEarnedAllTime !== 'number') parsed.coinsEarnedAllTime = parsed.coins || 0;
+      if (typeof parsed.coinsSpentAllTime !== 'number') parsed.coinsSpentAllTime = 0;
+      if (!Array.isArray(parsed.coinTransactions)) parsed.coinTransactions = [];
+      if (!parsed.cosmetics) parsed.cosmetics = { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } };
+      parsed.rewards = (Array.isArray(parsed.rewards) ? parsed.rewards : DEFAULT_REWARDS).map(r => ({ category: 'reallife', description: '', icon: '🎁', enabled: true, ...r }));
       parsed.finance = { ...defs.finance, ...(parsed.finance || {}) };
       parsed.finance.taxi = { ...defs.finance.taxi, ...(parsed.finance.taxi || {}) };
       parsed.finance = migrateFinance(parsed.finance);
       parsed.garage = { ...defs.garage, ...(parsed.garage || {}) };
       parsed.body = { ...defs.body, ...(parsed.body || {}) };
+      parsed.nutrition = { ...defs.nutrition, ...(parsed.nutrition || {}) };
+      if (!Array.isArray(parsed.nutrition.entries)) parsed.nutrition.entries = [];
       const result = ensureDailyContent(parsed);
       setState(result.state);
       setWelcomeBackDays(0);
@@ -1983,37 +2202,41 @@ export default function LifeRPG() {
     const toUnlockLevels = LEVEL_UNLOCKS.filter(l => !state.unlockedLevels.includes(l.level) && state.character.level >= l.level);
     if (toUnlock.length === 0 && toUnlockSets.length === 0 && toUnlockLevels.length === 0) return;
     setState(prev => {
-      let coins = prev.coins;
+      let ledgerState = prev;
       let character = prev.character;
       let chronicle = prev.chronicle;
       const unlocked = [...prev.unlockedAchievements];
       toUnlock.forEach(a => {
         if (unlocked.includes(a.id)) return;
         unlocked.push(a.id);
-        coins += a.coins;
+        ledgerState = applyCoinLedger(ledgerState, 'earn', a.coins, 'achievement', a.label, a.id);
         const res = applyXP(character, a.xp);
         character = res.character;
-        coins += res.bonusCoins;
+        if (res.bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', res.bonusCoins, 'levelup', 'Level-Up Bonus');
         chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🏆 Achievement: ${a.label} (${a.rarity}) — +${a.xp} XP, +${a.coins} Coins`);
       });
       const unlockedSets = [...prev.unlockedSets];
       toUnlockSets.forEach(s => {
         if (unlockedSets.includes(s.key)) return;
         unlockedSets.push(s.key);
-        coins += s.coins;
+        ledgerState = applyCoinLedger(ledgerState, 'earn', s.coins, 'set_bonus', s.label, s.key);
         const res = applyXP(character, s.xp);
         character = res.character;
-        coins += res.bonusCoins;
+        if (res.bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', res.bonusCoins, 'levelup', 'Level-Up Bonus');
         chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🛡️ Set Bonus: ${s.label} собран целиком — +${s.xp} XP, +${s.coins} Coins`);
       });
       const unlockedLevels = [...prev.unlockedLevels];
       toUnlockLevels.forEach(l => {
         if (unlockedLevels.includes(l.level)) return;
         unlockedLevels.push(l.level);
-        coins += l.coins;
+        ledgerState = applyCoinLedger(ledgerState, 'earn', l.coins, 'levelup', `Уровень ${l.level}: ${l.title}`, l.level);
         chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🔓 Уровень ${l.level}: ${l.title} — ${l.desc} (+${l.coins} Coins)`);
       });
-      return { ...prev, coins, character, chronicle, unlockedAchievements: unlocked, unlockedSets, unlockedLevels };
+      return {
+        ...prev, coins: ledgerState.coins, coinsEarnedAllTime: ledgerState.coinsEarnedAllTime,
+        coinsSpentAllTime: ledgerState.coinsSpentAllTime, coinTransactions: ledgerState.coinTransactions,
+        character, chronicle, unlockedAchievements: unlocked, unlockedSets, unlockedLevels,
+      };
     });
   }, [loaded, state]);
 
@@ -2222,7 +2445,10 @@ export default function LifeRPG() {
               <WorldTab stats={state.stats} unlockedAchievements={state.unlockedAchievements} state={state} />
             )}
             {subTab.progress === 'body' && (
-              <BodyTab body={state.body} setBodyProfile={setBodyProfile} logWeight={logWeight} />
+              <BodyTab
+                body={state.body} setBodyProfile={setBodyProfile} logWeight={logWeight}
+                nutrition={state.nutrition} addFoodEntry={addFoodEntry} deleteFoodEntry={deleteFoodEntry}
+              />
             )}
             {subTab.progress === 'inventory' && <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} />}
           </>
@@ -2236,9 +2462,12 @@ export default function LifeRPG() {
             />
             {subTab.more === 'shop' && (
               <ShopTab
-                rewards={state.rewards} coins={state.coins} buyReward={buyReward}
+                rewards={state.rewards} coins={state.coins} coinsEarnedAllTime={state.coinsEarnedAllTime}
+                coinsSpentAllTime={state.coinsSpentAllTime} coinTransactions={state.coinTransactions}
+                cosmetics={state.cosmetics} lastPurchase={state.lastPurchase} lastRefundAt={state.lastRefundAt}
+                buyReward={buyReward} buyCosmetic={buyCosmetic} equipCosmetic={equipCosmetic} refundLastPurchase={refundLastPurchase}
                 showAddReward={showAddReward} setShowAddReward={setShowAddReward}
-                addReward={addReward} deleteReward={deleteReward}
+                addReward={addReward} deleteReward={deleteReward} setRewardEnabled={setRewardEnabled}
               />
             )}
             {subTab.more === 'chronicle' && (
@@ -2308,7 +2537,7 @@ function HomeTab({ state, xpNeed, mainQuests, restCount, weakestStat, topGoal, e
       <Card style={{ background: `linear-gradient(135deg, ${COLORS.bgCardAlt}, ${COLORS.bgCard})` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <label className="lrpg-btn" style={{ position: 'relative', width: 52, height: 52, borderRadius: '50%', overflow: 'hidden', background: COLORS.bgCardAlt, border: `2px solid ${COLORS.gold}55`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <label className="lrpg-btn" style={{ position: 'relative', width: 52, height: 52, borderRadius: '50%', overflow: 'hidden', background: COLORS.bgCardAlt, border: `2px solid ${state.cosmetics.equipped.frame ? (COSMETIC_CATALOG.find(c => c.id === state.cosmetics.equipped.frame)?.rarity === 'Epic' ? COLORS.violet : COSMETIC_CATALOG.find(c => c.id === state.cosmetics.equipped.frame)?.rarity === 'Rare' ? COLORS.teal : COLORS.gold) : COLORS.gold + '55'}`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {state.character.photo ? (
                 <img src={state.character.photo} alt={state.character.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
@@ -2327,7 +2556,7 @@ function HomeTab({ state, xpNeed, mainQuests, restCount, weakestStat, topGoal, e
                 />
               ) : (
                 <div onClick={() => setEditingName(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>{state.character.name}</span>
+                  <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: state.cosmetics.equipped.nameColor ? (COSMETIC_CATALOG.find(c => c.id === state.cosmetics.equipped.nameColor)?.preview || undefined) : undefined }}>{state.character.name}</span>
                   <Pencil size={12} color={COLORS.textMuted} />
                 </div>
               )}
@@ -3047,15 +3276,75 @@ function StatsTab({ stats, energy, todayCheckin, setDailyCheckin, chronicle, rec
   );
 }
 
-function ShopTab({ rewards, coins, buyReward, showAddReward, setShowAddReward, addReward, deleteReward }) {
+function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled }) {
   const [title, setTitle] = useState('');
   const [cost, setCost] = useState(100);
+  const [category, setCategory] = useState('reallife');
+  const [icon, setIcon] = useState('🎁');
+  const [shopTab, setShopTab] = useState('reallife');
+  const [showWallet, setShowWallet] = useState(false);
+
+  const weekAgo = Date.now() - 7 * 86400000;
+  const weekTx = coinTransactions.filter(t => t.timestamp >= weekAgo);
+  const weekEarned = weekTx.filter(t => t.type === 'earn' || t.type === 'refund').reduce((s, t) => s + t.amount, 0);
+  const weekSpent = weekTx.filter(t => t.type === 'spend').reduce((s, t) => s + t.amount, 0);
+  const spends = coinTransactions.filter(t => t.type === 'spend');
+  const largestPurchase = spends.reduce((max, t) => t.amount > (max?.amount || 0) ? t : max, null);
+  const purchaseCounts = {};
+  spends.forEach(t => { purchaseCounts[t.title] = (purchaseCounts[t.title] || 0) + 1; });
+  const mostPurchased = Object.entries(purchaseCounts).sort((a, b) => b[1] - a[1])[0];
+  const avgDaily = coinsEarnedAllTime > 0 ? Math.round(weekEarned / 7) : 0;
+  const canRefund = lastPurchase && lastPurchase.isCustom && (!lastRefundAt || Date.now() - lastRefundAt >= 86400000);
+
+  const shopTabs = [['reallife', '🎁 Реальные'], ['cosmetic', '✨ Косметика'], ['collection', '🏺 Коллекции']];
+  const customInCategory = rewards.filter(r => r.category === shopTab);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <Card style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 13, color: COLORS.textMuted }}>Твой баланс</span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLORS.gold, fontWeight: 700, fontSize: 16 }}><CoinsIcon size={16} /> {coins}</span>
+      <Card style={{ cursor: 'pointer' }} onClick={() => setShowWallet(v => !v)}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: COLORS.textMuted }}>🪙 Coin Wallet</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLORS.gold, fontWeight: 700, fontSize: 16 }}><CoinsIcon size={16} /> {coins}</span>
+        </div>
+        {showWallet && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
+              <div style={{ background: COLORS.bgCardAlt, borderRadius: 6, padding: 6 }}><div style={{ color: COLORS.textMuted }}>Earned All Time</div><div style={{ fontWeight: 700, color: COLORS.teal }}>{coinsEarnedAllTime}</div></div>
+              <div style={{ background: COLORS.bgCardAlt, borderRadius: 6, padding: 6 }}><div style={{ color: COLORS.textMuted }}>Spent All Time</div><div style={{ fontWeight: 700, color: COLORS.crimson }}>{coinsSpentAllTime}</div></div>
+              <div style={{ background: COLORS.bgCardAlt, borderRadius: 6, padding: 6 }}><div style={{ color: COLORS.textMuted }}>За неделю: заработано</div><div style={{ fontWeight: 700, color: COLORS.teal }}>{weekEarned}</div></div>
+              <div style={{ background: COLORS.bgCardAlt, borderRadius: 6, padding: 6 }}><div style={{ color: COLORS.textMuted }}>За неделю: потрачено</div><div style={{ fontWeight: 700, color: COLORS.crimson }}>{weekSpent}</div></div>
+              <div style={{ background: COLORS.bgCardAlt, borderRadius: 6, padding: 6 }}><div style={{ color: COLORS.textMuted }}>Среднее в день</div><div style={{ fontWeight: 700 }}>{avgDaily}</div></div>
+              <div style={{ background: COLORS.bgCardAlt, borderRadius: 6, padding: 6 }}><div style={{ color: COLORS.textMuted }}>Крупнейшая покупка</div><div style={{ fontWeight: 700 }}>{largestPurchase ? `${largestPurchase.amount} (${largestPurchase.title})` : '—'}</div></div>
+            </div>
+            {mostPurchased && <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6 }}>Чаще всего покупаешь: <b style={{ color: COLORS.text }}>{mostPurchased[0]}</b> ({mostPurchased[1]}×)</div>}
+            {canRefund && (
+              <button className="lrpg-btn" onClick={refundLastPurchase} style={{ marginTop: 8, width: '100%', background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '7px 0', fontSize: 12, color: COLORS.teal, fontWeight: 700 }}>
+                ↩️ Вернуть последнюю покупку: {lastPurchase.title} (+{lastPurchase.cost})
+              </button>
+            )}
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 10, marginBottom: 4 }}>Последние операции</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
+              {coinTransactions.slice(-15).reverse().map(t => (
+                <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ color: COLORS.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{t.title}</span>
+                  <span style={{ color: (t.type === 'earn' || t.type === 'refund') ? COLORS.teal : COLORS.crimson, fontWeight: 700 }}>{(t.type === 'earn' || t.type === 'refund') ? '+' : '-'}{t.amount}</span>
+                </div>
+              ))}
+              {coinTransactions.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Операций пока нет.</div>}
+            </div>
+          </div>
+        )}
       </Card>
+
+      <div style={{ display: 'flex', gap: 4 }}>
+        {shopTabs.map(([k, l]) => (
+          <button key={k} className="lrpg-btn" onClick={() => setShopTab(k)} style={{
+            flex: 1, padding: '7px 0', borderRadius: 8, fontWeight: 700, fontSize: 11,
+            background: shopTab === k ? COLORS.violet : COLORS.bgCardAlt, color: shopTab === k ? '#100E1C' : COLORS.textMuted,
+          }}>{l}</button>
+        ))}
+      </div>
+
       <button className="lrpg-btn" onClick={() => setShowAddReward(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
         <Plus size={16} /> Своя награда
       </button>
@@ -3063,23 +3352,67 @@ function ShopTab({ rewards, coins, buyReward, showAddReward, setShowAddReward, a
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input className="lrpg-input" placeholder="Название награды" value={title} onChange={e => setTitle(e.target.value)} />
-            <input className="lrpg-input" type="number" min={0} placeholder="Стоимость в Coins" value={cost} onChange={e => setCost(Number(e.target.value))} />
-            <button className="lrpg-btn" disabled={!title.trim()} onClick={() => { addReward(title.trim(), cost); setTitle(''); setCost(100); }}
+            <input className="lrpg-input" type="number" min={1} placeholder="Стоимость в Coins" value={cost} onChange={e => setCost(Number(e.target.value))} />
+            <select className="lrpg-input" value={category} onChange={e => setCategory(e.target.value)}>
+              {REWARD_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}
+            </select>
+            <input className="lrpg-input" placeholder="Эмодзи-иконка (необязательно)" value={icon} onChange={e => setIcon(e.target.value)} maxLength={4} />
+            <button className="lrpg-btn" disabled={!title.trim()} onClick={() => { addReward({ title: title.trim(), cost, category, icon }); setTitle(''); setCost(100); }}
               style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
               Добавить
             </button>
           </div>
         </Card>
       )}
-      {rewards.map(r => (
-        <Card key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+
+      {shopTab === 'cosmetic' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {COSMETIC_CATALOG.map(item => {
+            const owned = cosmetics.unlocked.includes(item.id);
+            const equipped = cosmetics.equipped[item.type] === item.id;
+            return (
+              <Card key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 18 }}>{item.type === 'nameColor' ? '🎨' : item.preview}</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{item.name}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted }}>{item.rarity} · {owned ? 'куплено' : `${item.cost} Coins`}</div>
+                  </div>
+                </div>
+                {owned ? (
+                  <button className="lrpg-btn" onClick={() => equipCosmetic(item.type, equipped ? null : item.id)} style={{
+                    background: equipped ? COLORS.teal : COLORS.bgCardAlt, color: equipped ? '#0B1F1D' : COLORS.textMuted,
+                    borderRadius: 8, padding: '7px 12px', fontWeight: 700, fontSize: 11, border: equipped ? 'none' : `1px solid ${COLORS.border}`,
+                  }}>{equipped ? 'Надето' : 'Надеть'}</button>
+                ) : (
+                  <button className="lrpg-btn" disabled={coins < item.cost} onClick={() => buyCosmetic(item)} style={{
+                    background: coins >= item.cost ? COLORS.gold : COLORS.bgCardAlt, color: coins >= item.cost ? '#1a1305' : COLORS.textMuted,
+                    borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: coins >= item.cost ? 'none' : `1px solid ${COLORS.border}`,
+                  }}>Купить</button>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {shopTab !== 'cosmetic' && customInCategory.length === 0 && (
+        <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Пока пусто в этой категории — добавь свою награду выше.</div></Card>
+      )}
+      {shopTab !== 'cosmetic' && customInCategory.map(r => (
+        <Card key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: r.enabled === false ? 0.5 : 1 }}>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>{r.title}</div>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{r.icon} {r.title}</div>
             <div style={{ fontSize: 12, color: COLORS.gold, fontWeight: 600 }}>{r.cost} Coins</div>
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="lrpg-btn" disabled={coins < r.cost} onClick={() => buyReward(r)}
-              style={{ background: coins >= r.cost ? COLORS.gold : COLORS.bgCardAlt, color: coins >= r.cost ? '#1a1305' : COLORS.textMuted, borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: coins >= r.cost ? 'none' : `1px solid ${COLORS.border}` }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {r.custom && (
+              <button className="lrpg-btn" onClick={() => setRewardEnabled(r.id, r.enabled === false)} style={{ background: 'none' }} title={r.enabled === false ? 'Включить' : 'Скрыть'}>
+                {r.enabled === false ? <Plus size={13} color={COLORS.textMuted} /> : <X size={13} color={COLORS.textMuted} />}
+              </button>
+            )}
+            <button className="lrpg-btn" disabled={coins < r.cost || r.enabled === false} onClick={() => buyReward(r)}
+              style={{ background: (coins >= r.cost && r.enabled !== false) ? COLORS.gold : COLORS.bgCardAlt, color: (coins >= r.cost && r.enabled !== false) ? '#1a1305' : COLORS.textMuted, borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: (coins >= r.cost && r.enabled !== false) ? 'none' : `1px solid ${COLORS.border}` }}>
               Купить
             </button>
             <button className="lrpg-btn" onClick={() => deleteReward(r.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
@@ -4780,7 +5113,156 @@ function PreviewWeightCard({ heightCm, startWeight }) {
   );
 }
 
-function BodyTab({ body, setBodyProfile, logWeight }) {
+// Раздел «Калории»: дневник питания с оценкой по тексту/фото через AI (тот же бесплатный
+// провайдер, что и остальной AI в приложении) и обычным ручным вводом.
+function NutritionCard({ target, nutrition, addFoodEntry, deleteFoodEntry }) {
+  const [mode, setMode] = useState(null); // null | 'text' | 'manual'
+  const [textInput, setTextInput] = useState('');
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualCal, setManualCal] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [error, setError] = useState(null);
+  const [pending, setPending] = useState(null); // {title,calories,protein,fat,carbs,source}
+
+  const today = todayStr();
+  const todayEntries = nutrition.entries.filter(e => e.date === today).sort((a, b) => b.ts - a.ts);
+  const eaten = todayEntries.reduce((s, e) => s + e.calories, 0);
+  const remaining = target - eaten;
+  const pct = Math.min(100, Math.round((eaten / target) * 100));
+  const over = eaten > target;
+
+  async function handleTextSubmit() {
+    if (!textInput.trim()) return;
+    setLoading(true); setError(null);
+    try {
+      const spec = await estimateFoodFromText(textInput.trim());
+      setPending({ ...spec, source: 'text' });
+      setTextInput(''); setMode(null);
+    } catch (e) { setError(friendlyAIError(e)); }
+    setLoading(false);
+  }
+
+  async function handlePhotoChange(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setUploadingPhoto(true); setError(null);
+    try {
+      const dataUrl = await resizeImageFile(file, 700, 0.75);
+      const spec = await estimateFoodFromPhoto(dataUrl);
+      setPending({ ...spec, source: 'photo' });
+    } catch (err) { setError(friendlyAIError(err)); }
+    setUploadingPhoto(false);
+    e.target.value = '';
+  }
+
+  function confirmPending() {
+    if (!pending) return;
+    addFoodEntry(pending);
+    setPending(null);
+  }
+
+  return (
+    <Card>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Utensils size={14} color={COLORS.gold} /> Калории сегодня
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+        <span style={{ color: COLORS.textMuted }}>Съедено</span>
+        <span style={{ fontWeight: 700 }}>{eaten} / {target} ккал</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 99, background: COLORS.bgCardAlt, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: over ? COLORS.crimson : COLORS.teal, transition: 'width .3s' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 13, fontWeight: 700 }}>
+        <span>{over ? 'Перебор' : 'Осталось'}</span>
+        <span style={{ color: over ? COLORS.crimson : COLORS.gold }}>{over ? `+${-remaining}` : remaining} ккал</span>
+      </div>
+
+      {error && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 8 }}>{error}</div>}
+
+      {pending && (
+        <div style={{ marginTop: 10, background: COLORS.bgCardAlt, borderRadius: 10, padding: 10, border: `1px solid ${COLORS.violet}55` }}>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 6 }}>{pending.source === 'photo' ? '📷 Оценка по фото' : '📝 Оценка по описанию'} — проверь и поправь при необходимости:</div>
+          <input className="lrpg-input" value={pending.title} onChange={e => setPending(p => ({ ...p, title: e.target.value }))} style={{ marginBottom: 6 }} />
+          <input className="lrpg-input" type="number" min={0} value={pending.calories} onChange={e => setPending(p => ({ ...p, calories: Number(e.target.value) || 0 }))} style={{ marginBottom: 6 }} />
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 8 }}>Б {pending.protein} г · Ж {pending.fat} г · У {pending.carbs} г</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="lrpg-btn" onClick={confirmPending} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12 }}>Добавить в дневник</button>
+            <button className="lrpg-btn" onClick={() => setPending(null)} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
+          </div>
+        </div>
+      )}
+
+      {!pending && mode === 'text' && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <input className="lrpg-input" placeholder="Что съел? напр. «плов, большая тарелка»" value={textInput} onChange={e => setTextInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleTextSubmit()} autoFocus />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="lrpg-btn" disabled={loading || !textInput.trim()} onClick={handleTextSubmit}
+              style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: loading || !textInput.trim() ? 0.5 : 1 }}>
+              {loading ? 'Считаю...' : 'Посчитать (AI)'}
+            </button>
+            <button className="lrpg-btn" onClick={() => { setMode(null); setTextInput(''); }} style={{ background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
+          </div>
+        </div>
+      )}
+
+      {!pending && mode === 'manual' && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <input className="lrpg-input" placeholder="Название" value={manualTitle} onChange={e => setManualTitle(e.target.value)} autoFocus />
+          <input className="lrpg-input" type="number" min={0} placeholder="Калорий" value={manualCal} onChange={e => setManualCal(e.target.value)} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="lrpg-btn" disabled={!manualTitle.trim() || !manualCal} onClick={() => {
+              addFoodEntry({ title: manualTitle.trim(), calories: manualCal, source: 'manual' });
+              setManualTitle(''); setManualCal(''); setMode(null);
+            }} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: (!manualTitle.trim() || !manualCal) ? 0.5 : 1 }}>
+              Добавить
+            </button>
+            <button className="lrpg-btn" onClick={() => setMode(null)} style={{ background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
+          </div>
+        </div>
+      )}
+
+      {!pending && !mode && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+          <button className="lrpg-btn" onClick={() => setMode('text')} style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+            <MessageCircle size={13} /> Текстом
+          </button>
+          <label className="lrpg-btn" style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, opacity: uploadingPhoto ? 0.6 : 1 }}>
+            <Camera size={13} /> {uploadingPhoto ? 'Смотрю...' : 'Фото'}
+            <input type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} disabled={uploadingPhoto} style={{ display: 'none' }} />
+          </label>
+          <button className="lrpg-btn" onClick={() => setMode('manual')} style={{ flex: 1, background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted, borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11 }}>
+            Вручную
+          </button>
+        </div>
+      )}
+
+      {todayEntries.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 12 }}>
+          {todayEntries.map(e => (
+            <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 8px' }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }}>
+                {e.source === 'photo' ? '📷 ' : e.source === 'text' ? '📝 ' : ''}{e.title}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <b>{e.calories} ккал</b>
+                <button className="lrpg-btn" onClick={() => deleteFoodEntry(e.id)} style={{ background: 'none' }}><Trash2 size={12} color={COLORS.textMuted} /></button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 10 }}>
+        AI оценивает калории приблизительно по описанию/фото — сверяй с этикеткой, если важна точность.
+      </div>
+    </Card>
+  );
+}
+
+function BodyTab({ body, setBodyProfile, logWeight, nutrition, addFoodEntry, deleteFoodEntry }) {
   const [weightInput, setWeightInput] = useState('');
   const sortedLog = [...body.weightLog].sort((a, b) => a.date.localeCompare(b.date));
   const currentWeight = sortedLog.length ? sortedLog[sortedLog.length - 1].weight : null;
@@ -4792,7 +5274,9 @@ function BodyTab({ body, setBodyProfile, logWeight }) {
   const bmr = currentWeight && body.heightCm ? computeBMR(currentWeight, body.heightCm, body.age, body.sex) : null;
   const tdee = bmr ? computeTDEE(bmr, body.activityLevel) : null;
   const floor = body.sex === 'female' ? 1200 : 1500;
-  const deficitCalories = tdee ? Math.max(Math.round(tdee - 500), floor) : null;
+  const calTarget = dailyCalorieTarget(body, currentWeight);
+  const deficitCalories = calTarget ? calTarget.calories : null;
+  const calTargetLabel = calTarget && calTarget.mode === 'bulk' ? 'Для набора веса' : calTarget && calTarget.mode === 'maintain' ? 'Для поддержания веса' : 'Для снижения веса';
   const delta = currentWeight && firstWeight ? +(currentWeight - firstWeight).toFixed(1) : null;
 
   return (
@@ -4881,12 +5365,16 @@ function BodyTab({ body, setBodyProfile, logWeight }) {
             <span style={{ color: COLORS.textMuted }}>Расход с активностью (TDEE)</span><span>{Math.round(tdee)} ккал</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 13, fontWeight: 700 }}>
-            <span>Для снижения веса</span><span style={{ color: COLORS.teal }}>~{deficitCalories} ккал/день</span>
+            <span>{calTargetLabel}</span><span style={{ color: COLORS.teal }}>~{deficitCalories} ккал/день</span>
           </div>
           <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 8 }}>
             Ориентир на ~0.5 кг в неделю, с защитным минимумом {floor} ккал. Это не медицинская рекомендация — при хронических состояниях сверься с врачом или диетологом.
           </div>
         </Card>
+      )}
+
+      {deficitCalories && (
+        <NutritionCard target={deficitCalories} nutrition={nutrition} addFoodEntry={addFoodEntry} deleteFoodEntry={deleteFoodEntry} />
       )}
     </div>
   );
