@@ -13,8 +13,10 @@
 // обычном браузере), автоматически используется localStorage — это
 // удобно для локальной проверки, но реального пользователя это не
 // касается: в проде CloudStorage всегда доступен.
-const CHUNK_SIZE = 3500; // с запасом под лимит 4096 символов
-const CALL_TIMEOUT_MS = 6000; // таймаут на один вызов CloudStorage (getItem/setItem/...)
+const CHUNK_SIZE = 3900; // с запасом под лимит 4096 символов (было 3500 — увеличили, чтобы
+// уменьшить число обращений на одно сохранение)
+const CALL_TIMEOUT_MS = 12000; // таймаут на один вызов CloudStorage (getItem/setItem/...) —
+// на LTE один round-trip к серверам Telegram иногда занимает 1-2с, и это нормально
 
 function getCloud() {
   const webApp = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
@@ -41,6 +43,7 @@ function getTelegramDiagnostics() {
     hasInitData: !!(webApp.initData && webApp.initData.length > 0),
     cloudStorageObjectPresent: !!webApp.CloudStorage,
     versionSupportsCloud: typeof webApp.isVersionAtLeast === 'function' ? webApp.isVersionAtLeast('6.9') : 'неизвестно (isVersionAtLeast недоступен)',
+    lastSave: typeof window !== 'undefined' ? window.__telegramStorageLastSaveInfo || null : null,
   };
 }
 if (typeof window !== 'undefined') {
@@ -124,22 +127,30 @@ async function cloudGet(key) {
 }
 
 async function cloudSetInner(key, value) {
+  const startedAt = Date.now();
   const chunks = [];
   for (let i = 0; i < value.length; i += CHUNK_SIZE) {
     chunks.push(value.slice(i, i + CHUNK_SIZE));
   }
+  window.__telegramStorageLastSaveInfo = { bytes: value.length, chunks: chunks.length, status: 'в процессе', ms: null };
   let oldChunkCount = 0;
   try {
     const oldMetaRaw = await cloudGetItem(`${key}__meta`);
     if (oldMetaRaw) oldChunkCount = JSON.parse(oldMetaRaw).chunks || 0;
   } catch (_) { /* нет старых данных — не проблема */ }
-  for (let i = 0; i < chunks.length; i++) {
-    await cloudSetItem(`${key}__c${i}`, chunks[i]);
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      await cloudSetItem(`${key}__c${i}`, chunks[i]);
+    }
+    for (let i = chunks.length; i < oldChunkCount; i++) {
+      try { await cloudRemoveItem(`${key}__c${i}`); } catch (_) { /* ignore */ }
+    }
+    await cloudSetItem(`${key}__meta`, JSON.stringify({ chunks: chunks.length }));
+    window.__telegramStorageLastSaveInfo = { bytes: value.length, chunks: chunks.length, status: 'ok', ms: Date.now() - startedAt };
+  } catch (e) {
+    window.__telegramStorageLastSaveInfo = { bytes: value.length, chunks: chunks.length, status: 'ошибка: ' + (e && e.message ? e.message : String(e)), ms: Date.now() - startedAt };
+    throw e;
   }
-  for (let i = chunks.length; i < oldChunkCount; i++) {
-    try { await cloudRemoveItem(`${key}__c${i}`); } catch (_) { /* ignore */ }
-  }
-  await cloudSetItem(`${key}__meta`, JSON.stringify({ chunks: chunks.length }));
   return { key, value, shared: false };
 }
 
