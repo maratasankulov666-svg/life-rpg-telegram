@@ -42,6 +42,12 @@
 //      sequential CloudStorage round-trips (one per ~4KB chunk), which legitimately takes longer than
 //      8s on real networks. Raised timeouts (8s->25s outer, 6s->12s per chunk, bigger chunk size), and
 //      diagnostics now show live chunk count / size / duration of the last save attempt.
+// 12.5 Real root cause found: full state was 248KB (finance.transactions + taxi.orders grow forever,
+//      unlike chronicle/coinTransactions which are capped at 300) -> 64 sequential chunk writes per
+//      save, inherently unreliable. Per user's choice, kept full history and added gzip compression
+//      (CompressionStream, with automatic fallback to uncompressed on unsupported clients and full
+//      backward-compat reading of old uncompressed saves) before chunking, cutting chunk count a lot
+//      without deleting any transaction/order history.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -61,7 +67,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '12.4';
+const APP_VERSION = '12.5';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -5049,7 +5055,7 @@ function TelegramDiagnosticsCard() {
       {diag.present && row('initData есть (реальный запуск)', diag.hasInitData)}
       {diag.present && row('Объект CloudStorage есть', diag.cloudStorageObjectPresent)}
       {diag.present && row('Версия поддерживает CloudStorage (6.9+)', diag.versionSupportsCloud)}
-      {diag.lastSave && row('Размер последнего сохранения', `${diag.lastSave.bytes} симв. / ${diag.lastSave.chunks} чанков`)}
+      {diag.lastSave && row('Размер последнего сохранения', `${diag.lastSave.bytes} симв.${diag.lastSave.gz ? ` → ${diag.lastSave.compressedBytes} сжато` : ' (без сжатия)'} / ${diag.lastSave.chunks} чанков`)}
       {diag.lastSave && row('Статус последнего сохранения', diag.lastSave.status)}
       {diag.lastSave && diag.lastSave.ms != null && row('Время сохранения', `${(diag.lastSave.ms / 1000).toFixed(1)}с`)}
       <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Пришли скриншот этой карточки, если облачное сохранение всё ещё не работает — по этим данным можно точно понять причину.</div>
