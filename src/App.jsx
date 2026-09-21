@@ -35,6 +35,9 @@
 // 12.2 Softer status UI: when cloud storage fails but the local backup succeeded, the banner/status
 //      now says so calmly instead of showing a scary "progress may be lost" error, since the data
 //      is actually safe on-device in that case.
+// 12.3 Telegram-client diagnostics card in Settings (client version/platform/initData/CloudStorage
+//      support), fed by telegramStorage.js's version guard that skips CloudStorage entirely (straight
+//      to local fallback) on clients too old to support it, instead of stalling for 6-8s every save.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -54,7 +57,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '12.2';
+const APP_VERSION = '12.3';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -5006,6 +5009,38 @@ function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, s
   );
 }
 
+function TelegramDiagnosticsCard() {
+  const [diag, setDiag] = useState(null);
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && typeof window.__telegramStorageDiagnostics === 'function') {
+        setDiag(window.__telegramStorageDiagnostics());
+      }
+    } catch (e) { /* ignore */ }
+  }, []);
+  if (!diag) return null;
+  const row = (label, value) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4 }}>
+      <span style={{ color: COLORS.textMuted }}>{label}</span>
+      <span style={{ color: COLORS.text, fontWeight: 600 }}>{String(value)}</span>
+    </div>
+  );
+  return (
+    <Card>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <AlertCircle size={13} color={COLORS.violet} /> Диагностика Telegram-клиента
+      </div>
+      {row('Telegram.WebApp найден', diag.present)}
+      {diag.present && row('Версия клиента (Bot API)', diag.version)}
+      {diag.present && row('Платформа', diag.platform)}
+      {diag.present && row('initData есть (реальный запуск)', diag.hasInitData)}
+      {diag.present && row('Объект CloudStorage есть', diag.cloudStorageObjectPresent)}
+      {diag.present && row('Версия поддерживает CloudStorage (6.9+)', diag.versionSupportsCloud)}
+      <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Пришли скриншот этой карточки, если облачное сохранение всё ещё не работает — по этим данным можно точно понять причину.</div>
+    </Card>
+  );
+}
+
 function SaveManagerCard({ state, importSaveData, onExported }) {
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -5144,6 +5179,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
           <Save size={13} /> {manualSaving ? 'Сохраняю...' : manualSaveResult === 'ok' ? 'Сохранено!' : manualSaveResult === 'fail' ? 'Не вышло — используй Экспорт' : 'Сохранить сейчас'}
         </button>
       </Card>
+      <TelegramDiagnosticsCard />
       <SaveManagerCard state={state} importSaveData={importSaveData} onExported={onExported} />
       <Card>
         <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>Имя персонажа</div>
