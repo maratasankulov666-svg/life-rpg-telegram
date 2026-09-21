@@ -28,6 +28,10 @@
 //      real recharts graphs (weight, taxi income, stat history), AI Weekly Recap, Habit library (quick-pick
 //      templates), search/filter in Chronicle and Quests, first-run onboarding from Master Kaylen, export
 //      reminder, Difficulty Mode (Easy/Normal/Hardcore — scoped to anti-farm curve and skip penalties)
+// 12.1 Save/load reliability fix: storage.get/set now time out after 8s instead of hanging forever
+//      ("Сохраняю..." stuck button), and every save is mirrored to a local backup that's used
+//      automatically if the main storage is empty/unavailable on load — so progress survives
+//      updates/redeploys even if the platform storage resets.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -47,7 +51,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '12.0';
+const APP_VERSION = '12.1';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -479,6 +483,41 @@ function applyCoinLedger(prev, type, amount, source, title, sourceId) {
 }
 
 const STORAGE_KEY = 'liferpg_state_v1';
+const LOCAL_BACKUP_KEY = 'liferpg_local_backup_v1';
+const SAVE_TIMEOUT_MS = 8000;
+
+// window.storage (в среде запуска этой игры вне artifact-превью Claude) иногда
+// не отвечает вовсе — ни успехом, ни ошибкой — например если бэкенд отклоняет
+// слишком большое значение молча. Без таймаута await зависает навсегда и кнопка
+// "Сохранить" крутится бесконечно. Оборачиваем любой вызов storage в гонку с таймером.
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label}: нет ответа за ${Math.round(ms / 1000)}с (похоже, хранилище недоступно или значение слишком большое)`)), ms);
+    promise.then(
+      v => { clearTimeout(t); resolve(v); },
+      e => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+// Локальная резервная копия (localStorage) — не зависит от window.storage и от того,
+// что именно произошло с игрой при обновлении/переразвёртывании. Пишем её при каждом
+// успешном сохранении и читаем как fallback, если основное хранилище недоступно/пусто/битое.
+function writeLocalBackup(jsonString) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(LOCAL_BACKUP_KEY, jsonString);
+    }
+  } catch (e) { /* тихо игнорируем — это лишь подстраховка */ }
+}
+function readLocalBackup() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem(LOCAL_BACKUP_KEY);
+    }
+  } catch (e) { /* тихо игнорируем */ }
+  return null;
+}
 
 function xpNeeded(level) {
   return Math.round(90 + level * 25 + Math.pow(level, 1.5) * 3);
@@ -1313,13 +1352,22 @@ export default function LifeRPG() {
         setStorageStatus('unavailable');
       } else {
         try {
-          const res = await window.storage.get(STORAGE_KEY, false);
+          const res = await withTimeout(window.storage.get(STORAGE_KEY, false), SAVE_TIMEOUT_MS, 'Загрузка');
           if (res && res.value) s = JSON.parse(res.value);
           setStorageStatus('ok');
         } catch (e) {
           s = null;
           setStorageStatus('error');
           setStorageError(e && e.message ? e.message : String(e));
+        }
+      }
+      // Если основное хранилище пустое/недоступное/сломанное — пробуем локальную резервную копию,
+      // прежде чем откатываться на чистый defaultState() (иначе после обновления игра выглядит
+      // так, будто прогресс "сбросился", хотя он просто не там ищется).
+      if (!s) {
+        const backup = readLocalBackup();
+        if (backup) {
+          try { s = JSON.parse(backup); } catch (e) { /* битая резервная копия — игнорируем */ }
         }
       }
       const defs = defaultState();
@@ -1352,15 +1400,19 @@ export default function LifeRPG() {
   }, [state, loaded, storageStatus]);
 
   async function saveNow() {
+    const payload = JSON.stringify(state);
+    // Всегда обновляем локальную резервную копию сразу — она не требует сети и не зависает,
+    // так что даже если основное хранилище зависнет/откажет, прогресс не потеряется.
+    writeLocalBackup(payload);
     if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
       setStorageStatus('unavailable');
       return false;
     }
     try {
-      const res = await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
+      const res = await withTimeout(window.storage.set(STORAGE_KEY, payload, false), SAVE_TIMEOUT_MS, 'Сохранение');
       if (!res) {
         setStorageStatus('error');
-        setStorageError('set() вернул null — платформа отклонила запись');
+        setStorageError('set() вернул null — платформа отклонила запись (возможно, сохранение стало слишком большим)');
         return false;
       }
       setStorageStatus('ok');
