@@ -38,6 +38,10 @@
 // 12.3 Telegram-client diagnostics card in Settings (client version/platform/initData/CloudStorage
 //      support), fed by telegramStorage.js's version guard that skips CloudStorage entirely (straight
 //      to local fallback) on clients too old to support it, instead of stalling for 6-8s every save.
+// 12.4 Realized the 8s save timeout was the actual bug on well-supported clients: a full save is many
+//      sequential CloudStorage round-trips (one per ~4KB chunk), which legitimately takes longer than
+//      8s on real networks. Raised timeouts (8s->25s outer, 6s->12s per chunk, bigger chunk size), and
+//      diagnostics now show live chunk count / size / duration of the last save attempt.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -57,7 +61,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '12.3';
+const APP_VERSION = '12.4';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -490,7 +494,11 @@ function applyCoinLedger(prev, type, amount, source, title, sourceId) {
 
 const STORAGE_KEY = 'liferpg_state_v1';
 const LOCAL_BACKUP_KEY = 'liferpg_local_backup_v1';
-const SAVE_TIMEOUT_MS = 8000;
+const SAVE_TIMEOUT_MS = 25000; // операция может состоять из десятка+ последовательных сетевых
+// запросов (по чанку) к CloudStorage — на LTE это легитимно может занять больше 8 секунд,
+// это не обязательно "зависание". У нас уже есть локальный бэкап как подстраховка, так что
+// можно позволить себе подождать облако подольше, вместо того чтобы объявлять его сломанным
+// раньше времени.
 
 // window.storage (в среде запуска этой игры вне artifact-превью Claude) иногда
 // не отвечает вовсе — ни успехом, ни ошибкой — например если бэкенд отклоняет
@@ -5011,12 +5019,17 @@ function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, s
 
 function TelegramDiagnosticsCard() {
   const [diag, setDiag] = useState(null);
-  useEffect(() => {
+  function refresh() {
     try {
       if (typeof window !== 'undefined' && typeof window.__telegramStorageDiagnostics === 'function') {
         setDiag(window.__telegramStorageDiagnostics());
       }
     } catch (e) { /* ignore */ }
+  }
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 2000); // подхватываем данные о последнем сохранении, пока карточка открыта
+    return () => clearInterval(t);
   }, []);
   if (!diag) return null;
   const row = (label, value) => (
@@ -5036,6 +5049,9 @@ function TelegramDiagnosticsCard() {
       {diag.present && row('initData есть (реальный запуск)', diag.hasInitData)}
       {diag.present && row('Объект CloudStorage есть', diag.cloudStorageObjectPresent)}
       {diag.present && row('Версия поддерживает CloudStorage (6.9+)', diag.versionSupportsCloud)}
+      {diag.lastSave && row('Размер последнего сохранения', `${diag.lastSave.bytes} симв. / ${diag.lastSave.chunks} чанков`)}
+      {diag.lastSave && row('Статус последнего сохранения', diag.lastSave.status)}
+      {diag.lastSave && diag.lastSave.ms != null && row('Время сохранения', `${(diag.lastSave.ms / 1000).toFixed(1)}с`)}
       <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Пришли скриншот этой карточки, если облачное сохранение всё ещё не работает — по этим данным можно точно понять причину.</div>
     </Card>
   );
