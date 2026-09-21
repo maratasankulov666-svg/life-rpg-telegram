@@ -398,6 +398,12 @@ function financialHealth(state) {
 
 function monthKeyOf(dateStr) { return (dateStr || todayStr()).slice(0, 7); }
 
+const RU_MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+function monthRuLabel(mk) {
+  const [y, m] = mk.split('-').map(Number);
+  return `${RU_MONTHS[(m || 1) - 1]} ${y}`;
+}
+
 // Единый расчёт месячных финансовых итогов из транзакций (раздел 4 ТЗ:
 // нельзя суммировать за всё время, только за конкретный месяц).
 function financeMonthSummary(finance, monthKey) {
@@ -473,135 +479,6 @@ function applyCoinLedger(prev, type, amount, source, title, sourceId) {
 }
 
 const STORAGE_KEY = 'liferpg_state_v1';
-const CLOUD_CHUNK_SIZE = 3500; // запас от лимита Telegram CloudStorage — 4096 символов на одно значение
-const CLOUD_MAX_CHUNKS = 200;  // защита от переполнения (лимит Telegram — 1024 ключа на всё приложение)
-const CLOUD_TIMEOUT_MS = 4000; // фоновая попытка — не должна ничего задерживать, поэтому таймаут короткий
-
-// Реальное персистентное хранилище для Telegram Mini App.
-// `window.storage` — API песочницы Claude-артефактов, его нет в реальном Telegram.
-// Telegram Cloud Storage теоретически правильный вариант (данные на стороне
-// Telegram, переживают закрытие и смену устройства), но на практике его
-// callback иногда вообще не отвечает (проверено — CloudStorage.setItem висел
-// без ответа), и раньше это вешало кнопку "Сохранить" намертво.
-// Поэтому теперь так: localStorage — ОСНОВНОЕ и ОБЯЗАТЕЛЬНОЕ хранилище (быстрый,
-// синхронный вызов, не может зависнуть) — от него зависит статус "сохранено/ошибка".
-// Cloud Storage — доп. попытка синхронизации в фоне, "и хорошо, если получится":
-// она никогда не блокирует сохранение и не портит статус, если Telegram не отвечает.
-function withTimeout(promise, ms, label) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label}: нет ответа за ${Math.round(ms / 1000)}с`)), ms);
-    promise.then(
-      v => { clearTimeout(timer); resolve(v); },
-      e => { clearTimeout(timer); reject(e); }
-    );
-  });
-}
-
-function getCloudStorage() {
-  try {
-    const tg = typeof window !== 'undefined' ? window.Telegram : null;
-    // isVersionAtLeast('6.9') — минимальная версия Bot API с Cloud Storage;
-    // если клиент старый/десктопный и не тянет — сразу не лезем в этот мост.
-    if (!tg || !tg.WebApp || !tg.WebApp.CloudStorage) return null;
-    if (typeof tg.WebApp.isVersionAtLeast === 'function' && !tg.WebApp.isVersionAtLeast('6.9')) return null;
-    return tg.WebApp.CloudStorage;
-  } catch (e) {
-    return null;
-  }
-}
-
-function cloudGetKeys(cs) {
-  return withTimeout(new Promise((resolve, reject) => {
-    cs.getKeys((err, keys) => err ? reject(err) : resolve(keys || []));
-  }), CLOUD_TIMEOUT_MS, 'CloudStorage.getKeys');
-}
-function cloudGetItem(cs, key) {
-  return withTimeout(new Promise((resolve, reject) => {
-    cs.getItem(key, (err, value) => err ? reject(err) : resolve(value));
-  }), CLOUD_TIMEOUT_MS, 'CloudStorage.getItem');
-}
-function cloudSetItem(cs, key, value) {
-  return withTimeout(new Promise((resolve, reject) => {
-    cs.setItem(key, value, (err, ok) => err ? reject(err) : resolve(ok));
-  }), CLOUD_TIMEOUT_MS, 'CloudStorage.setItem');
-}
-function cloudRemoveItems(cs, keys) {
-  if (!keys.length) return Promise.resolve(true);
-  return withTimeout(new Promise((resolve, reject) => {
-    cs.removeItems(keys, (err, ok) => err ? reject(err) : resolve(ok));
-  }), CLOUD_TIMEOUT_MS, 'CloudStorage.removeItems');
-}
-
-// Фоновая, не блокирующая попытка зеркалировать сохранение в Cloud Storage.
-// Любая ошибка/таймаут здесь молча проглатывается — localStorage уже отработал
-// основное сохранение к этому моменту, статус пользователю на это не завязан.
-let cloudSyncInFlight = false;
-async function trySyncToCloud(key, value) {
-  if (cloudSyncInFlight) return; // не запускаем вторую синхронизацию поверх незавершённой
-  const cs = getCloudStorage();
-  if (!cs) return;
-  cloudSyncInFlight = true;
-  try {
-    const prefix = key + '__c';
-    const chunks = [];
-    for (let i = 0; i < value.length; i += CLOUD_CHUNK_SIZE) chunks.push(value.slice(i, i + CLOUD_CHUNK_SIZE));
-    if (chunks.length === 0) chunks.push('');
-    if (chunks.length > CLOUD_MAX_CHUNKS) return; // слишком большое для Cloud Storage — просто пропускаем фоновую копию
-    const existingKeys = await cloudGetKeys(cs);
-    const staleKeys = existingKeys.filter(k => k.indexOf(prefix) === 0 && parseInt(k.slice(prefix.length), 10) >= chunks.length);
-    if (staleKeys.length) await cloudRemoveItems(cs, staleKeys);
-    for (let i = 0; i < chunks.length; i++) {
-      await cloudSetItem(cs, `${prefix}${i}`, chunks[i]);
-    }
-  } catch (e) {
-    // тихо игнорируем — это необязательная фоновая копия
-  } finally {
-    cloudSyncInFlight = false;
-  }
-}
-
-async function tryReadFromCloud(key) {
-  const cs = getCloudStorage();
-  if (!cs) return null;
-  try {
-    const prefix = key + '__c';
-    const allKeys = await cloudGetKeys(cs);
-    const chunkKeys = allKeys
-      .filter(k => k.indexOf(prefix) === 0)
-      .sort((a, b) => parseInt(a.slice(prefix.length), 10) - parseInt(b.slice(prefix.length), 10));
-    if (chunkKeys.length === 0) return null;
-    let combined = '';
-    for (const k of chunkKeys) {
-      combined += (await cloudGetItem(cs, k)) || '';
-    }
-    return combined || null;
-  } catch (e) {
-    return null;
-  }
-}
-
-const storageAdapter = {
-  async get(key) {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const raw = window.localStorage.getItem(key);
-      if (raw !== null) return { value: raw };
-    }
-    // В localStorage пусто (например, впервые открыли на новом устройстве) —
-    // как запасной шанс пробуем то, что могло раньше уехать в Cloud Storage.
-    const cloudValue = await tryReadFromCloud(key);
-    if (cloudValue) {
-      try { if (window.localStorage) window.localStorage.setItem(key, cloudValue); } catch (e) {}
-      return { value: cloudValue };
-    }
-    return null;
-  },
-  async set(key, value) {
-    if (typeof window === 'undefined' || !window.localStorage) return null;
-    window.localStorage.setItem(key, value); // основное сохранение — быстрое, синхронное, не может зависнуть
-    trySyncToCloud(key, value); // фоном, без ожидания — пусть пробует, но ни на что не влияет
-    return { value };
-  },
-};
 
 function xpNeeded(level) {
   return Math.round(90 + level * 25 + Math.pow(level, 1.5) * 3);
@@ -682,18 +559,8 @@ function migrateFinance(rawFinance) {
   return f;
 }
 
-// Локальная дата, а не UTC: toISOString() отдаёт дату по Гринвичу, из-за чего
-// в Казахстане (UTC+5) с полуночи до ~5 утра по местному времени запись
-// уходила под "вчера" и пропадала из сегодняшнего списка (Тело/Калории).
-function pad2(n) { return String(n).padStart(2, '0'); }
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-function monthStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
-}
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function monthStr() { return new Date().toISOString().slice(0, 7); }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
 // --- Real AI calls (proxied through our own /api/ai backend, which holds the key; backend is Gemini, free tier) ---
@@ -1076,7 +943,7 @@ function defaultState() {
       budgetPlan: {}, // {categoryKey: plannedAmount} — раздел 12 ТЗ
       debtLoadThresholds: { low: 20, medium: 36, high: 50 }, // раздел 14 ТЗ
       strategy: 'avalanche',
-      taxi: { dailyTarget: 10000, orders: [] },
+      taxi: { dailyTarget: 10000, commissionPct: 9, orders: [] },
       emergencyFundGoalMonths: 3,
     },
     garage: {
@@ -1441,12 +1308,12 @@ export default function LifeRPG() {
   useEffect(() => {
     (async () => {
       let s = null;
-      const hasStorage = typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+      const hasStorage = typeof window !== 'undefined' && window.storage && typeof window.storage.get === 'function';
       if (!hasStorage) {
         setStorageStatus('unavailable');
       } else {
         try {
-          const res = await storageAdapter.get(STORAGE_KEY);
+          const res = await window.storage.get(STORAGE_KEY, false);
           if (res && res.value) s = JSON.parse(res.value);
           setStorageStatus('ok');
         } catch (e) {
@@ -1485,12 +1352,12 @@ export default function LifeRPG() {
   }, [state, loaded, storageStatus]);
 
   async function saveNow() {
-    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
       setStorageStatus('unavailable');
       return false;
     }
     try {
-      const res = await storageAdapter.set(STORAGE_KEY, JSON.stringify(state));
+      const res = await window.storage.set(STORAGE_KEY, JSON.stringify(state), false);
       if (!res) {
         setStorageStatus('error');
         setStorageError('set() вернул null — платформа отклонила запись');
@@ -2107,23 +1974,32 @@ export default function LifeRPG() {
     setState(prev => ({ ...prev, finance: { ...prev.finance, taxi: { ...prev.finance.taxi, dailyTarget: val } } }));
   }
 
-  function logOrder(amount) {
+  function setTaxiCommission(pct) {
+    setState(prev => ({ ...prev, finance: { ...prev.finance, taxi: { ...prev.finance.taxi, commissionPct: Math.max(0, Math.min(100, Number(pct) || 0)) } } }));
+  }
+
+  // grossAmount — сумма заказа целиком; комиссия таксопарка (по умолчанию 9%) вычитается
+  // автоматически, в Cash Balance и Coin-подсказку идёт уже чистая сумма на руки.
+  function logOrder(grossAmount) {
     setState(prev => {
-      if (!amount || amount <= 0) return prev;
+      if (!grossAmount || grossAmount <= 0) return prev;
+      const commissionPct = prev.finance.taxi.commissionPct ?? 9;
+      const commission = Math.round(grossAmount * commissionPct / 100);
+      const net = grossAmount - commission;
       const today = todayStr();
       const todayBefore = prev.finance.taxi.orders.filter(o => o.ts >= new Date(today + 'T00:00:00').getTime())
-        .reduce((s, o) => s + o.amount, 0);
+        .reduce((s, o) => s + (o.net ?? o.amount), 0);
       const oid = uid();
-      const orders = [...prev.finance.taxi.orders, { id: oid, amount, ts: Date.now() }];
-      // Раздел 6 ТЗ: доход такси не изолирован — зеркалим в общие транзакции и Cash Balance.
-      const tx = { id: uid(), type: 'income', title: 'Заказ такси', amount, category: 'taxi', date: today, recurring: false, essential: false, source: 'taxi', mirrorSourceId: oid, ts: Date.now() };
-      const cashBalance = prev.finance.cashBalance + amount;
+      const orders = [...prev.finance.taxi.orders, { id: oid, amount: grossAmount, commission, net, ts: Date.now() }];
+      // Раздел 6 ТЗ: доход такси не изолирован — зеркалим в общие транзакции и Cash Balance (уже за вычетом комиссии).
+      const tx = { id: uid(), type: 'income', title: `Заказ такси (${grossAmount} − ${commissionPct}% комиссия)`, amount: net, category: 'taxi', date: today, recurring: false, essential: false, source: 'taxi', mirrorSourceId: oid, ts: Date.now() };
+      const cashBalance = prev.finance.cashBalance + net;
       const { character, bonusCoins } = applyXP(prev.character, 8);
-      const tipCoins = Math.max(1, Math.round(amount * 0.03));
+      const tipCoins = Math.max(1, Math.round(net * 0.03));
       let ledgerState = applyCoinLedger(prev, 'earn', tipCoins, 'taxi', 'Заказ такси', oid);
       if (bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus');
-      let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `🚕 Заказ: +${amount} (сегодня: ${todayBefore + amount})`);
-      if (todayBefore < prev.finance.taxi.dailyTarget && todayBefore + amount >= prev.finance.taxi.dailyTarget) {
+      let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `🚕 Заказ: ${grossAmount} − ${commission} комиссия = +${net} (сегодня: ${todayBefore + net})`);
+      if (todayBefore < prev.finance.taxi.dailyTarget && todayBefore + net >= prev.finance.taxi.dailyTarget) {
         chronicle = pushChronicle(chronicle, 'SYSTEM', '🎯 Дневная цель по заказам выполнена!');
       }
       return {
@@ -2587,7 +2463,7 @@ export default function LifeRPG() {
             setDebtStrategy={setDebtStrategy} addDebt={addDebt}
             payDebt={payDebt} deleteDebt={deleteDebt} addSavingsGoal={addSavingsGoal}
             contributeSaving={contributeSaving} deleteSavingsGoal={deleteSavingsGoal}
-            setTaxiTarget={setTaxiTarget} logOrder={logOrder} deleteOrder={deleteOrder}
+            setTaxiTarget={setTaxiTarget} setTaxiCommission={setTaxiCommission} logOrder={logOrder} deleteOrder={deleteOrder}
             addCustomAsset={addCustomAsset} deleteCustomAsset={deleteCustomAsset}
             setBudgetPlanItem={setBudgetPlanItem} removeBudgetPlanItem={removeBudgetPlanItem} setDebtLoadThresholds={setDebtLoadThresholds}
           />
@@ -2990,7 +2866,7 @@ function AddQuestForm({ onSubmit, onCancel, characterLevel }) {
         {type === 'Boss' && (
           <div>
             <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>HP босса (сколько "ударов на 1" нужно, чтобы победить)</div>
-            <input className="lrpg-input" type="number" min={10} value={bossHP} onChange={e => setBossHP(Number(e.target.value))} />
+            <input className="lrpg-input" type="number" min={10} value={bossHP || ''} onChange={e => setBossHP(e.target.value === '' ? 0 : Number(e.target.value))} />
           </div>
         )}
         <select className="lrpg-input" value={stat} onChange={e => setStat(e.target.value)}>
@@ -3040,9 +2916,9 @@ function GoalProgressControl({ goal, updateGoalProgress }) {
           onMouseUp={e => commit(Number(e.target.value))}
           onTouchEnd={e => commit(Number(e.target.value))}
           style={{ flex: 1, accentColor: COLORS.violet }} />
-        <input className="lrpg-input" type="number" min={0} max={100} value={draft}
-          onChange={e => setDraft(Number(e.target.value))}
-          onBlur={e => commit(Number(e.target.value))}
+        <input className="lrpg-input" type="number" min={0} max={100} value={draft === 0 ? '' : draft}
+          onChange={e => setDraft(e.target.value === '' ? 0 : Number(e.target.value))}
+          onBlur={e => commit(Number(e.target.value) || 0)}
           style={{ width: 56, padding: '4px 6px', textAlign: 'center' }} />
       </div>
       {confirming100 && (
@@ -3523,7 +3399,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
         <Card>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input className="lrpg-input" placeholder="Название награды" value={title} onChange={e => setTitle(e.target.value)} />
-            <input className="lrpg-input" type="number" min={1} placeholder="Стоимость в Coins" value={cost} onChange={e => setCost(Number(e.target.value))} />
+            <input className="lrpg-input" type="number" min={1} placeholder="Стоимость в Coins" value={cost || ''} onChange={e => setCost(e.target.value === '' ? 0 : Number(e.target.value))} />
             <select className="lrpg-input" value={category} onChange={e => setCategory(e.target.value)}>
               {REWARD_CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}
             </select>
@@ -3843,7 +3719,8 @@ function AddInlineForm({ fields, onSubmit, submitLabel = 'Добавить' }) {
           }
           return (
             <input key={f.key} className="lrpg-input" type={f.type || 'text'} placeholder={f.placeholder}
-              value={values[f.key]} onChange={e => setValues(v => ({ ...v, [f.key]: f.type === 'number' ? Number(e.target.value) : e.target.value }))} />
+              value={f.type === 'number' && !values[f.key] ? '' : values[f.key]}
+              onChange={e => setValues(v => ({ ...v, [f.key]: f.type === 'number' ? (e.target.value === '' ? 0 : Number(e.target.value)) : e.target.value }))} />
           );
         })}
         <button className="lrpg-btn" disabled={!valid} onClick={() => onSubmit(values)}
@@ -3919,7 +3796,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
   );
 }
 
-function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, logOrder, deleteOrder, addCustomAsset, deleteCustomAsset, setBudgetPlanItem, removeBudgetPlanItem, setDebtLoadThresholds }) {
+function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, setTaxiCommission, logOrder, deleteOrder, addCustomAsset, deleteCustomAsset, setBudgetPlanItem, removeBudgetPlanItem, setDebtLoadThresholds }) {
   const [showAddTx, setShowAddTx] = useState(false);
   const [txType, setTxType] = useState('expense');
   const [showAddIncomeSource, setShowAddIncomeSource] = useState(false);
@@ -3936,13 +3813,13 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const today = todayStr();
   const todayStart = new Date(today + 'T00:00:00').getTime();
   const todayOrders = finance.taxi.orders.filter(o => o.ts >= todayStart);
-  const todayTotal = todayOrders.reduce((s, o) => s + o.amount, 0);
+  const todayTotal = todayOrders.reduce((s, o) => s + (o.net ?? o.amount), 0);
   const last7 = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (6 - i));
     const key = d.toISOString().slice(0, 10);
     const start = new Date(key + 'T00:00:00').getTime();
     const end = start + 86400000;
-    const sum = finance.taxi.orders.filter(o => o.ts >= start && o.ts < end).reduce((s, o) => s + o.amount, 0);
+    const sum = finance.taxi.orders.filter(o => o.ts >= start && o.ts < end).reduce((s, o) => s + (o.net ?? o.amount), 0);
     return { key, sum, label: d.toLocaleDateString('ru-RU', { weekday: 'short' }) };
   });
 
@@ -4247,10 +4124,21 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
               + Заказ
             </button>
           </div>
+          {Number(orderAmount) > 0 && (
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+              <span>Комиссия {finance.taxi.commissionPct ?? 9}%: −{Math.round(Number(orderAmount) * (finance.taxi.commissionPct ?? 9) / 100)}</span>
+              <span style={{ color: COLORS.teal, fontWeight: 700 }}>На руки: {Number(orderAmount) - Math.round(Number(orderAmount) * (finance.taxi.commissionPct ?? 9) / 100)}</span>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
             <span style={{ fontSize: 11, color: COLORS.textMuted }}>Цель на день:</span>
-            <input className="lrpg-input" type="number" min={0} value={finance.taxi.dailyTarget}
-              onChange={e => setTaxiTarget(Number(e.target.value))} style={{ maxWidth: 110, padding: '4px 8px' }} />
+            <input className="lrpg-input" type="number" min={0} value={finance.taxi.dailyTarget || ''}
+              onChange={e => setTaxiTarget(e.target.value === '' ? 0 : Number(e.target.value))} style={{ maxWidth: 110, padding: '4px 8px' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+            <span style={{ fontSize: 11, color: COLORS.textMuted }}>Комиссия таксопарка, %:</span>
+            <input className="lrpg-input" type="number" min={0} max={100} value={finance.taxi.commissionPct ?? 9}
+              onChange={e => setTaxiCommission(e.target.value === '' ? 0 : Number(e.target.value))} style={{ maxWidth: 70, padding: '4px 8px' }} />
           </div>
         </Card>
 
@@ -4270,7 +4158,8 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
             {todayOrders.slice().reverse().map(o => (
               <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, padding: '6px 10px', background: COLORS.bgCardAlt, borderRadius: 8 }}>
                 <span style={{ color: COLORS.textMuted }}>{new Date(o.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
-                <span style={{ fontWeight: 700, color: COLORS.teal }}>+{o.amount}</span>
+                <span style={{ fontSize: 10, color: COLORS.textMuted }}>{o.amount}{o.commission ? ` − ${o.commission}` : ''}</span>
+                <span style={{ fontWeight: 700, color: COLORS.teal }}>+{o.net ?? o.amount}</span>
                 <button className="lrpg-btn" onClick={() => deleteOrder(o.id)} style={{ background: 'none' }}><Trash2 size={12} color={COLORS.textMuted} /></button>
               </div>
             ))}
@@ -4486,7 +4375,7 @@ function buildWeeklyRecapData(state) {
     });
   }
   const carExpenses = state.garage.expenses.filter(e => e.ts >= weekStart).reduce((s, e) => s + e.amount, 0);
-  const taxiIncome = state.finance.taxi.orders.filter(o => o.ts >= weekStart).reduce((s, o) => s + o.amount, 0);
+  const taxiIncome = state.finance.taxi.orders.filter(o => o.ts >= weekStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
 
   return { questsCompleted, questsSkipped, levelUps, achievements, rewardsBought, mostImproved, carExpenses, taxiIncome };
 }
@@ -4522,7 +4411,7 @@ function buildMentorTips(state) {
   if (streakHabit) tips.push(`Привычка «${streakHabit.title}» держится ${streakHabit.streakCurrent} дней подряд — не разрывай серию ради одного дня.`);
   if (state.coins > 300) tips.push(`Накопилось ${state.coins} Coins. Загляни в Reward Shop — небольшая награда сейчас поддержит мотивацию.`);
   const todayStart = new Date(todayStr() + 'T00:00:00').getTime();
-  const todayOrdersSum = state.finance.taxi.orders.filter(o => o.ts >= todayStart).reduce((s, o) => s + o.amount, 0);
+  const todayOrdersSum = state.finance.taxi.orders.filter(o => o.ts >= todayStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
   const target = state.finance.taxi.dailyTarget;
   if (target > 0 && todayOrdersSum < target) {
     tips.push(`До дневной цели по заказам осталось ${target - todayOrdersSum}. Ещё пара поездок — и цель закрыта.`);
@@ -4935,7 +4824,7 @@ function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, s
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const carExpensesThisMonth = garage.expenses.filter(e => e.ts >= monthStart).reduce((s, e) => s + e.amount, 0);
   const carExpensesTotal = garage.expenses.reduce((s, e) => s + e.amount, 0);
-  const taxiIncomeThisMonth = taxiOrders.filter(o => o.ts >= monthStart).reduce((s, o) => s + o.amount, 0);
+  const taxiIncomeThisMonth = taxiOrders.filter(o => o.ts >= monthStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
   const linkedDebt = debts.find(d => d.id === garage.carDebtId);
   const monthlyLoanPayment = linkedDebt && linkedDebt.remaining > 0 ? linkedDebt.monthlyPayment : 0;
   const netThisMonth = taxiIncomeThisMonth - carExpensesThisMonth - monthlyLoanPayment;
@@ -5296,6 +5185,7 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
   const [pending, setPending] = useState(null); // {title,calories,protein,fat,carbs,source}
   const [photoPreview, setPhotoPreview] = useState(null); // dataUrl, ждёт комментария перед отправкой в AI
   const [photoNote, setPhotoNote] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
 
   const today = todayStr();
   const todayEntries = nutrition.entries.filter(e => e.date === today).sort((a, b) => b.ts - a.ts);
@@ -5308,6 +5198,19 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
   const eatenProtein = todayEntries.reduce((s, e) => s + (e.protein || 0), 0);
   const eatenFat = todayEntries.reduce((s, e) => s + (e.fat || 0), 0);
   const eatenCarbs = todayEntries.reduce((s, e) => s + (e.carbs || 0), 0);
+
+  // История по месяцам — итог по каждому прошедшему дню (не сегодня), сгруппировано по YYYY-MM.
+  const dailyTotals = {};
+  nutrition.entries.forEach(e => {
+    if (e.date === today) return;
+    dailyTotals[e.date] = (dailyTotals[e.date] || 0) + e.calories;
+  });
+  const historyByMonth = {};
+  Object.entries(dailyTotals).sort((a, b) => b[0].localeCompare(a[0])).forEach(([date, cal]) => {
+    const mk = date.slice(0, 7);
+    if (!historyByMonth[mk]) historyByMonth[mk] = [];
+    historyByMonth[mk].push({ date, cal });
+  });
 
   async function handleTextSubmit() {
     if (!textInput.trim()) return;
@@ -5391,7 +5294,7 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
         <div style={{ marginTop: 10, background: COLORS.bgCardAlt, borderRadius: 10, padding: 10, border: `1px solid ${COLORS.violet}55` }}>
           <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 6 }}>{pending.source === 'photo' ? '📷 Оценка по фото' : '📝 Оценка по описанию'} — проверь и поправь при необходимости:</div>
           <input className="lrpg-input" value={pending.title} onChange={e => setPending(p => ({ ...p, title: e.target.value }))} style={{ marginBottom: 6 }} />
-          <input className="lrpg-input" type="number" min={0} value={pending.calories} onChange={e => setPending(p => ({ ...p, calories: Number(e.target.value) || 0 }))} style={{ marginBottom: 6 }} />
+          <input className="lrpg-input" type="number" min={0} value={pending.calories || ''} onChange={e => setPending(p => ({ ...p, calories: e.target.value === '' ? 0 : Number(e.target.value) }))} style={{ marginBottom: 6 }} />
           <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 8 }}>Б {pending.protein} г · Ж {pending.fat} г · У {pending.carbs} г</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="lrpg-btn" onClick={confirmPending} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12 }}>Добавить в дневник</button>
@@ -5477,6 +5380,39 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
           ))}
         </div>
       )}
+
+      {Object.keys(historyByMonth).length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div onClick={() => setShowHistory(v => !v)} style={{ fontSize: 11, color: COLORS.violet, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+            {showHistory ? 'Скрыть историю' : 'История по месяцам'} <ChevronRight size={12} style={{ transform: showHistory ? 'rotate(90deg)' : 'none' }} />
+          </div>
+          {showHistory && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {Object.entries(historyByMonth).map(([mk, days]) => {
+                const avg = Math.round(days.reduce((s, d) => s + d.cal, 0) / days.length);
+                const overDays = days.filter(d => d.cal > target).length;
+                return (
+                  <div key={mk}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: COLORS.textMuted, marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, color: COLORS.text }}>{monthRuLabel(mk)}</span>
+                      <span>в среднем {avg} ккал/день · перебор {overDays}/{days.length} дн.</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 160, overflowY: 'auto' }}>
+                      {days.map(d => (
+                        <div key={d.date} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, background: COLORS.bgCardAlt, borderRadius: 6, padding: '4px 8px' }}>
+                          <span style={{ color: COLORS.textMuted }}>{d.date.slice(8, 10)}.{d.date.slice(5, 7)}</span>
+                          <span style={{ fontWeight: 700, color: d.cal > target ? COLORS.crimson : COLORS.teal }}>{d.cal} ккал</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 10 }}>
         AI оценивает калории приблизительно по описанию/фото — сверяй с этикеткой, если важна точность. Уложился в лимит за день — +1 Discipline на следующий день, перебор — −1.
       </div>
