@@ -32,6 +32,9 @@
 //      ("Сохраняю..." stuck button), and every save is mirrored to a local backup that's used
 //      automatically if the main storage is empty/unavailable on load — so progress survives
 //      updates/redeploys even if the platform storage resets.
+// 12.2 Softer status UI: when cloud storage fails but the local backup succeeded, the banner/status
+//      now says so calmly instead of showing a scary "progress may be lost" error, since the data
+//      is actually safe on-device in that case.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -51,7 +54,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '12.1';
+const APP_VERSION = '12.2';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -507,8 +510,10 @@ function writeLocalBackup(jsonString) {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem(LOCAL_BACKUP_KEY, jsonString);
+      return true;
     }
   } catch (e) { /* тихо игнорируем — это лишь подстраховка */ }
+  return false;
 }
 function readLocalBackup() {
   try {
@@ -1342,6 +1347,7 @@ export default function LifeRPG() {
   const [editingName, setEditingName] = useState(false);
   const [storageStatus, setStorageStatus] = useState('checking');
   const [storageError, setStorageError] = useState(null);
+  const [localBackupOk, setLocalBackupOk] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);
 
   useEffect(() => {
@@ -1403,7 +1409,8 @@ export default function LifeRPG() {
     const payload = JSON.stringify(state);
     // Всегда обновляем локальную резервную копию сразу — она не требует сети и не зависает,
     // так что даже если основное хранилище зависнет/откажет, прогресс не потеряется.
-    writeLocalBackup(payload);
+    const localOk = writeLocalBackup(payload);
+    setLocalBackupOk(localOk);
     if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
       setStorageStatus('unavailable');
       return false;
@@ -2424,12 +2431,14 @@ export default function LifeRPG() {
       )}
 
       {(storageStatus === 'unavailable' || storageStatus === 'error') && (
-        <div style={{ margin: '0 16px 10px', background: COLORS.crimsonSoft, border: `1px solid ${COLORS.crimson}55`, borderRadius: 10, padding: '10px 12px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <AlertCircle size={16} color={COLORS.crimson} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div style={{ margin: '0 16px 10px', background: localBackupOk ? COLORS.goldSoft : COLORS.crimsonSoft, border: `1px solid ${localBackupOk ? COLORS.gold : COLORS.crimson}55`, borderRadius: 10, padding: '10px 12px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <AlertCircle size={16} color={localBackupOk ? COLORS.gold : COLORS.crimson} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ fontSize: 12, color: COLORS.text, lineHeight: 1.5 }}>
-            {storageStatus === 'unavailable'
-              ? 'Сохранение недоступно в этом окружении — прогресс пропадёт при закрытии. Открывай игру как артефакт прямо в чате Claude, а не как отдельный скачанный файл.'
-              : `Ошибка сохранения: ${storageError}. Прогресс может не сохраниться — не закрывай вкладку, пока не увидишь это сообщение снова с "ок".`}
+            {localBackupOk
+              ? 'Облачное сохранение сейчас не отвечает, но прогресс сохранён локально на этом устройстве — при следующем открытии он будет на месте. Если планируешь заходить с другого устройства/аккаунта, лучше сначала сделать Экспорт в Settings.'
+              : storageStatus === 'unavailable'
+              ? 'Сохранение недоступно в этом окружении, и локальную резервную копию тоже не удалось создать — прогресс пропадёт при закрытии. Сделай Экспорт в Settings прямо сейчас.'
+              : `Ошибка сохранения: ${storageError}. Локальную резервную копию тоже не удалось создать — прогресс может не сохраниться. Сделай Экспорт в Settings.`}
           </div>
         </div>
       )}
@@ -2580,7 +2589,7 @@ export default function LifeRPG() {
               <SettingsTab
                 character={state.character} setCharacterName={setCharacterName} resetAllData={resetAllData}
                 availableHoursPerWeek={state.availableHoursPerWeek} setAvailableHours={setAvailableHours}
-                storageStatus={storageStatus} storageError={storageError} lastSavedAt={lastSavedAt}
+                storageStatus={storageStatus} storageError={storageError} lastSavedAt={lastSavedAt} localBackupOk={localBackupOk}
                 state={state} importSaveData={importSaveData} saveNow={saveNow}
                 onExported={() => { setHasExportedThisSession(true); setShowExportReminder(false); }}
                 difficultyMode={state.difficultyMode} setDifficultyMode={setDifficultyMode}
@@ -5092,7 +5101,7 @@ function SaveManagerCard({ state, importSaveData, onExported }) {
   );
 }
 
-function SettingsTab({ character, setCharacterName, resetAllData, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
+function SettingsTab({ character, setCharacterName, resetAllData, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, localBackupOk, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
   const [manualSaveResult, setManualSaveResult] = useState(null); // 'ok' | 'fail' | null
@@ -5111,11 +5120,16 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700 }}>
         <SettingsIcon size={15} color={COLORS.violet} /> Настройки
       </div>
-      <Card style={{ border: `1px solid ${storageStatus === 'ok' ? COLORS.teal + '55' : COLORS.crimson + '55'}` }}>
+      <Card style={{ border: `1px solid ${storageStatus === 'ok' ? COLORS.teal + '55' : localBackupOk ? COLORS.gold + '55' : COLORS.crimson + '55'}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700 }}>
-          <Save size={14} color={storageStatus === 'ok' ? COLORS.teal : COLORS.crimson} />
-          Автосохранение: {storageStatus === 'ok' ? 'работает' : storageStatus === 'unavailable' ? 'недоступно для этого артефакта' : storageStatus === 'checking' ? 'проверяю...' : 'ошибка'}
+          <Save size={14} color={storageStatus === 'ok' ? COLORS.teal : localBackupOk ? COLORS.gold : COLORS.crimson} />
+          Облачное автосохранение: {storageStatus === 'ok' ? 'работает' : storageStatus === 'unavailable' ? 'недоступно' : storageStatus === 'checking' ? 'проверяю...' : 'ошибка'}
         </div>
+        {storageStatus !== 'ok' && (
+          <div style={{ fontSize: 11, marginTop: 4, color: localBackupOk ? COLORS.gold : COLORS.crimson }}>
+            {localBackupOk ? 'Но локальная копия на этом устройстве сохраняется исправно — прогресс не потеряется при перезаходе здесь же.' : 'И локальную копию тоже не удалось сохранить — используй Экспорт прямо сейчас.'}
+          </div>
+        )}
         {lastSavedAt && <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>Последнее сохранение: {fmtTime(lastSavedAt)}</div>}
         {storageError && <div style={{ fontSize: 10, color: COLORS.crimson, marginTop: 4 }}>{storageError}</div>}
         {storageStatus !== 'ok' && (
