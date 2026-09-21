@@ -17,7 +17,34 @@ const CHUNK_SIZE = 3500; // с запасом под лимит 4096 симво�
 const CALL_TIMEOUT_MS = 6000; // таймаут на один вызов CloudStorage (getItem/setItem/...)
 
 function getCloud() {
-  return typeof window !== 'undefined' ? window.Telegram?.WebApp?.CloudStorage : null;
+  const webApp = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+  if (!webApp || !webApp.CloudStorage) return null;
+  // CloudStorage появился в Bot API 6.9. Объект-заглушка `Telegram.WebApp.CloudStorage`
+  // присутствует в SDK всегда (даже в клиентах, которые его не поддерживают) — если
+  // не проверить версию, мы попытаемся вызвать методы, колбэк от которых никогда не
+  // придёт, и получим ровно то бесконечное "нет ответа", что мы и видим. Поэтому если
+  // клиент явно старее 6.9 — сразу считаем CloudStorage недоступным и уходим в fallback,
+  // вместо того чтобы ждать 6-8 секунд впустую при каждом сохранении.
+  if (typeof webApp.isVersionAtLeast === 'function' && !webApp.isVersionAtLeast('6.9')) return null;
+  return webApp.CloudStorage;
+}
+
+// Диагностика — пригодится, чтобы понять, что именно за клиент Telegram у пользователя,
+// если CloudStorage всё равно не отвечает даже при формально поддерживаемой версии.
+function getTelegramDiagnostics() {
+  const webApp = typeof window !== 'undefined' ? window.Telegram?.WebApp : null;
+  if (!webApp) return { present: false };
+  return {
+    present: true,
+    version: webApp.version || null,
+    platform: webApp.platform || null,
+    hasInitData: !!(webApp.initData && webApp.initData.length > 0),
+    cloudStorageObjectPresent: !!webApp.CloudStorage,
+    versionSupportsCloud: typeof webApp.isVersionAtLeast === 'function' ? webApp.isVersionAtLeast('6.9') : 'неизвестно (isVersionAtLeast недоступен)',
+  };
+}
+if (typeof window !== 'undefined') {
+  window.__telegramStorageDiagnostics = getTelegramDiagnostics;
 }
 
 // Оборачиваем колбэк-based вызов в промис С ТАЙМАУТОМ. Без этого: если
