@@ -14,37 +14,56 @@
 // удобно для локальной проверки, но реального пользователя это не
 // касается: в проде CloudStorage всегда доступен.
 const CHUNK_SIZE = 3500; // с запасом под лимит 4096 символов
+const CALL_TIMEOUT_MS = 6000; // таймаут на один вызов CloudStorage (getItem/setItem/...)
+
 function getCloud() {
   return typeof window !== 'undefined' ? window.Telegram?.WebApp?.CloudStorage : null;
 }
-function cloudGetItem(key) {
+
+// Оборачиваем колбэк-based вызов в промис С ТАЙМАУТОМ. Без этого: если
+// колбэк от Telegram-моста по какой-то причине не придёт (что реальнее
+// именно при "заторе" из нескольких почти одновременных вызовов — см. ниже
+// про очередь сохранений), await виснет навсегда, а UI показывает
+// бесконечное "Сохраняю...".
+function withTimeout(promise, label) {
   return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`CloudStorage.${label}: нет ответа за ${CALL_TIMEOUT_MS / 1000}с`)), CALL_TIMEOUT_MS);
+    promise.then(
+      v => { clearTimeout(t); resolve(v); },
+      e => { clearTimeout(t); reject(e); }
+    );
+  });
+}
+
+function cloudGetItem(key) {
+  return withTimeout(new Promise((resolve, reject) => {
     const cloud = getCloud();
     if (!cloud) return reject(new Error('CloudStorage unavailable'));
     cloud.getItem(key, (err, value) => (err ? reject(err) : resolve(value || null)));
-  });
+  }), 'getItem');
 }
 function cloudSetItem(key, value) {
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     const cloud = getCloud();
     if (!cloud) return reject(new Error('CloudStorage unavailable'));
     cloud.setItem(key, value, (err, ok) => (err ? reject(err) : resolve(ok)));
-  });
+  }), 'setItem');
 }
 function cloudRemoveItem(key) {
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     const cloud = getCloud();
     if (!cloud) return reject(new Error('CloudStorage unavailable'));
     cloud.removeItem(key, (err, ok) => (err ? reject(err) : resolve(ok)));
-  });
+  }), 'removeItem');
 }
 function cloudGetKeys() {
-  return new Promise((resolve, reject) => {
+  return withTimeout(new Promise((resolve, reject) => {
     const cloud = getCloud();
     if (!cloud) return reject(new Error('CloudStorage unavailable'));
     cloud.getKeys((err, keys) => (err ? reject(err) : resolve(keys || [])));
-  });
+  }), 'getKeys');
 }
+
 // --- Fallback для тестов вне Telegram (обычный браузер) --
 const fallback = {
   async get(key) {
@@ -64,6 +83,7 @@ const fallback = {
     return { keys, prefix, shared: false };
   },
 };
+
 // --- Реальная реализация через CloudStorage (с чанкованием) --
 async function cloudGet(key) {
   const metaRaw = await cloudGetItem(`${key}__meta`);
@@ -75,12 +95,12 @@ async function cloudGet(key) {
   }
   return { key, value: full, shared: false };
 }
-async function cloudSet(key, value) {
+
+async function cloudSetInner(key, value) {
   const chunks = [];
   for (let i = 0; i < value.length; i += CHUNK_SIZE) {
     chunks.push(value.slice(i, i + CHUNK_SIZE));
   }
-  // если новых чанков меньше, чем было — подчищаем хвост от старой версии
   let oldChunkCount = 0;
   try {
     const oldMetaRaw = await cloudGetItem(`${key}__meta`);
@@ -95,6 +115,46 @@ async function cloudSet(key, value) {
   await cloudSetItem(`${key}__meta`, JSON.stringify({ chunks: chunks.length }));
   return { key, value, shared: false };
 }
+
+// ВАЖНО: сохранение состояния может занимать десяток+ последовательных сетевых
+// вызовов (по одному на чанк). Приложение вызывает set() при КАЖДОМ изменении
+// state — а сразу после импорта/загрузки несколько эффектов React обычно
+// срабатывают почти одновременно (проверка ачивок, ИИ-квесты, снепшот
+// баланса и т.д.), и каждый из них тоже дергает автосохранение. Если два
+// таких сохранения накладываются друг на друга, они одновременно пишут в
+// одни и те же ключи `key__c0`, `key__c1`... — Telegram-мост это не всегда
+// корректно разруливает, и колбэк на один из вызовов может просто никогда
+// не прийти. Именно это и выглядит как "автосохранение зависло/не сработало"
+// именно в момент после импорта, а не при обычных мелких правках (там
+// сохранение всегда одно, без наложений).
+//
+// Чиним очередью: если сохранение уже идёт, новый вызов не стартует
+// параллельно, а просто запоминает последнее значение и ждёт своей очереди;
+// когда текущее сохранение завершится (успешно или с ошибкой), сразу
+// запускается ещё одно — но уже с самым свежим состоянием, а не со всеми
+// промежуточными.
+let saveInFlight = null;
+let pendingValue = null;
+let pendingKey = null;
+function cloudSet(key, value) {
+  if (saveInFlight) {
+    // Уже что-то сохраняется — просто запоминаем самое свежее значение
+    // и отдаём тот же промис ожидания очереди (когда очередь дойдёт,
+    // resolve/reject произойдёт для актуального значения).
+    pendingKey = key;
+    pendingValue = value;
+    return saveInFlight.then(() => runQueued());
+  }
+  saveInFlight = cloudSetInner(key, value).finally(() => { saveInFlight = null; });
+  return saveInFlight;
+}
+function runQueued() {
+  if (pendingValue === null) return Promise.resolve({ key: pendingKey, value: pendingValue, shared: false });
+  const key = pendingKey, value = pendingValue;
+  pendingValue = null; pendingKey = null;
+  return cloudSet(key, value);
+}
+
 async function cloudDelete(key) {
   let oldChunkCount = 0;
   try {
@@ -112,9 +172,11 @@ async function cloudList(prefix) {
   const metaKeys = keys.filter(k => k.endsWith('__meta') && (!prefix || k.startsWith(prefix)));
   return { keys: metaKeys.map(k => k.replace(/__meta$/, '')), prefix, shared: false };
 }
+
 const impl = getCloud()
   ? { get: cloudGet, set: cloudSet, delete: cloudDelete, list: cloudList }
   : fallback;
+
 if (typeof window !== 'undefined') {
   window.storage = impl;
 }
