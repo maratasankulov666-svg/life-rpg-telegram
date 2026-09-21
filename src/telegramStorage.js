@@ -6,8 +6,9 @@
 //
 // CloudStorage ограничения: значение ≤ 4096 символов на ключ, всего
 // ≤ 1024 ключей на бота. Наш JSON состояния почти всегда больше 4096
-// символов, поэтому он режется на чанки и хранится под несколькими
-// ключами + один "мета" ключ с их количеством.
+// символов, поэтому перед записью он гзипуется (см. ниже), а затем режется
+// на чанки и хранится под несколькими ключами + один "мета" ключ с их
+// количеством и флагом сжатия.
 //
 // Если приложение открыто НЕ в Telegram (например, при разработке в
 // обычном браузере), автоматически используется localStorage — это
@@ -94,6 +95,36 @@ function cloudGetKeys() {
   }), 'getKeys');
 }
 
+// --- Сжатие (gzip) перед чанкованием ------------------------------------
+// Сохранение выросло до сотен КБ (полная история заказов/транзакций) — это
+// десятки последовательных сетевых запросов на каждое сохранение, что
+// принципиально ненадёжно (любой один из них может подвиснуть). Вместо того
+// чтобы обрезать историю, сжимаем JSON перед чанкованием: он в основном
+// состоит из повторяющихся ключей и похожих объектов, поэтому gzip обычно
+// ужимает его в разы, а значит и чанков/запросов становится в разы меньше.
+// CompressionStream/DecompressionStream — стандартный Web API, доступен в
+// современных WebView (iOS 16.4+, Chrome 80+). Если недоступен — просто
+// сохраняем как раньше, без сжатия (полная обратная совместимость по чтению).
+function supportsCompression() {
+  return typeof CompressionStream !== 'undefined' && typeof DecompressionStream !== 'undefined';
+}
+async function gzipToBase64(text) {
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buf = await new Response(stream).arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+async function gunzipFromBase64(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const buf = await new Response(stream).arrayBuffer();
+  return new TextDecoder().decode(buf);
+}
+
 // --- Fallback для тестов вне Telegram (обычный браузер) --
 const fallback = {
   async get(key) {
@@ -123,16 +154,38 @@ async function cloudGet(key) {
   for (let i = 0; i < meta.chunks; i++) {
     full += (await cloudGetItem(`${key}__c${i}`)) || '';
   }
+  // meta.gz — старые сохранения (до этой версии) писались без сжатия и без этого поля;
+  // читаем их как есть, чтобы ничего не потерять при обновлении.
+  if (meta.gz) {
+    try {
+      full = await gunzipFromBase64(full);
+    } catch (e) {
+      throw new Error('Не удалось распаковать сохранение (' + (e && e.message ? e.message : e) + ')');
+    }
+  }
   return { key, value: full, shared: false };
 }
 
-async function cloudSetInner(key, value) {
+async function cloudSetInner(key, rawValue) {
   const startedAt = Date.now();
+  const canGzip = supportsCompression();
+  let value = rawValue;
+  let gz = false;
+  if (canGzip) {
+    try {
+      value = await gzipToBase64(rawValue);
+      gz = true;
+    } catch (e) {
+      // сжатие не удалось (мало ли) — сохраняем как есть, без сжатия
+      value = rawValue;
+      gz = false;
+    }
+  }
   const chunks = [];
   for (let i = 0; i < value.length; i += CHUNK_SIZE) {
     chunks.push(value.slice(i, i + CHUNK_SIZE));
   }
-  window.__telegramStorageLastSaveInfo = { bytes: value.length, chunks: chunks.length, status: 'в процессе', ms: null };
+  window.__telegramStorageLastSaveInfo = { bytes: rawValue.length, compressedBytes: value.length, gz, chunks: chunks.length, status: 'в процессе', ms: null };
   let oldChunkCount = 0;
   try {
     const oldMetaRaw = await cloudGetItem(`${key}__meta`);
@@ -145,13 +198,13 @@ async function cloudSetInner(key, value) {
     for (let i = chunks.length; i < oldChunkCount; i++) {
       try { await cloudRemoveItem(`${key}__c${i}`); } catch (_) { /* ignore */ }
     }
-    await cloudSetItem(`${key}__meta`, JSON.stringify({ chunks: chunks.length }));
-    window.__telegramStorageLastSaveInfo = { bytes: value.length, chunks: chunks.length, status: 'ok', ms: Date.now() - startedAt };
+    await cloudSetItem(`${key}__meta`, JSON.stringify({ chunks: chunks.length, gz }));
+    window.__telegramStorageLastSaveInfo = { bytes: rawValue.length, compressedBytes: value.length, gz, chunks: chunks.length, status: 'ok', ms: Date.now() - startedAt };
   } catch (e) {
-    window.__telegramStorageLastSaveInfo = { bytes: value.length, chunks: chunks.length, status: 'ошибка: ' + (e && e.message ? e.message : String(e)), ms: Date.now() - startedAt };
+    window.__telegramStorageLastSaveInfo = { bytes: rawValue.length, compressedBytes: value.length, gz, chunks: chunks.length, status: 'ошибка: ' + (e && e.message ? e.message : String(e)), ms: Date.now() - startedAt };
     throw e;
   }
-  return { key, value, shared: false };
+  return { key, value: rawValue, shared: false };
 }
 
 // ВАЖНО: сохранение состояния может занимать десяток+ последовательных сетевых
