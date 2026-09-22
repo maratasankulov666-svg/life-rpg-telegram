@@ -48,6 +48,26 @@
 //      (CompressionStream, with automatic fallback to uncompressed on unsupported clients and full
 //      backward-compat reading of old uncompressed saves) before chunking, cutting chunk count a lot
 //      without deleting any transaction/order history.
+// 12.6 Gzip barely helped (248740 -> 239032, ~4%): the bulk of the JSON is high-entropy unique ids/
+//      timestamps in transactions/orders, which don't compress. Per user's choice, split persistence:
+//      Telegram CloudStorage now only syncs the "core" state (buildCloudPayload — everything except
+//      finance.transactions/taxi.orders/debt payment history), which should be a handful of chunks
+//      instead of 60+. The FULL state (all financial history included) still lives in the on-device
+//      local backup and in Export, unchanged. On load, the local backup wins when present (it's the
+//      complete copy); cloud is only the fallback for a fresh device with no local backup, and in
+//      that case financial history has to come back via Import.
+// 13.0 Feature request batch: (1) Calendar tab under Progress — days-played counter, current streak,
+//      days-since-first-open, and a month grid marking which days the game was opened (state.playLog/
+//      firstOpenedAt). (2) Debts reworked: loanType is now 'annuity' | 'differentiated' | 'simple'.
+//      Adding a loan now takes the ORIGINAL amount/rate/term plus "months already paid", and correctly
+//      recomputes the current remaining balance from the amortization schedule instead of treating it
+//      as a fresh loan. Differentiated loans get their own schedule (buildDifferentiatedSchedule,
+//      fixed principal + shrinking interest -> decreasing payment) with a recharts line chart of
+//      balance/payment. Simple debts (owed to a friend, credit-card balance) now just take an amount
+//      and a due date, no monthly-payment field. New ObligationsSummaryCard shows this month's loan
+//      payments and simple-debt due dates together. (3) Budget plan is now per-month
+//      (finance.budgetPlanByMonth), with a "this month / next month" toggle, so a plan can be set up
+//      for next month in advance (old flat budgetPlan auto-migrates into the current month on load).
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -67,7 +87,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '12.5';
+const APP_VERSION = '13.0';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -404,7 +424,7 @@ function financialHealth(state) {
   const savingsRate = fm.income > 0 ? (fm.savingsContrib / fm.income) * 100 : 0;
   const emergencySavings = state.finance.savingsGoals.filter(g => g.type === 'emergency').reduce((s, g) => s + (g.saved || 0), 0);
   const emergencyMonths = fm.essentialExpenses > 0 ? emergencySavings / fm.essentialExpenses : (emergencySavings > 0 ? Infinity : 0);
-  const plan = state.finance.budgetPlan || {};
+  const plan = (state.finance.budgetPlanByMonth && state.finance.budgetPlanByMonth[fm.monthKey]) || state.finance.budgetPlan || {};
   const plannedTotal = Object.values(plan).reduce((s, v) => s + (Number(v) || 0), 0);
   const budgetHealth = plannedTotal > 0 ? Math.max(0, Math.min(100, 100 - Math.max(0, (fm.expenses - plannedTotal) / plannedTotal * 100))) : null;
   let debtZone;
@@ -541,6 +561,22 @@ function readLocalBackup() {
   return null;
 }
 
+// "Ядро" состояния для облачной синхронизации: всё, КРОМЕ неограниченно растущей финансовой
+// истории (transactions, taxi.orders, история платежей по долгам). Полная версия этих списков
+// остаётся только в локальной копии на устройстве (writeLocalBackup) и в Экспорте — см. saveNow().
+function buildCloudPayload(fullState) {
+  const finance = fullState.finance || {};
+  return {
+    ...fullState,
+    finance: {
+      ...finance,
+      transactions: [],
+      taxi: { ...(finance.taxi || {}), orders: [] },
+      debts: (finance.debts || []).map(d => ({ ...d, history: [] })),
+    },
+  };
+}
+
 function xpNeeded(level) {
   return Math.round(90 + level * 25 + Math.pow(level, 1.5) * 3);
 }
@@ -587,6 +623,48 @@ function buildAmortizationSchedule(principal, annualRatePct, months) {
   return rows;
 }
 
+// Дифференцированный график: тело долга гасится равными частями каждый месяц (P/n),
+// а проценты считаются от текущего остатка — поэтому платёж со временем уменьшается
+// (в отличие от аннуитета, где платёж всегда фиксированный).
+function buildDifferentiatedSchedule(principal, annualRatePct, months) {
+  if (!principal || !months) return [];
+  const r = (annualRatePct || 0) / 100 / 12;
+  const principalPart = principal / months;
+  let balance = principal;
+  const rows = [];
+  for (let m = 1; m <= months; m++) {
+    const interest = balance * r;
+    const payment = principalPart + interest;
+    balance = Math.max(0, balance - principalPart);
+    rows.push({ month: m, payment, interest, principalPart, balance });
+  }
+  return rows;
+}
+
+// Текущий "боевой" ежемесячный платёж по долгу: для аннуитета он фиксирован, для
+// дифференцированного — пересчитывается от текущего остатка (со временем падает),
+// у простых долгов (друзьям/по карте) ежемесячного платежа нет вовсе — есть только срок.
+function currentMonthlyDue(d) {
+  if (!d || d.loanType === 'simple') return null;
+  if (d.loanType === 'differentiated') {
+    if (!d.termMonths) return 0;
+    const principalPart = d.total / d.termMonths;
+    const monthlyRate = (d.interestRate || 0) / 100 / 12;
+    return principalPart + Math.max(0, d.remaining) * monthlyRate;
+  }
+  return d.monthlyPayment || 0;
+}
+
+function addMonthsToKey(monthKey, delta) {
+  const [y, m] = (monthKey || monthStr()).split('-').map(Number);
+  const dt = new Date(y, (m - 1) + delta, 1);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+function monthKeyLabel(monthKey) {
+  const [y, m] = (monthKey || monthStr()).split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+}
+
 // Переносит старую плоскую финансовую структуру (monthlyIncome + expenses без дат)
 // в новую систему транзакций, ничего не ломая для пользователя (раздел "ВАЖНО" ТЗ v12).
 function migrateFinance(rawFinance) {
@@ -614,8 +692,24 @@ function migrateFinance(rawFinance) {
   if (!Array.isArray(f.assets)) f.assets = [];
   if (!Array.isArray(f.netWorthHistory)) f.netWorthHistory = [];
   if (!f.budgetPlan || typeof f.budgetPlan !== 'object') f.budgetPlan = {};
+  if (!f.budgetPlanByMonth || typeof f.budgetPlanByMonth !== 'object') {
+    // Раньше план бюджета был один на всё время (f.budgetPlan). Теперь план — по месяцам
+    // (f.budgetPlanByMonth[monthKey]), чтобы можно было готовить план на следующий месяц заранее.
+    // Если у пользователя уже был старый плоский план — переносим его в текущий месяц, ничего не теряя.
+    f.budgetPlanByMonth = Object.keys(f.budgetPlan).length > 0 ? { [monthStr()]: f.budgetPlan } : {};
+  }
   if (!f.debtLoadThresholds) f.debtLoadThresholds = { low: 20, medium: 36, high: 50 };
-  f.debts = (Array.isArray(f.debts) ? f.debts : []).map(d => ({ ...d, history: Array.isArray(d.history) ? d.history : [], category: d.category || 'debt_credit' }));
+  f.debts = (Array.isArray(f.debts) ? f.debts : []).map(d => ({
+    ...d,
+    history: Array.isArray(d.history) ? d.history : [],
+    category: d.category || 'debt_credit',
+    // Раньше был только isAnnuity (bool). Теперь у долга есть loanType: 'annuity' | 'differentiated' | 'simple'.
+    // Для уже существующих долгов восстанавливаем его из старого поля, ничего не ломая.
+    loanType: d.loanType || (d.isAnnuity ? 'annuity' : (d.termMonths ? 'manual' : 'simple')),
+    monthsElapsed: d.monthsElapsed || 0,
+    paymentDueDay: d.paymentDueDay || null,
+    dueDate: d.dueDate || null,
+  }));
   f.savingsGoals = (Array.isArray(f.savingsGoals) ? f.savingsGoals : []).map(g => ({ ...g, type: g.type || 'goal' }));
   return f;
 }
@@ -971,6 +1065,8 @@ function defaultState() {
   STATS_DEF.forEach(s => { stats[s.key] = 20; });
   return {
     character: { name: 'Герой', level: 1, xp: 0, title: null, photo: null },
+    firstOpenedAt: null, // дата первого запуска — для счётчика "дней в игре"
+    playLog: [], // ['2026-09-01', ...] — уникальные дни, когда открывали игру, для календаря
     coins: 50,
     // Coin Ledger — раздел 7+21 ТЗ Coins Economy. Игровая экономика полностью отделена
     // от реального прогресса (XP/Stats/Level/Finance) и от реальных денег (UZS).
@@ -1001,7 +1097,8 @@ function defaultState() {
       savingsGoals: [],
       assets: [], // {id,name,type,value,liquid} — раздел 16 ТЗ, кастомные активы сверх Cash/Savings/Car
       netWorthHistory: [], // {month, netWorth} — раздел 18 ТЗ
-      budgetPlan: {}, // {categoryKey: plannedAmount} — раздел 12 ТЗ
+      budgetPlan: {}, // legacy — раздел 12 ТЗ (оставлено для обратной совместимости чтения старых сохранений)
+      budgetPlanByMonth: {}, // {'YYYY-MM': {categoryKey: plannedAmount}} — план бюджета по месяцам, можно готовить план на следующий месяц заранее
       debtLoadThresholds: { low: 20, medium: 36, high: 50 }, // раздел 14 ТЗ
       strategy: 'avalanche',
       taxi: { dailyTarget: 10000, commissionPct: 9, orders: [] },
@@ -1369,30 +1466,34 @@ export default function LifeRPG() {
 
   useEffect(() => {
     (async () => {
-      let s = null;
+      let cloudState = null;
       const hasStorage = typeof window !== 'undefined' && window.storage && typeof window.storage.get === 'function';
       if (!hasStorage) {
         setStorageStatus('unavailable');
       } else {
         try {
           const res = await withTimeout(window.storage.get(STORAGE_KEY, false), SAVE_TIMEOUT_MS, 'Загрузка');
-          if (res && res.value) s = JSON.parse(res.value);
+          if (res && res.value) cloudState = JSON.parse(res.value);
           setStorageStatus('ok');
         } catch (e) {
-          s = null;
+          cloudState = null;
           setStorageStatus('error');
           setStorageError(e && e.message ? e.message : String(e));
         }
       }
-      // Если основное хранилище пустое/недоступное/сломанное — пробуем локальную резервную копию,
-      // прежде чем откатываться на чистый defaultState() (иначе после обновления игра выглядит
-      // так, будто прогресс "сбросился", хотя он просто не там ищется).
-      if (!s) {
-        const backup = readLocalBackup();
-        if (backup) {
-          try { s = JSON.parse(backup); } catch (e) { /* битая резервная копия — игнорируем */ }
-        }
+      // В облако (см. buildCloudPayload в saveNow) уходит только "ядро" — без finance.transactions
+      // и finance.taxi.orders (это была основная причина, почему сохранение разрасталось до 60+
+      // чанков и переставало влезать в CloudStorage). Полная финансовая история хранится только
+      // в локальной копии на этом устройстве и в Экспорте. Поэтому если локальная копия есть —
+      // она главнее облачной: в ней данные полнее. Облако используется только как подстраховка
+      // для "ядра" на случай, если это свежее устройство или локальные данные потеряны — тогда
+      // полную финансовую историю можно будет вернуть только через Импорт.
+      let s = null;
+      const backup = readLocalBackup();
+      if (backup) {
+        try { s = JSON.parse(backup); } catch (e) { /* битая резервная копия — игнорируем */ }
       }
+      if (!s) s = cloudState;
       const defs = defaultState();
       s = { ...defs, ...(s || {}) };
       // Coin Ledger — если сохранение старое (до этого ТЗ), инициализируем историю с текущего баланса,
@@ -1401,6 +1502,12 @@ export default function LifeRPG() {
       if (typeof s.coinsSpentAllTime !== 'number') s.coinsSpentAllTime = 0;
       if (!Array.isArray(s.coinTransactions)) s.coinTransactions = [];
       if (!s.cosmetics) s.cosmetics = { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } };
+      // Календарь "дней в игре": отмечаем сегодняшний день как сыгранный (без дублей) и
+      // фиксируем дату первого запуска, если это самое первое сохранение.
+      if (!Array.isArray(s.playLog)) s.playLog = [];
+      if (!s.firstOpenedAt) s.firstOpenedAt = Date.now();
+      const todayKey = todayStr();
+      if (!s.playLog.includes(todayKey)) s.playLog = [...s.playLog, todayKey];
       s.rewards = (Array.isArray(s.rewards) ? s.rewards : DEFAULT_REWARDS).map(r => ({ category: 'reallife', description: '', icon: '🎁', enabled: true, ...r }));
       s.finance = { ...defs.finance, ...(s.finance || {}) };
       s.finance.taxi = { ...defs.finance.taxi, ...(s.finance.taxi || {}) };
@@ -1423,17 +1530,24 @@ export default function LifeRPG() {
   }, [state, loaded, storageStatus]);
 
   async function saveNow() {
-    const payload = JSON.stringify(state);
+    const fullPayload = JSON.stringify(state);
     // Всегда обновляем локальную резервную копию сразу — она не требует сети и не зависает,
-    // так что даже если основное хранилище зависнет/откажет, прогресс не потеряется.
-    const localOk = writeLocalBackup(payload);
+    // так что даже если основное хранилище зависнет/откажет, прогресс не потеряется. Локальная
+    // копия — единственное место (кроме Экспорта), где хранится ПОЛНАЯ финансовая история.
+    const localOk = writeLocalBackup(fullPayload);
     setLocalBackupOk(localOk);
     if (typeof window === 'undefined' || !window.storage || typeof window.storage.set !== 'function') {
       setStorageStatus('unavailable');
       return false;
     }
     try {
-      const res = await withTimeout(window.storage.set(STORAGE_KEY, payload, false), SAVE_TIMEOUT_MS, 'Сохранение');
+      // В облако уходит только "ядро" — без finance.transactions/taxi.orders/истории платежей по
+      // долгам. У пользователя эти списки растут без ограничения (в отличие от Хроники и
+      // coinTransactions, урезанных до 300 записей) и раздували сохранение до 60+ чанков, из-за
+      // чего CloudStorage систематически не успевал/не отвечал. Полная история остаётся только
+      // локально на этом устройстве и в Экспорте.
+      const cloudPayload = JSON.stringify(buildCloudPayload(state));
+      const res = await withTimeout(window.storage.set(STORAGE_KEY, cloudPayload, false), SAVE_TIMEOUT_MS, 'Сохранение');
       if (!res) {
         setStorageStatus('error');
         setStorageError('set() вернул null — платформа отклонила запись (возможно, сохранение стало слишком большим)');
@@ -1955,19 +2069,40 @@ export default function LifeRPG() {
   }
 
   function addDebt(data) {
-    setState(prev => ({
-      ...prev,
-      finance: {
-        ...prev.finance,
-        debts: [...prev.finance.debts, {
-          id: uid(), title: data.title, total: data.total, remaining: data.total,
-          monthlyPayment: data.monthlyPayment, interestRate: data.interestRate || 0,
-          termMonths: data.termMonths || null, isAnnuity: !!data.isAnnuity, createdAt: Date.now(),
-          category: data.category || 'debt_credit', history: [],
-        }],
-      },
-      chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый Debt Boss: ${data.title} (HP ${data.total})`),
-    }));
+    setState(prev => {
+      const loanType = data.loanType || (data.isAnnuity ? 'annuity' : 'manual');
+      const total = data.total;
+      const termMonths = loanType === 'simple' ? null : (data.termMonths || null);
+      const interestRate = loanType === 'simple' ? 0 : (data.interestRate || 0);
+      const alreadyPaidMonths = Math.max(0, Math.min(data.alreadyPaidMonths || 0, termMonths || 0));
+      let remaining = total;
+      // Если долг уже частично оплачен ДО того, как его добавили в игру (например, кредит
+      // взят несколько месяцев назад) — пересчитываем реальный текущий остаток по графику,
+      // а не берём всю сумму заново. Иначе тело долга и проценты дальше считаются неправильно.
+      if (alreadyPaidMonths > 0 && (loanType === 'annuity' || loanType === 'differentiated')) {
+        const scheduleFn = loanType === 'differentiated' ? buildDifferentiatedSchedule : buildAmortizationSchedule;
+        const schedule = scheduleFn(total, interestRate, termMonths);
+        if (schedule[alreadyPaidMonths - 1]) remaining = schedule[alreadyPaidMonths - 1].balance;
+      }
+      const monthlyPayment = loanType === 'annuity' ? annuityPayment(total, interestRate, termMonths)
+        : loanType === 'manual' ? (data.monthlyPayment || 0)
+        : 0; // differentiated считается динамически (currentMonthlyDue), у simple платежа нет
+      return {
+        ...prev,
+        finance: {
+          ...prev.finance,
+          debts: [...prev.finance.debts, {
+            id: uid(), title: data.title, total, remaining,
+            monthlyPayment, interestRate, termMonths, isAnnuity: loanType === 'annuity',
+            loanType, monthsElapsed: alreadyPaidMonths,
+            paymentDueDay: loanType === 'simple' ? null : (data.paymentDueDay || null),
+            dueDate: loanType === 'simple' ? (data.dueDate || null) : null,
+            createdAt: Date.now(), category: data.category || 'debt_credit', history: [],
+          }],
+        },
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый Debt Boss: ${data.title} (HP ${Math.round(remaining)})`),
+      };
+    });
   }
 
   function deleteDebt(id) {
@@ -2143,15 +2278,20 @@ export default function LifeRPG() {
   }
 
   // Раздел 12 ТЗ: план бюджета по категориям.
-  function setBudgetPlanItem(category, amount) {
-    setState(prev => ({ ...prev, finance: { ...prev.finance, budgetPlan: { ...prev.finance.budgetPlan, [category]: Math.max(0, Number(amount) || 0) } } }));
+  function setBudgetPlanItem(category, amount, monthKey) {
+    const mk = monthKey || monthStr();
+    setState(prev => {
+      const monthPlan = { ...(prev.finance.budgetPlanByMonth[mk] || {}), [category]: Math.max(0, Number(amount) || 0) };
+      return { ...prev, finance: { ...prev.finance, budgetPlanByMonth: { ...prev.finance.budgetPlanByMonth, [mk]: monthPlan } } };
+    });
   }
 
-  function removeBudgetPlanItem(category) {
+  function removeBudgetPlanItem(category, monthKey) {
+    const mk = monthKey || monthStr();
     setState(prev => {
-      const budgetPlan = { ...prev.finance.budgetPlan };
-      delete budgetPlan[category];
-      return { ...prev, finance: { ...prev.finance, budgetPlan } };
+      const monthPlan = { ...(prev.finance.budgetPlanByMonth[mk] || {}) };
+      delete monthPlan[category];
+      return { ...prev, finance: { ...prev.finance, budgetPlanByMonth: { ...prev.finance.budgetPlanByMonth, [mk]: monthPlan } } };
     });
   }
 
@@ -2301,6 +2441,8 @@ export default function LifeRPG() {
       if (typeof parsed.coinsSpentAllTime !== 'number') parsed.coinsSpentAllTime = 0;
       if (!Array.isArray(parsed.coinTransactions)) parsed.coinTransactions = [];
       if (!parsed.cosmetics) parsed.cosmetics = { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } };
+      if (!Array.isArray(parsed.playLog)) parsed.playLog = [];
+      if (!parsed.firstOpenedAt) parsed.firstOpenedAt = Date.now();
       parsed.rewards = (Array.isArray(parsed.rewards) ? parsed.rewards : DEFAULT_REWARDS).map(r => ({ category: 'reallife', description: '', icon: '🎁', enabled: true, ...r }));
       parsed.finance = { ...defs.finance, ...(parsed.finance || {}) };
       parsed.finance.taxi = { ...defs.finance.taxi, ...(parsed.finance.taxi || {}) };
@@ -2559,7 +2701,7 @@ export default function LifeRPG() {
         {tab === 'progress' && (
           <>
             <SubNav
-              options={[{ key: 'stats', label: 'Статы' }, { key: 'world', label: 'Мир' }, { key: 'body', label: 'Тело' }, { key: 'inventory', label: 'Инвентарь' }]}
+              options={[{ key: 'stats', label: 'Статы' }, { key: 'world', label: 'Мир' }, { key: 'body', label: 'Тело' }, { key: 'inventory', label: 'Инвентарь' }, { key: 'calendar', label: 'Календарь' }]}
               active={subTab.progress} onChange={k => setSubTab(s => ({ ...s, progress: k }))}
             />
             {subTab.progress === 'stats' && (
@@ -2576,6 +2718,7 @@ export default function LifeRPG() {
               />
             )}
             {subTab.progress === 'inventory' && <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} />}
+            {subTab.progress === 'calendar' && <CalendarTab playLog={state.playLog} firstOpenedAt={state.firstOpenedAt} />}
           </>
         )}
 
@@ -3810,58 +3953,133 @@ function AddInlineForm({ fields, onSubmit, submitLabel = 'Добавить' }) {
   );
 }
 
+function ObligationsSummaryCard({ debts }) {
+  const alive = (debts || []).filter(d => d.remaining > 0);
+  if (alive.length === 0) return null;
+  const loans = alive.filter(d => d.loanType !== 'simple');
+  const simple = alive.filter(d => d.loanType === 'simple');
+  const totalMonthly = loans.reduce((s, d) => s + (currentMonthlyDue(d) || 0), 0);
+  const monthLabel = monthKeyLabel(monthStr());
+  return (
+    <Card style={{ marginBottom: 8, border: `1px solid ${COLORS.gold}44` }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <AlertCircle size={14} color={COLORS.gold} /> Обязательства — {monthLabel}
+      </div>
+      {loans.length > 0 && (
+        <div style={{ marginBottom: simple.length > 0 ? 10 : 0 }}>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textTransform: 'uppercase' }}>Платежи по кредитам</div>
+          {loans.map(d => (
+            <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
+              <span>{d.title}{d.paymentDueDay ? ` · до ${d.paymentDueDay} числа` : ''}</span>
+              <b style={{ color: COLORS.crimson }}>{Math.round(currentMonthlyDue(d) || 0)}</b>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${COLORS.border}`, fontWeight: 700 }}>
+            <span>Итого в месяц</span><span>{Math.round(totalMonthly)}</span>
+          </div>
+        </div>
+      )}
+      {simple.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textTransform: 'uppercase' }}>Простые долги</div>
+          {simple.slice().sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999')).map(d => {
+            const overdue = d.dueDate && d.dueDate < todayStr();
+            return (
+              <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
+                <span>{d.title}</span>
+                <span>
+                  <b style={{ color: COLORS.crimson, marginRight: 6 }}>{Math.round(d.remaining)}</b>
+                  <span style={{ color: overdue ? COLORS.crimson : COLORS.textMuted }}>{d.dueDate ? (overdue ? `просрочен (${d.dueDate})` : `до ${d.dueDate}`) : 'без срока'}</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function AddDebtForm({ onSubmit, onCancel }) {
-  const [isAnnuity, setIsAnnuity] = useState(true);
+  const [loanType, setLoanType] = useState('annuity'); // 'annuity' | 'differentiated' | 'simple'
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('debt_credit');
   const [total, setTotal] = useState('');
   const [rate, setRate] = useState('');
   const [months, setMonths] = useState('');
-  const [manualPayment, setManualPayment] = useState('');
+  const [alreadyPaidMonths, setAlreadyPaidMonths] = useState('');
+  const [paymentDueDay, setPaymentDueDay] = useState('');
+  const [dueDate, setDueDate] = useState('');
 
   const totalNum = Number(total) || 0;
   const rateNum = Number(rate) || 0;
   const monthsNum = Number(months) || 0;
-  const computedPayment = isAnnuity ? (monthsNum > 0 ? annuityPayment(totalNum, rateNum, monthsNum) : 0) : (Number(manualPayment) || 0);
-  const overpay = isAnnuity && monthsNum > 0 ? Math.max(0, computedPayment * monthsNum - totalNum) : 0;
-  const valid = title.trim() && totalNum > 0 && (isAnnuity ? monthsNum > 0 : computedPayment > 0);
+  const alreadyPaidNum = Math.max(0, Math.min(Number(alreadyPaidMonths) || 0, monthsNum || 0));
+  const isLoan = loanType === 'annuity' || loanType === 'differentiated';
+  const schedule = isLoan && monthsNum > 0 && totalNum > 0
+    ? (loanType === 'annuity' ? buildAmortizationSchedule(totalNum, rateNum, monthsNum) : buildDifferentiatedSchedule(totalNum, rateNum, monthsNum))
+    : null;
+  const remainingNow = schedule && alreadyPaidNum > 0 ? schedule[alreadyPaidNum - 1].balance : totalNum;
+  const firstPayment = schedule ? schedule[0].payment : 0;
+  const currentPayment = schedule && alreadyPaidNum > 0 ? schedule[alreadyPaidNum - 1].payment : firstPayment; // до пересчёта после следующего платежа — для дифф. это платёж ПОСЛЕ уже внесённых месяцев
+  const overpay = schedule ? Math.max(0, schedule.reduce((s, r) => s + r.payment, 0) - totalNum) : 0;
+  const valid = title.trim() && totalNum > 0 && (isLoan ? monthsNum > 0 : true) && (loanType === 'simple' ? true : true);
 
   return (
     <Card>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className="lrpg-btn" onClick={() => setIsAnnuity(true)} style={{
-            flex: 1, background: isAnnuity ? COLORS.violet : COLORS.bgCardAlt, color: isAnnuity ? '#100E1C' : COLORS.textMuted,
-            borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700,
-          }}>Кредит (аннуитет)</button>
-          <button className="lrpg-btn" onClick={() => setIsAnnuity(false)} style={{
-            flex: 1, background: !isAnnuity ? COLORS.violet : COLORS.bgCardAlt, color: !isAnnuity ? '#100E1C' : COLORS.textMuted,
-            borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700,
-          }}>Обычный долг</button>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {[
+            { key: 'annuity', label: 'Аннуитет' },
+            { key: 'differentiated', label: 'Дифференцир.' },
+            { key: 'simple', label: 'Простой долг' },
+          ].map(o => (
+            <button key={o.key} className="lrpg-btn" onClick={() => setLoanType(o.key)} style={{
+              flex: 1, minWidth: 90, background: loanType === o.key ? COLORS.violet : COLORS.bgCardAlt, color: loanType === o.key ? '#100E1C' : COLORS.textMuted,
+              borderRadius: 8, padding: '7px 0', fontSize: 11, fontWeight: 700,
+            }}>{o.label}</button>
+          ))}
         </div>
-        <input className="lrpg-input" placeholder="Название" value={title} onChange={e => setTitle(e.target.value)} />
+        <input className="lrpg-input" placeholder={loanType === 'simple' ? 'Кому/за что должен (например: Другу Ивану)' : 'Название'} value={title} onChange={e => setTitle(e.target.value)} />
         <select className="lrpg-input" value={category} onChange={e => setCategory(e.target.value)}>
           {DEBT_CATEGORY_OPTIONS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
-        <input className="lrpg-input" type="number" min={0} placeholder="Сумма долга (основной долг)" value={total} onChange={e => setTotal(e.target.value)} />
-        {isAnnuity ? (
+        {isLoan ? (
           <>
+            <input className="lrpg-input" type="number" min={0} placeholder="Сумма кредита при выдаче (изначальная)" value={total} onChange={e => setTotal(e.target.value)} />
             <input className="lrpg-input" type="number" min={0} step={0.1} placeholder="Ставка, % годовых" value={rate} onChange={e => setRate(e.target.value)} />
-            <input className="lrpg-input" type="number" min={1} placeholder="Срок, месяцев" value={months} onChange={e => setMonths(e.target.value)} />
-            {monthsNum > 0 && totalNum > 0 && (
+            <input className="lrpg-input" type="number" min={1} placeholder="Срок, месяцев (общий)" value={months} onChange={e => setMonths(e.target.value)} />
+            <input className="lrpg-input" type="number" min={0} placeholder="Уже оплачено месяцев (0, если кредит новый)" value={alreadyPaidMonths} onChange={e => setAlreadyPaidMonths(e.target.value)} />
+            <input className="lrpg-input" type="number" min={1} max={28} placeholder="День платежа в месяце (необязательно)" value={paymentDueDay} onChange={e => setPaymentDueDay(e.target.value)} />
+            {schedule && (
               <div style={{ fontSize: 12, background: COLORS.bgCardAlt, borderRadius: 8, padding: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: COLORS.textMuted }}>Платёж в месяц</span><b style={{ color: COLORS.gold }}>{Math.round(computedPayment)}</b></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}><span style={{ color: COLORS.textMuted }}>Переплата за срок</span><b style={{ color: COLORS.crimson }}>{Math.round(overpay)}</b></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: COLORS.textMuted }}>Остаток основного долга сейчас</span><b style={{ color: COLORS.gold }}>{Math.round(remainingNow)}</b>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
+                  <span style={{ color: COLORS.textMuted }}>{loanType === 'annuity' ? 'Платёж в месяц (фикс.)' : 'Ближайший платёж'}</span>
+                  <b style={{ color: COLORS.text }}>{Math.round(currentPayment)}</b>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}><span style={{ color: COLORS.textMuted }}>Переплата за весь срок</span><b style={{ color: COLORS.crimson }}>{Math.round(overpay)}</b></div>
+                {loanType === 'differentiated' && <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>Платёж будет уменьшаться каждый месяц — тело долга гасится равными частями, а проценты считаются от остатка.</div>}
               </div>
             )}
           </>
         ) : (
-          <input className="lrpg-input" type="number" min={0} placeholder="Платёж в месяц" value={manualPayment} onChange={e => setManualPayment(e.target.value)} />
+          <>
+            <input className="lrpg-input" type="number" min={0} placeholder="Сколько должен (остаток)" value={total} onChange={e => setTotal(e.target.value)} />
+            <input className="lrpg-input" type="date" placeholder="Вернуть до какого числа" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+            <div style={{ fontSize: 10, color: COLORS.textMuted }}>Без графика платежей и процентов — просто сумма и срок, как долг другу или задолженность по карте.</div>
+          </>
         )}
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <button className="lrpg-btn" disabled={!valid} onClick={() => onSubmit({
-            title: title.trim(), category, total: totalNum, monthlyPayment: computedPayment,
-            interestRate: isAnnuity ? rateNum : 0, termMonths: isAnnuity ? monthsNum : null, isAnnuity,
+            title: title.trim(), category, total: totalNum,
+            interestRate: isLoan ? rateNum : 0, termMonths: isLoan ? monthsNum : null,
+            alreadyPaidMonths: isLoan ? alreadyPaidNum : 0,
+            paymentDueDay: isLoan && paymentDueDay ? Number(paymentDueDay) : null,
+            dueDate: loanType === 'simple' && dueDate ? dueDate : null,
+            loanType,
           })} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
             Создать
           </button>
@@ -3882,6 +4100,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const [showAddSaving, setShowAddSaving] = useState(false);
   const [showAddAsset, setShowAddAsset] = useState(false);
   const [showBudgetEdit, setShowBudgetEdit] = useState(false);
+  const [budgetMonthOffset, setBudgetMonthOffset] = useState(0); // 0 = этот месяц, 1 = следующий
   const [payAmounts, setPayAmounts] = useState({});
   const [saveAmounts, setSaveAmounts] = useState({});
   const [expandedSchedule, setExpandedSchedule] = useState(null);
@@ -3908,6 +4127,10 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const actualByCategory = {};
   thisMonthTx.filter(t => t.type === 'expense').forEach(t => { actualByCategory[t.category] = (actualByCategory[t.category] || 0) + t.amount; });
   const sortedDebts = sortDebts(finance.debts, finance.strategy);
+  const budgetMonthKey = addMonthsToKey(fm.monthKey, budgetMonthOffset);
+  const isNextMonth = budgetMonthOffset !== 0;
+  const budgetPlanForMonth = (finance.budgetPlanByMonth && finance.budgetPlanByMonth[budgetMonthKey]) || {};
+  const plannedTotalForMonth = Object.values(budgetPlanForMonth).reduce((s, v) => s + (Number(v) || 0), 0);
   const isAdvanced = finance.mode === 'advanced';
   const txCategoryOptions = txType === 'income' ? INCOME_SOURCE_TYPES.map(t => ({ key: t.key, label: t.label })) : EXPENSE_CATEGORIES.filter(c => c.group !== 'fin');
 
@@ -4049,16 +4272,26 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
 
       <div>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} color={COLORS.gold} /> Бюджет месяца</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} color={COLORS.gold} /> Бюджет — {monthKeyLabel(budgetMonthKey)}</span>
           <button className="lrpg-btn" onClick={() => setShowBudgetEdit(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700 }}>{showBudgetEdit ? 'Готово' : 'Настроить'}</button>
         </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <button className="lrpg-btn" onClick={() => setBudgetMonthOffset(0)} style={{
+            flex: 1, background: budgetMonthOffset === 0 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 0 ? '#100E1C' : COLORS.textMuted,
+            borderRadius: 8, padding: '6px 0', fontSize: 11, fontWeight: 700,
+          }}>Этот месяц</button>
+          <button className="lrpg-btn" onClick={() => setBudgetMonthOffset(1)} style={{
+            flex: 1, background: budgetMonthOffset === 1 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 1 ? '#100E1C' : COLORS.textMuted,
+            borderRadius: 8, padding: '6px 0', fontSize: 11, fontWeight: 700,
+          }}>Следующий месяц</button>
+        </div>
         <Card>
-          {Object.keys(finance.budgetPlan).length === 0 && !showBudgetEdit && (
-            <div style={{ fontSize: 12, color: COLORS.textMuted }}>План не задан. Нажми «Настроить», чтобы задать план по категориям.</div>
+          {Object.keys(budgetPlanForMonth).length === 0 && !showBudgetEdit && (
+            <div style={{ fontSize: 12, color: COLORS.textMuted }}>{isNextMonth ? 'План на следующий месяц ещё не задан. Нажми «Настроить», чтобы спланировать заранее.' : 'План не задан. Нажми «Настроить», чтобы задать план по категориям.'}</div>
           )}
           {EXPENSE_CATEGORIES.filter(c => c.group !== 'fin' && c.group !== 'debt').map(c => {
-            const planned = finance.budgetPlan[c.key];
-            const actual = actualByCategory[c.key] || 0;
+            const planned = budgetPlanForMonth[c.key];
+            const actual = isNextMonth ? 0 : (actualByCategory[c.key] || 0);
             if (!showBudgetEdit && planned === undefined) return null;
             const diff = (planned || 0) - actual;
             return (
@@ -4066,8 +4299,10 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
                 <span style={{ fontSize: 11, flex: 1 }}>{c.label}</span>
                 {showBudgetEdit ? (
                   <input className="lrpg-input" type="number" min={0} placeholder="План" value={planned || ''}
-                    onChange={e => e.target.value ? setBudgetPlanItem(c.key, e.target.value) : removeBudgetPlanItem(c.key)}
+                    onChange={e => e.target.value ? setBudgetPlanItem(c.key, e.target.value, budgetMonthKey) : removeBudgetPlanItem(c.key, budgetMonthKey)}
                     style={{ width: 90, fontSize: 11, padding: '4px 6px' }} />
+                ) : isNextMonth ? (
+                  <span style={{ fontSize: 11, color: COLORS.text, width: 60, textAlign: 'right' }}>{planned}</span>
                 ) : (
                   <>
                     <span style={{ fontSize: 11, color: COLORS.textMuted, width: 60, textAlign: 'right' }}>{planned}</span>
@@ -4078,14 +4313,14 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
               </div>
             );
           })}
-          {!showBudgetEdit && Object.keys(finance.budgetPlan).length > 0 && (
+          {!showBudgetEdit && !isNextMonth && Object.keys(budgetPlanForMonth).length > 0 && (
             <div style={{ display: 'flex', gap: 8, fontSize: 9, color: COLORS.textMuted, justifyContent: 'flex-end', marginTop: 4 }}>
               <span style={{ width: 60, textAlign: 'right' }}>План</span><span style={{ width: 60, textAlign: 'right' }}>Факт</span><span style={{ width: 60, textAlign: 'right' }}>Разница</span>
             </div>
           )}
-          {health.plannedTotal > 0 && (
+          {plannedTotalForMonth > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 12, fontWeight: 700 }}>
-              <span>Total Planned</span><span>{health.plannedTotal}</span>
+              <span>Итого план</span><span>{plannedTotalForMonth}</span>
             </div>
           )}
         </Card>
@@ -4250,6 +4485,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Skull size={15} color={COLORS.crimson} /> Debt Bosses</span>
           <button className="lrpg-btn" onClick={() => setShowAddDebt(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
         </div>
+        <ObligationsSummaryCard debts={finance.debts} />
         {showAddDebt && (
           <AddDebtForm
             onSubmit={v => { addDebt(v); setShowAddDebt(false); }}
@@ -4272,17 +4508,30 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
           {finance.debts.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Долгов нет — красота.</div></Card>}
           {sortedDebts.map((d, i) => {
             const defeated = d.remaining <= 0;
-            const schedule = d.isAnnuity && expandedSchedule === d.id ? buildAmortizationSchedule(d.total, d.interestRate, d.termMonths) : null;
-            const totalInterest = d.isAnnuity ? Math.round(d.monthlyPayment * d.termMonths - d.total) : 0;
+            const isLoan = d.loanType === 'annuity' || d.loanType === 'differentiated';
+            const schedule = isLoan && expandedSchedule === d.id
+              ? (d.loanType === 'differentiated' ? buildDifferentiatedSchedule(d.total, d.interestRate, d.termMonths) : buildAmortizationSchedule(d.total, d.interestRate, d.termMonths))
+              : null;
+            const scheduleFromNow = schedule ? schedule.slice(d.monthsElapsed || 0) : null;
+            const monthlyDue = currentMonthlyDue(d);
+            const totalInterest = isLoan && d.loanType === 'annuity' ? Math.round(d.monthlyPayment * d.termMonths - d.total)
+              : isLoan ? Math.round(buildDifferentiatedSchedule(d.total, d.interestRate, d.termMonths).reduce((s, r) => s + r.interest, 0)) : 0;
+            const overdue = d.loanType === 'simple' && d.dueDate && d.dueDate < todayStr() && !defeated;
             return (
-              <Card key={d.id} style={{ opacity: defeated ? 0.6 : 1 }}>
+              <Card key={d.id} style={{ opacity: defeated ? 0.6 : 1, border: overdue ? `1px solid ${COLORS.crimson}` : undefined }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 14 }}>{!defeated ? `#${i + 1} ` : ''}{d.title} {defeated && '💀'}</div>
-                    <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-                      Платёж {Math.round(d.monthlyPayment)}/мес{d.interestRate ? ` · ${d.interestRate}% годовых` : ''}{d.termMonths ? ` · ${d.termMonths} мес.` : ''}
-                    </div>
-                    {d.isAnnuity && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 2 }}>Переплата за срок: {totalInterest}</div>}
+                    {isLoan ? (
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+                        Платёж {Math.round(monthlyDue)}/мес{d.loanType === 'differentiated' ? ' (уменьшается)' : ''}{d.interestRate ? ` · ${d.interestRate}% годовых` : ''}{d.termMonths ? ` · ${d.monthsElapsed || 0}/${d.termMonths} мес.` : ''}{d.paymentDueDay ? ` · до ${d.paymentDueDay} числа` : ''}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: overdue ? COLORS.crimson : COLORS.textMuted, marginTop: 2 }}>
+                        {d.dueDate ? `${overdue ? 'Просрочен, ' : ''}вернуть до ${d.dueDate}` : 'Простой долг, без срока'}
+                      </div>
+                    )}
+                    {isLoan && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 2 }}>Переплата за весь срок: {totalInterest}</div>}
                   </div>
                   <button className="lrpg-btn" onClick={() => deleteDebt(d.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
                 </div>
@@ -4300,7 +4549,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
                     </button>
                   </div>
                 )}
-                {d.isAnnuity && (
+                {isLoan && (
                   <div
                     onClick={() => setExpandedSchedule(expandedSchedule === d.id ? null : d.id)}
                     style={{ fontSize: 11, color: COLORS.violet, marginTop: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
@@ -4308,20 +4557,35 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
                     {expandedSchedule === d.id ? 'Скрыть график платежей' : 'Показать график платежей'} <ChevronRight size={12} style={{ transform: expandedSchedule === d.id ? 'rotate(90deg)' : 'none' }} />
                   </div>
                 )}
-                {schedule && (
-                  <div style={{ marginTop: 8, maxHeight: 180, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '0.6fr 1fr 1fr 1fr', fontSize: 10, color: COLORS.textMuted, padding: '4px 8px', borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, background: COLORS.bgCard }}>
-                      <span>#</span><span>%</span><span>Долг</span><span>Остаток</span>
+                {scheduleFromNow && scheduleFromNow.length > 0 && (
+                  <>
+                    <div style={{ marginTop: 8, height: 140 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={scheduleFromNow.map(r => ({ month: r.month, Остаток: Math.round(r.balance), Платёж: Math.round(r.payment) }))}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                          <XAxis dataKey="month" tick={{ fontSize: 9, fill: COLORS.textMuted }} />
+                          <YAxis tick={{ fontSize: 9, fill: COLORS.textMuted }} width={40} />
+                          <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} />
+                          <Line type="monotone" dataKey="Остаток" stroke={COLORS.crimson} strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="Платёж" stroke={COLORS.gold} strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
                     </div>
-                    {schedule.map(row => (
-                      <div key={row.month} style={{ display: 'grid', gridTemplateColumns: '0.6fr 1fr 1fr 1fr', fontSize: 11, padding: '4px 8px' }}>
-                        <span>{row.month}</span>
-                        <span style={{ color: COLORS.crimson }}>{Math.round(row.interest)}</span>
-                        <span style={{ color: COLORS.teal }}>{Math.round(row.principalPart)}</span>
-                        <span>{Math.round(row.balance)}</span>
+                    <div style={{ marginTop: 8, maxHeight: 180, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '0.6fr 1fr 1fr 1fr 1fr', fontSize: 10, color: COLORS.textMuted, padding: '4px 8px', borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, background: COLORS.bgCard }}>
+                        <span>#</span><span>Платёж</span><span>%</span><span>Долг</span><span>Остаток</span>
                       </div>
-                    ))}
-                  </div>
+                      {scheduleFromNow.map(row => (
+                        <div key={row.month} style={{ display: 'grid', gridTemplateColumns: '0.6fr 1fr 1fr 1fr 1fr', fontSize: 11, padding: '4px 8px' }}>
+                          <span>{row.month}</span>
+                          <span>{Math.round(row.payment)}</span>
+                          <span style={{ color: COLORS.crimson }}>{Math.round(row.interest)}</span>
+                          <span style={{ color: COLORS.teal }}>{Math.round(row.principalPart)}</span>
+                          <span>{Math.round(row.balance)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
                 {d.history && d.history.length > 0 && (
                   <div
@@ -5189,6 +5453,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
         )}
         {lastSavedAt && <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>Последнее сохранение: {fmtTime(lastSavedAt)}</div>}
         {storageError && <div style={{ fontSize: 10, color: COLORS.crimson, marginTop: 4 }}>{storageError}</div>}
+        <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>В облако синхронизируются уровень/квесты/цели/настройки. Полная история операций такси и финансов хранится только на этом устройстве — переноси её на новое устройство через Экспорт/Импорт.</div>
         {storageStatus !== 'ok' && (
           <div style={{ fontSize: 10, color: COLORS.gold, marginTop: 6 }}>Пока это так — используй Экспорт/Импорт ниже, это работает независимо от автосохранения.</div>
         )}
@@ -5658,6 +5923,87 @@ function BodyTab({ body, setBodyProfile, logWeight, nutrition, addFoodEntry, del
       {deficitCalories && (
         <NutritionCard target={deficitCalories} currentWeight={currentWeight} nutrition={nutrition} addFoodEntry={addFoodEntry} deleteFoodEntry={deleteFoodEntry} />
       )}
+    </div>
+  );
+}
+
+function CalendarTab({ playLog, firstOpenedAt }) {
+  const [monthOffset, setMonthOffset] = useState(0);
+  const log = Array.isArray(playLog) ? playLog : [];
+  const totalDays = log.length;
+  const now = new Date();
+  const viewDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const year = viewDate.getFullYear();
+  const monthIdx = viewDate.getMonth();
+  const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+  // Понедельник — первый день недели
+  const firstWeekday = (new Date(year, monthIdx, 1).getDay() + 6) % 7;
+  const monthKey = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+  const playedSet = new Set(log.filter(d => d.startsWith(monthKey)));
+  const todayKey = todayStr();
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  // Текущая серия дней подряд (streak) — считаем от сегодня назад
+  let streak = 0;
+  {
+    let cur = new Date();
+    while (true) {
+      const key = cur.toISOString().slice(0, 10);
+      if (log.includes(key)) { streak++; cur.setDate(cur.getDate() - 1); } else break;
+    }
+  }
+
+  const daysSinceStart = firstOpenedAt ? Math.max(1, Math.floor((Date.now() - firstOpenedAt) / 86400000) + 1) : totalDays;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Card style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: COLORS.gold }}>{totalDays}</div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>дней сыграно</div>
+        </Card>
+        <Card style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: COLORS.teal }}>{streak}</div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>дней подряд сейчас</div>
+        </Card>
+        <Card style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: COLORS.violet }}>{daysSinceStart}</div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>дней с начала игры</div>
+        </Card>
+      </div>
+
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <button className="lrpg-btn" onClick={() => setMonthOffset(o => o - 1)} style={{ background: 'none', padding: 4 }}><ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} color={COLORS.textMuted} /></button>
+          <div style={{ fontWeight: 700, fontSize: 13, textTransform: 'capitalize' }}>{viewDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</div>
+          <button className="lrpg-btn" onClick={() => setMonthOffset(o => Math.min(0, o + 1))} disabled={monthOffset === 0} style={{ background: 'none', padding: 4, opacity: monthOffset === 0 ? 0.3 : 1 }}><ChevronRight size={16} color={COLORS.textMuted} /></button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textAlign: 'center' }}>
+          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(w => <span key={w}>{w}</span>)}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+          {cells.map((d, idx) => {
+            if (d === null) return <div key={idx} />;
+            const key = `${monthKey}-${String(d).padStart(2, '0')}`;
+            const played = playedSet.has(key);
+            const isToday = key === todayKey;
+            return (
+              <div key={idx} style={{
+                aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                borderRadius: 6, fontSize: 11, fontWeight: isToday ? 700 : 500,
+                background: played ? COLORS.teal + '33' : 'transparent',
+                border: isToday ? `1px solid ${COLORS.gold}` : played ? `1px solid ${COLORS.teal}55` : `1px solid ${COLORS.border}`,
+                color: played ? COLORS.teal : COLORS.textMuted,
+              }}>{d}</div>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: COLORS.teal + '33', border: `1px solid ${COLORS.teal}55`, display: 'inline-block' }} /> — день, когда заходил в игру
+        </div>
+      </Card>
     </div>
   );
 }
