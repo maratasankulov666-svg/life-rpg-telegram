@@ -68,6 +68,23 @@
 //      payments and simple-debt due dates together. (3) Budget plan is now per-month
 //      (finance.budgetPlanByMonth), with a "this month / next month" toggle, so a plan can be set up
 //      for next month in advance (old flat budgetPlan auto-migrates into the current month on load).
+// 13.1 Two fixes: (1) Coin history in the Coin Wallet card now shows source label + full date/time for
+//      the last 60 operations (was: title only, last 15, no source) — should make it clear where/why
+//      every coin was earned or spent. (2) Adding a debt/loan no longer leaves cashBalance untouched:
+//      addDebt now optionally records the loan amount as an income transaction (checkbox, defaulting
+//      to on for brand-new debts, off when "months already paid" > 0 since that money isn't arriving
+//      today) so taking a loan and then spending it doesn't drive the balance artificially negative.
+//      deleteDebt reverses that mirrored transaction. Added a compact "У меня есть / Всего
+//      обязательств / Баланс минус долги" row above the debts list for a clear at-a-glance split
+//      between cash on hand and total liabilities.
+// 13.2 Fixed real bug: <Card> never forwarded onClick to its div, so tapping the Coin Wallet card in
+//      Shop did nothing at all (dead click, not just a display issue) — Card now takes an onClick prop.
+//      Also removed the easy-to-miss checkbox for "add loan to balance": a brand-new loan/debt
+//      (0 months already paid) now ALWAYS auto-adds to cashBalance, no opt-in needed; the checkbox
+//      only remains for simple debts, where recording an old pre-existing debt vs. a fresh borrow is
+//      genuinely ambiguous. Added an income-by-source breakdown (work/taxi/loan/etc, this month) under
+//      Cash Balance, and an "Обязательства за этот месяц" card (new debt taken vs. principal repaid,
+//      net change) so it's clear whether total debt is growing or shrinking, not just its current sum.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -87,7 +104,7 @@ import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '13.0';
+const APP_VERSION = '13.2';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -372,13 +389,22 @@ const INCOME_SOURCE_TYPES = [
   { key: 'taxi', label: 'Такси', icon: '🚕' },
   { key: 'youtube', label: 'YouTube', icon: '▶️' },
   { key: 'business', label: 'Бизнес', icon: '💼' },
+  { key: 'loan', label: 'Кредит/долг получен', icon: '🏦' },
   { key: 'other', label: 'Другое', icon: '➕' },
 ];
 const DEBT_CATEGORY_OPTIONS = [
   { key: 'debt_credit', label: 'Кредит' },
   { key: 'debt_micro', label: 'Микрозайм' },
   { key: 'debt_installment', label: 'Рассрочка' },
+  { key: 'debt_simple', label: 'Долг другу / по карте' },
 ];
+// Человекочитаемые подписи источников операций с Coins — откуда/почему начислено или списано.
+const COIN_SOURCE_LABELS = {
+  quest: 'За квест', levelup: 'Level-Up бонус', penalty: 'Штраф за пропуск',
+  shop: 'Покупка в магазине', refund: 'Возврат покупки', shop_cosmetic: 'Покупка косметики',
+  finance_goal: 'Финансовая цель достигнута', taxi: 'Заказ такси', achievement: 'Ачивка',
+  set_bonus: 'Бонус за комплект экипировки', migration: 'Перенесено со старой версии',
+};
 // Карта категорий Гаража -> единая категория Finance, чтобы расход машины
 // попадал в общий Cash Flow с правильным ярлыком (раздел 6 ТЗ).
 const GARAGE_TO_FINANCE_CATEGORY = { fuel: 'fuel', service: 'service', tires: 'other_car', fines: 'other_car', other: 'other_car' };
@@ -1321,9 +1347,9 @@ function Bar({ value, max = 100, color, height = 8, bg = COLORS.border }) {
   );
 }
 
-function Card({ children, style }) {
+function Card({ children, style, onClick }) {
   return (
-    <div style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 14, ...style }}>
+    <div onClick={onClick} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: 14, ...style }}>
       {children}
     </div>
   );
@@ -2087,12 +2113,27 @@ export default function LifeRPG() {
       const monthlyPayment = loanType === 'annuity' ? annuityPayment(total, interestRate, termMonths)
         : loanType === 'manual' ? (data.monthlyPayment || 0)
         : 0; // differentiated считается динамически (currentMonthlyDue), у simple платежа нет
+      const debtId = uid();
+      // Взял кредит/занял денег = деньги реально пришли к тебе на руки — это доход, а не
+      // ничего. Раньше добавление долга никак не трогало баланс, поэтому дальше, когда эти
+      // деньги тратились (например, оплата штрафа), баланс уходил в минус на пустом месте.
+      // Отмечаем поступление, только если это НОВЫЙ долг (ничего ещё не оплачено) и пользователь
+      // явно подтвердил, что деньги пришли на баланс.
+      const addToBalance = !!data.addToBalance && alreadyPaidMonths === 0;
+      const transactions = addToBalance
+        ? [...prev.finance.transactions, {
+            id: uid(), type: 'income', title: `Получено: ${data.title}`, amount: total, category: 'loan',
+            date: todayStr(), recurring: false, essential: false, source: 'debt_taken', mirrorSourceId: debtId, ts: Date.now(),
+          }]
+        : prev.finance.transactions;
+      const cashBalance = addToBalance ? prev.finance.cashBalance + total : prev.finance.cashBalance;
       return {
         ...prev,
         finance: {
           ...prev.finance,
+          transactions, cashBalance,
           debts: [...prev.finance.debts, {
-            id: uid(), title: data.title, total, remaining,
+            id: debtId, title: data.title, total, remaining,
             monthlyPayment, interestRate, termMonths, isAnnuity: loanType === 'annuity',
             loanType, monthsElapsed: alreadyPaidMonths,
             paymentDueDay: loanType === 'simple' ? null : (data.paymentDueDay || null),
@@ -2100,13 +2141,25 @@ export default function LifeRPG() {
             createdAt: Date.now(), category: data.category || 'debt_credit', history: [],
           }],
         },
-        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый Debt Boss: ${data.title} (HP ${Math.round(remaining)})`),
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый Debt Boss: ${data.title} (HP ${Math.round(remaining)})${addToBalance ? ` · +${total} на баланс` : ''}`),
       };
     });
   }
 
   function deleteDebt(id) {
-    setState(prev => ({ ...prev, finance: { ...prev.finance, debts: prev.finance.debts.filter(d => d.id !== id) } }));
+    setState(prev => {
+      const mirrored = prev.finance.transactions.find(t => t.mirrorSourceId === id);
+      const cashBalance = mirrored ? prev.finance.cashBalance - mirrored.amount : prev.finance.cashBalance;
+      return {
+        ...prev,
+        finance: {
+          ...prev.finance,
+          debts: prev.finance.debts.filter(d => d.id !== id),
+          transactions: prev.finance.transactions.filter(t => t.mirrorSourceId !== id),
+          cashBalance,
+        },
+      };
+    });
   }
 
   // Раздел 7 ТЗ: платёж = проценты + тело долга, вычитать весь платёж из
@@ -3590,12 +3643,18 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                 ↩️ Вернуть последнюю покупку: {lastPurchase.title} (+{lastPurchase.cost})
               </button>
             )}
-            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 10, marginBottom: 4 }}>Последние операции</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
-              {coinTransactions.slice(-15).reverse().map(t => (
-                <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                  <span style={{ color: COLORS.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{t.title}</span>
-                  <span style={{ color: (t.type === 'earn' || t.type === 'refund') ? COLORS.teal : COLORS.crimson, fontWeight: 700 }}>{(t.type === 'earn' || t.type === 'refund') ? '+' : '-'}{t.amount}</span>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 10, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>История начислений и трат</span>
+              <span>{coinTransactions.length} записей</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto' }}>
+              {coinTransactions.slice(-60).reverse().map(t => (
+                <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, borderBottom: `1px solid ${COLORS.border}`, paddingBottom: 5 }}>
+                  <div style={{ overflow: 'hidden', maxWidth: '72%' }}>
+                    <div style={{ color: COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
+                    <div style={{ color: COLORS.textMuted, fontSize: 10, marginTop: 1 }}>{COIN_SOURCE_LABELS[t.source] || t.source} · {fmtTime(t.timestamp)}</div>
+                  </div>
+                  <span style={{ color: (t.type === 'earn' || t.type === 'refund') ? COLORS.teal : COLORS.crimson, fontWeight: 700, flexShrink: 0 }}>{(t.type === 'earn' || t.type === 'refund') ? '+' : (t.type === 'adjustment' ? (t.amount >= 0 ? '+' : '') : '-')}{t.amount}</span>
                 </div>
               ))}
               {coinTransactions.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Операций пока нет.</div>}
@@ -4010,6 +4069,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
   const [alreadyPaidMonths, setAlreadyPaidMonths] = useState('');
   const [paymentDueDay, setPaymentDueDay] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [addToBalance, setAddToBalance] = useState(true);
 
   const totalNum = Number(total) || 0;
   const rateNum = Number(rate) || 0;
@@ -4072,6 +4132,18 @@ function AddDebtForm({ onSubmit, onCancel }) {
             <div style={{ fontSize: 10, color: COLORS.textMuted }}>Без графика платежей и процентов — просто сумма и срок, как долг другу или задолженность по карте.</div>
           </>
         )}
+        {loanType === 'simple' ? (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: COLORS.text, cursor: 'pointer' }}>
+            <input type="checkbox" checked={addToBalance} onChange={e => setAddToBalance(e.target.checked)} style={{ width: 18, height: 18, flexShrink: 0 }} />
+            Деньги реально пришли ко мне сейчас (добавить {totalNum || 0} на баланс). Выключи, если это старый долг, который просто записываешь.
+          </label>
+        ) : alreadyPaidNum === 0 ? (
+          <div style={{ fontSize: 11, color: COLORS.teal, background: COLORS.bgCardAlt, borderRadius: 8, padding: 8 }}>
+            ✅ {totalNum || 0} автоматически добавится на баланс — это новый кредит, деньги реально приходят тебе.
+          </div>
+        ) : (
+          <div style={{ fontSize: 10, color: COLORS.textMuted }}>Долг уже частично оплачен раньше — деньги на баланс сейчас не добавляем, это просто перенос существующего кредита в игру.</div>
+        )}
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <button className="lrpg-btn" disabled={!valid} onClick={() => onSubmit({
             title: title.trim(), category, total: totalNum,
@@ -4079,7 +4151,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
             alreadyPaidMonths: isLoan ? alreadyPaidNum : 0,
             paymentDueDay: isLoan && paymentDueDay ? Number(paymentDueDay) : null,
             dueDate: loanType === 'simple' && dueDate ? dueDate : null,
-            loanType,
+            loanType, addToBalance: loanType === 'simple' ? addToBalance : (alreadyPaidNum === 0),
           })} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
             Создать
           </button>
@@ -4124,6 +4196,12 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const health = financialHealth({ finance, garage });
   const { assetBreakdown, totalAssets, totalLiabilities, netWorth } = computeNetWorth({ finance, garage });
   const thisMonthTx = finance.transactions.filter(t => monthKeyOf(t.date) === fm.monthKey).slice().sort((a, b) => (b.date + b.ts) > (a.date + a.ts) ? 1 : -1);
+  const incomeBySource = {};
+  thisMonthTx.filter(t => t.type === 'income').forEach(t => { incomeBySource[t.category] = (incomeBySource[t.category] || 0) + t.amount; });
+  // Δ обязательств за месяц: сколько добавилось за счёт новых кредитов/долгов (source 'debt_taken')
+  // минус сколько реально погашено телом долга (принцип из history платежей всех долгов).
+  const debtGrowthThisMonth = thisMonthTx.filter(t => t.source === 'debt_taken').reduce((s, t) => s + t.amount, 0);
+  const debtPaidThisMonth = finance.debts.reduce((s, d) => s + (d.history || []).filter(h => monthKeyOf(h.date) === fm.monthKey).reduce((s2, h) => s2 + h.principal, 0), 0);
   const actualByCategory = {};
   thisMonthTx.filter(t => t.type === 'expense').forEach(t => { actualByCategory[t.category] = (actualByCategory[t.category] || 0) + t.amount; });
   const sortedDebts = sortDebts(finance.debts, finance.strategy);
@@ -4167,6 +4245,17 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
               <span style={{ color: COLORS.textMuted }}>{label}</span><span style={{ color }}>{val}</span>
             </div>
           ))}
+          {Object.keys(incomeBySource).length > 0 && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}` }}>
+              <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textTransform: 'uppercase' }}>Доход за месяц по источникам</div>
+              {Object.entries(incomeBySource).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
+                <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 2 }}>
+                  <span style={{ color: COLORS.textMuted }}>{INCOME_SOURCE_TYPES.find(t => t.key === cat)?.label || cat}</span>
+                  <span style={{ color: COLORS.teal }}>{amt}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 13, fontWeight: 700 }}>
             <span>Свободный остаток</span>
             <span style={{ color: fm.cashFlow >= 0 ? COLORS.teal : COLORS.crimson }}>{fm.cashFlow}</span>
@@ -4485,6 +4574,33 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Skull size={15} color={COLORS.crimson} /> Debt Bosses</span>
           <button className="lrpg-btn" onClick={() => setShowAddDebt(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
         </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <Card style={{ flex: 1, padding: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: COLORS.textMuted }}>У меня есть</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: finance.cashBalance >= 0 ? COLORS.text : COLORS.crimson }}>{finance.cashBalance}</div>
+          </Card>
+          <Card style={{ flex: 1, padding: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: COLORS.textMuted }}>Всего обязательств</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.crimson }}>{totalLiabilities}</div>
+          </Card>
+          <Card style={{ flex: 1, padding: 8, textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: COLORS.textMuted }}>Баланс минус долги</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: (finance.cashBalance - totalLiabilities) >= 0 ? COLORS.teal : COLORS.crimson }}>{finance.cashBalance - totalLiabilities}</div>
+          </Card>
+        </div>
+        <Card style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textTransform: 'uppercase' }}>Обязательства за этот месяц</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+            <span style={{ color: COLORS.textMuted }}>Взято новых кредитов/долгов</span><span style={{ color: COLORS.crimson }}>+{debtGrowthThisMonth}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 3 }}>
+            <span style={{ color: COLORS.textMuted }}>Погашено тела долга</span><span style={{ color: COLORS.teal }}>-{debtPaidThisMonth}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${COLORS.border}`, fontWeight: 700 }}>
+            <span>Итого изменение</span>
+            <span style={{ color: (debtGrowthThisMonth - debtPaidThisMonth) <= 0 ? COLORS.teal : COLORS.crimson }}>{debtGrowthThisMonth - debtPaidThisMonth >= 0 ? '+' : ''}{debtGrowthThisMonth - debtPaidThisMonth}</span>
+          </div>
+        </Card>
         <ObligationsSummaryCard debts={finance.debts} />
         {showAddDebt && (
           <AddDebtForm
