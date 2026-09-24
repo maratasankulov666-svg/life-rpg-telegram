@@ -85,6 +85,8 @@
 //      genuinely ambiguous. Added an income-by-source breakdown (work/taxi/loan/etc, this month) under
 //      Cash Balance, and an "Обязательства за этот месяц" card (new debt taken vs. principal repaid,
 //      net change) so it's clear whether total debt is growing or shrinking, not just its current sum.
+// 13.3 YouTube: отдельная вкладка с каналами (подписчики/просмотры/видео, история, график), ручной ввод или авто-синхронизация
+//      через /api/youtube, квесты «+N подписчиков/просмотров/видео» с автозакрытием при достижении цели.
 import React, { useState, useEffect } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
@@ -98,13 +100,13 @@ import {
   Backpack, HandMetal, Package, Compass, Sunrise, Sunset, Layers, CalendarClock,
   Utensils, BedDouble, Smartphone, BookMarked, Save, AlertCircle,
   Download, Upload, Copy, ClipboardPaste, TrendingUp as TrendingUpIcon, PauseCircle,
-  Swords, Search, BarChart3,
+  Swords, Search, BarChart3, Youtube,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
-const APP_VERSION = '13.2';
+const APP_VERSION = '13.3';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -460,6 +462,35 @@ function financialHealth(state) {
   else if (debtLoad < th.high) debtZone = { label: 'высокая', color: COLORS.orange, emoji: '🟠' };
   else debtZone = { label: 'очень высокая', color: COLORS.crimson, emoji: '🔴' };
   return { ...fm, debtLoad, savingsRate, emergencySavings, emergencyMonths, plannedTotal, budgetHealth, debtZone };
+}
+
+const YT_METRICS = [
+  { key: 'subs', label: 'Подписчики', short: 'подписчиков' },
+  { key: 'views', label: 'Просмотры', short: 'просмотров' },
+  { key: 'videos', label: 'Видео', short: 'видео' },
+];
+function fmtNum(n) {
+  if (n == null) return '—';
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.0', '') + 'M';
+  if (n >= 1e4) return (n / 1e3).toFixed(1).replace('.0', '') + 'K';
+  return String(n);
+}
+function withYtSnapshot(ch, stats) {
+  const today = todayStr();
+  const merged = { ...ch, ...stats, subs: stats.subs ?? ch.subs };
+  const snap = { date: today, subs: merged.subs, views: merged.views, videos: merged.videos };
+  return { ...merged, history: [...(ch.history || []).filter(h => h.date !== today), snap].slice(-120), lastSync: Date.now() };
+}
+function ytValue(youtube, link) {
+  const ch = (youtube.channels || []).find(c => c.id === link.channelRef);
+  return ch && ch[link.metric] != null ? ch[link.metric] : -1;
+}
+async function fetchYouTubeStats({ handle, channelId }) {
+  const qs = channelId ? `id=${encodeURIComponent(channelId)}` : `handle=${encodeURIComponent(handle)}`;
+  let r;
+  try { r = await fetch(`/api/youtube?${qs}`); } catch (e) { throw new Error('NETWORK: ' + e.message); }
+  if (!r.ok) { let t = ''; try { t = (await r.text()).slice(0, 200); } catch (_) {} throw new Error(`HTTP ${r.status}: ${t}`); }
+  return r.json();
 }
 
 function monthKeyOf(dateStr) { return (dateStr || todayStr()).slice(0, 7); }
@@ -1130,6 +1161,7 @@ function defaultState() {
       taxi: { dailyTarget: 10000, commissionPct: 9, orders: [] },
       emergencyFundGoalMonths: 3,
     },
+    youtube: { channels: [] }, // {id,name,handle,channelId,thumb,subs,views,videos,history:[{date,subs,views,videos}],lastSync}
     garage: {
       photo: null,
       name: 'Моя машина',
@@ -1542,6 +1574,8 @@ export default function LifeRPG() {
       s.body = { ...defs.body, ...(s.body || {}) };
       s.nutrition = { ...defs.nutrition, ...(s.nutrition || {}) };
       if (!Array.isArray(s.nutrition.entries)) s.nutrition.entries = [];
+      s.youtube = { ...defs.youtube, ...(s.youtube || {}) };
+      if (!Array.isArray(s.youtube.channels)) s.youtube.channels = [];
       const result = ensureDailyContent(s);
       setState(result.state);
       setWelcomeBackDays(result.welcomeBackDays);
@@ -2380,6 +2414,59 @@ export default function LifeRPG() {
     });
   }
 
+function addYouTubeChannel(data) {
+  setState(prev => ({
+    ...prev,
+    youtube: { ...prev.youtube, channels: [...prev.youtube.channels, withYtSnapshot({
+      id: uid(), name: data.name, handle: data.handle || null, channelId: data.channelId || null,
+      thumb: data.thumb || null, subs: null, views: 0, videos: 0, history: [],
+    }, { subs: data.subs ?? null, views: data.views || 0, videos: data.videos || 0 })] },
+    chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `📺 Добавлен канал: ${data.name}`),
+  }));
+}
+
+function updateYouTubeStats(id, stats) {
+  setState(prev => {
+    const ch = prev.youtube.channels.find(c => c.id === id);
+    if (!ch) return prev;
+    const next = withYtSnapshot(ch, stats);
+    const dSubs = (next.subs ?? 0) - (ch.subs ?? 0);
+    const chronicle = dSubs !== 0 && ch.subs != null
+      ? pushChronicle(prev.chronicle, 'SYSTEM', `📺 ${ch.name}: ${dSubs > 0 ? '+' : ''}${dSubs} подписчиков (${next.subs})`)
+      : prev.chronicle;
+    return { ...prev, chronicle, youtube: { ...prev.youtube, channels: prev.youtube.channels.map(c => c.id === id ? next : c) } };
+  });
+}
+
+function deleteYouTubeChannel(id) {
+  setState(prev => ({
+    ...prev,
+    youtube: { ...prev.youtube, channels: prev.youtube.channels.filter(c => c.id !== id) },
+    quests: prev.quests.filter(q => !(q.ytLink && q.ytLink.channelRef === id && q.status === 'active')),
+  }));
+}
+
+// Квест «+N подписчиков/просмотров/видео»: цель = текущее значение + N, закрывается сам.
+function addYouTubeQuest(ch, metric, delta) {
+  setState(prev => {
+    const cur = ch[metric] || 0;
+    const target = cur + delta;
+    const m = YT_METRICS.find(x => x.key === metric);
+    const type = delta / Math.max(cur, 1) <= 0.05 ? 'Weekly' : 'Monthly';
+    const difficulty = type === 'Monthly' ? 'Hard' : 'Normal';
+    const [lo, hi] = TYPE_XP_RANGE[type];
+    const xp = Math.round(lo + (hi - lo) * DIFF_MULT[difficulty]);
+    const q = {
+      id: uid(), title: `${ch.name}: +${fmtNum(delta)} ${m.short} (до ${fmtNum(target)})`, type, difficulty,
+      xp, coins: Math.round(xp * 0.4), stat: 'creator', secondaryStat: 'discipline', status: 'active',
+      deadline: null, order: prev.nextOrder, createdAt: Date.now(),
+      ytLink: { channelRef: ch.id, metric, target },
+    };
+    return { ...prev, quests: [...prev.quests, q], nextOrder: prev.nextOrder + 1,
+      chronicle: pushChronicle(prev.chronicle, 'QUEST_CREATED', `📺 Новый YouTube-квест: ${q.title}`) };
+  });
+}
+
   function setBodyProfile(patch) {
     setState(prev => ({ ...prev, body: { ...prev.body, ...patch } }));
   }
@@ -2504,6 +2591,8 @@ export default function LifeRPG() {
       parsed.body = { ...defs.body, ...(parsed.body || {}) };
       parsed.nutrition = { ...defs.nutrition, ...(parsed.nutrition || {}) };
       if (!Array.isArray(parsed.nutrition.entries)) parsed.nutrition.entries = [];
+      parsed.youtube = { ...defs.youtube, ...(parsed.youtube || {}) };
+      if (!Array.isArray(parsed.youtube.channels)) parsed.youtube.channels = [];
       const result = ensureDailyContent(parsed);
       setState(result.state);
       setWelcomeBackDays(0);
@@ -2558,6 +2647,15 @@ export default function LifeRPG() {
     });
   }, [loaded, state]);
 
+const ytDoneRef = React.useRef(new Set());
+useEffect(() => {
+  if (!loaded || !state) return;
+  state.quests
+    .filter(q => q.status === 'active' && q.ytLink && !ytDoneRef.current.has(q.id) && ytValue(state.youtube, q.ytLink) >= q.ytLink.target)
+    .forEach(q => { ytDoneRef.current.add(q.id); completeQuest(q); });
+}, [loaded, state && state.youtube, state && state.quests]);
+
+
   if (!loaded || !state) {
     return (
       <div style={{ background: COLORS.bg, minHeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: COLORS.gold, fontFamily: 'Cinzel, serif' }}>
@@ -2584,6 +2682,7 @@ export default function LifeRPG() {
     { key: 'goals', label: 'Цели', icon: Target },
     { key: 'finance', label: 'Финансы', icon: Wallet },
     { key: 'garage', label: 'Гараж', icon: Car },
+    { key: 'youtube', label: 'YouTube', icon: Youtube },
     { key: 'progress', label: 'Прогресс', icon: Activity },
     { key: 'more', label: 'Ещё', icon: ScrollText },
   ];
@@ -2748,6 +2847,14 @@ export default function LifeRPG() {
             setGaragePhoto={setGaragePhoto} setGarageName={setGarageName} setGarageCarDebtId={setGarageCarDebtId}
             setGarageCurrentValue={setGarageCurrentValue}
             addGarageExpense={addGarageExpense} deleteGarageExpense={deleteGarageExpense}
+          />
+        )}
+
+        {tab === 'youtube' && (
+          <YouTubeTab
+            youtube={state.youtube} quests={state.quests}
+            addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats}
+            deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest}
           />
         )}
 
@@ -5269,6 +5376,178 @@ function resizeImageFile(file, maxDim = 700, quality = 0.8) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [handle, setHandle] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
+  const [manual, setManual] = useState({});   // {channelId: {subs,views,videos}}
+  const [questDraft, setQuestDraft] = useState({}); // {channelId: {metric,delta}}
+
+  async function addAuto() {
+    if (!handle.trim()) return;
+    setBusy('add'); setError(null);
+    try {
+      const s = await fetchYouTubeStats({ handle: handle.trim() });
+      addYouTubeChannel({ name: s.name, handle: s.handle, channelId: s.channelId, thumb: s.thumb, subs: s.subs, views: s.views, videos: s.videos });
+      setHandle(''); setShowAdd(false);
+    } catch (e) { setError(`Авто-поиск не сработал (${e.message}). Добавь канал вручную.`); }
+    setBusy(null);
+  }
+  function addManual() {
+    if (!name.trim()) return;
+    addYouTubeChannel({ name: name.trim() });
+    setName(''); setShowAdd(false);
+  }
+  async function sync(ch) {
+    setBusy(ch.id); setError(null);
+    try {
+      const s = await fetchYouTubeStats({ channelId: ch.channelId });
+      updateYouTubeStats(ch.id, { subs: s.subs, views: s.views, videos: s.videos });
+    } catch (e) { setError(`Не обновилось: ${e.message}`); }
+    setBusy(null);
+  }
+  function saveManual(ch) {
+    const m = manual[ch.id] || {};
+    const stats = {};
+    YT_METRICS.forEach(x => { if (m[x.key] !== undefined && m[x.key] !== '') stats[x.key] = Number(m[x.key]) || 0; });
+    if (Object.keys(stats).length === 0) return;
+    updateYouTubeStats(ch.id, stats);
+    setManual(v => ({ ...v, [ch.id]: {} }));
+  }
+  function weekDelta(ch, metric) {
+    const h = ch.history || [];
+    if (h.length < 2) return null;
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const base = [...h].reverse().find(x => x.date <= weekAgo) || h[0];
+    if (base[metric] == null || ch[metric] == null) return null;
+    return ch[metric] - base[metric];
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.crimson, color: '#fff', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
+        <Plus size={16} /> Добавить канал
+      </button>
+
+      {showAdd && (
+        <Card>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input className="lrpg-input" placeholder="@handle канала (например @mychannel)" value={handle} onChange={e => setHandle(e.target.value)} />
+            <button className="lrpg-btn" disabled={!handle.trim() || busy === 'add'} onClick={addAuto}
+              style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: handle.trim() ? 1 : 0.5 }}>
+              {busy === 'add' ? 'Ищу...' : 'Найти и добавить'}
+            </button>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, textAlign: 'center' }}>или без API — введи название и вноси цифры сам</div>
+            <input className="lrpg-input" placeholder="Название канала" value={name} onChange={e => setName(e.target.value)} />
+            <button className="lrpg-btn" disabled={!name.trim()} onClick={addManual}
+              style={{ background: COLORS.bgCardAlt, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: name.trim() ? 1 : 0.5 }}>
+              Добавить вручную
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {error && <div style={{ fontSize: 11, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 8, padding: '6px 10px' }}>{error}</div>}
+      {youtube.channels.length === 0 && !showAdd && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Каналов пока нет. Добавь первый — по нему появятся квесты на рост.</div></Card>}
+
+      {youtube.channels.map(ch => {
+        const chQuests = quests.filter(q => q.ytLink && q.ytLink.channelRef === ch.id && q.status === 'active');
+        const qd = questDraft[ch.id] || { metric: 'subs', delta: '' };
+        const chart = (ch.history || []).filter(h => h.subs != null).map(h => ({ date: h.date.slice(5), Подписчики: h.subs }));
+        return (
+          <Card key={ch.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
+                {ch.thumb
+                  ? <img src={ch.thumb} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  : <div style={{ width: 40, height: 40, borderRadius: '50%', background: COLORS.crimsonSoft, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Youtube size={18} color={COLORS.crimson} /></div>}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</div>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>{ch.handle || 'вручную'}{ch.lastSync ? ` · обновлено ${fmtTime(ch.lastSync)}` : ''}</div>
+                </div>
+              </div>
+              <button className="lrpg-btn" onClick={() => deleteYouTubeChannel(ch.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 12 }}>
+              {YT_METRICS.map(m => {
+                const d = weekDelta(ch, m.key);
+                return (
+                  <div key={m.key} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: '8px 6px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>{fmtNum(ch[m.key])}</div>
+                    <div style={{ fontSize: 9, color: COLORS.textMuted }}>{m.label}</div>
+                    {d !== null && d !== 0 && <div style={{ fontSize: 9, color: d > 0 ? COLORS.teal : COLORS.crimson, marginTop: 2 }}>{d > 0 ? '+' : ''}{fmtNum(d)} за неделю</div>}
+                  </div>
+                );
+              })}
+            </div>
+
+            {chart.length > 1 && (
+              <div style={{ height: 100, marginTop: 10 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chart}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                    <XAxis dataKey="date" tick={{ fill: COLORS.textMuted, fontSize: 9 }} />
+                    <YAxis domain={['dataMin - 5', 'dataMax + 5']} tick={{ fill: COLORS.textMuted, fontSize: 9 }} width={34} />
+                    <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} labelStyle={{ color: COLORS.text }} />
+                    <Line type="monotone" dataKey="Подписчики" stroke={COLORS.crimson} strokeWidth={2} dot={{ r: 2, fill: COLORS.crimson }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {ch.channelId && (
+              <button className="lrpg-btn" disabled={busy === ch.id} onClick={() => sync(ch)}
+                style={{ marginTop: 10, width: '100%', background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 12, opacity: busy === ch.id ? 0.6 : 1 }}>
+                {busy === ch.id ? 'Обновляю...' : 'Обновить статистику'}
+              </button>
+            )}
+
+            <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '10px 0 4px' }}>Внести цифры вручную:</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {YT_METRICS.map(m => (
+                <input key={m.key} className="lrpg-input" type="number" min={0} placeholder={m.label}
+                  value={(manual[ch.id] || {})[m.key] ?? ''} style={{ fontSize: 11, padding: '6px 6px' }}
+                  onChange={e => setManual(v => ({ ...v, [ch.id]: { ...(v[ch.id] || {}), [m.key]: e.target.value } }))} />
+              ))}
+              <button className="lrpg-btn" onClick={() => saveManual(ch)} style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12 }}><Check size={14} /></button>
+            </div>
+
+            <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '12px 0 4px' }}>Новый квест по каналу:</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select className="lrpg-input" value={qd.metric} style={{ fontSize: 11, padding: '6px 6px' }}
+                onChange={e => setQuestDraft(v => ({ ...v, [ch.id]: { ...qd, metric: e.target.value } }))}>
+                {YT_METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+              <input className="lrpg-input" type="number" min={1} placeholder="+сколько" value={qd.delta} style={{ fontSize: 11, padding: '6px 6px' }}
+                onChange={e => setQuestDraft(v => ({ ...v, [ch.id]: { ...qd, delta: e.target.value } }))} />
+              <button className="lrpg-btn" disabled={!Number(qd.delta)} onClick={() => { addYouTubeQuest(ch, qd.metric, Number(qd.delta)); setQuestDraft(v => ({ ...v, [ch.id]: { metric: qd.metric, delta: '' } })); }}
+                style={{ background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12, opacity: Number(qd.delta) ? 1 : 0.5 }}>Создать</button>
+            </div>
+
+            {chQuests.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+                {chQuests.map(q => {
+                  const cur = ytValue({ channels: [ch] }, q.ytLink);
+                  return (
+                    <div key={q.id} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>{q.title}</div>
+                      <div style={{ marginTop: 6 }}><Bar value={Math.max(0, cur)} max={q.ytLink.target} color={COLORS.crimson} /></div>
+                      <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>{fmtNum(cur)} / {fmtNum(q.ytLink.target)} · +{q.xp} XP</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
 }
 
 function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, setGarageCarDebtId, setGarageCurrentValue, addGarageExpense, deleteGarageExpense }) {
