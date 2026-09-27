@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.6.1';
+const APP_VERSION = '14.7';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1108,21 +1108,52 @@ function todayStr() { return new Date().toISOString().slice(0, 10); }
 function monthStr() { return new Date().toISOString().slice(0, 7); }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
-// --- Real AI calls (proxied through our own /api/ai backend, which holds the key; backend is Gemini, free tier) ---
-async function callClaudeAPI(system, messages) {
+const AI_PROVIDERS_META = [
+  { id: 'gemini', name: 'Gemini' },
+  { id: 'grok', name: 'Grok' },
+  { id: 'groq', name: 'Groq' },
+  { id: 'cerebras', name: 'Cerebras' },
+  { id: 'openrouter', name: 'OpenRouter' },
+  { id: 'mistral', name: 'Mistral' },
+  { id: 'nvidia', name: 'NVIDIA' },
+  { id: 'huggingface', name: 'Hugging Face' },
+  { id: 'cloudflare', name: 'Cloudflare' },
+];
+const AI_DEFAULT_ORDER = AI_PROVIDERS_META.map(p => p.id);
+const AI_HEALTH_KEY = 'liferpg_ai_health_v1';
+function loadAIHealth() {
+  try { return JSON.parse(localStorage.getItem(AI_HEALTH_KEY) || '{}'); } catch { return {}; }
+}
+function saveAIHealth(h) { try { localStorage.setItem(AI_HEALTH_KEY, JSON.stringify(h)); } catch {} }
+function pushAILog(entry) {
+  const h = loadAIHealth();
+  const log = Array.isArray(h.log) ? h.log : [];
+  log.unshift({ ts: Date.now(), ...entry });
+  h.log = log.slice(0, 30);
+  h.stats = h.stats || { requests: 0, success: 0, fallback: 0, errors: 0 };
+  h.stats.requests += 1;
+  if (entry.ok) h.stats.success += 1; else h.stats.errors += 1;
+  if (entry.fallbackUsed) h.stats.fallback += 1;
+  saveAIHealth(h);
+}
+
+async function callClaudeAPI(system, messages, extra = {}) {
+  const started = Date.now();
   let response;
   try {
     response = await fetch('/api/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ system, messages }),
+      body: JSON.stringify({ system, messages, taskType: extra.taskType || 'CHAT', order: extra.order || AI_DEFAULT_ORDER, jsonMode: !!extra.jsonMode }),
     });
   } catch (networkErr) {
+    pushAILog({ taskType: extra.taskType || 'CHAT', provider: 'network', ok: false, error: 'network' });
     throw new Error('NETWORK: ' + (networkErr && networkErr.message ? networkErr.message : 'fetch failed'));
   }
   if (!response.ok) {
     let bodyText = '';
-    try { bodyText = (await response.text()).slice(0, 300); } catch (_) { /* ignore */ }
+    try { bodyText = (await response.text()).slice(0, 300); } catch (_) {}
+    pushAILog({ taskType: extra.taskType || 'CHAT', provider: 'router', ok: false, status: response.status, latency: Date.now() - started });
     const err = new Error(`HTTP ${response.status}: ${bodyText || response.statusText}`);
     err.status = response.status;
     throw err;
@@ -1130,6 +1161,7 @@ async function callClaudeAPI(system, messages) {
   const data = await response.json();
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
   if (!text) throw new Error('EMPTY: no text block in response');
+  pushAILog({ taskType: extra.taskType || 'CHAT', provider: data._provider || 'unknown', model: data._model, ok: true, fallbackUsed: !!data.fallbackUsed, latency: Date.now() - started });
   return text;
 }
 
@@ -1142,11 +1174,11 @@ function friendlyAIError(e) {
 }
 
 // Transient proxy/network hiccups happen — retry a couple of times with backoff before giving up.
-async function callClaudeAPIWithRetry(system, messages, attempts = 3) {
+async function callClaudeAPIWithRetry(system, messages, attempts = 2, extra = {}) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await callClaudeAPI(system, messages);
+      return await callClaudeAPI(system, messages, extra);
     } catch (e) {
       lastErr = e;
       if (e && e.status === 429) break; // quota exhausted — retrying instantly won't help
@@ -1519,6 +1551,7 @@ function defaultState() {
     statsHistory: [],
     lastStatsSnapshotDate: null,
     nextOrder: 1,
+    ai: { order: AI_DEFAULT_ORDER, enabled: Object.fromEntries(AI_PROVIDERS_META.map(p => [p.id, true])) },
   };
 }
 
@@ -7128,6 +7161,60 @@ function SaveManagerCard({ state, importSaveData, onExported }) {
   );
 }
 
+function AICenterCard() {
+  const [health, setHealth] = useState(() => loadAIHealth());
+  const [pinging, setPinging] = useState(false);
+  const [configured, setConfigured] = useState([]);
+  async function ping() {
+    setPinging(true);
+    try {
+      const r = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ping: true }) });
+      const data = await r.json();
+      setConfigured(data.configured || []);
+      const h = loadAIHealth();
+      h.lastPing = Date.now();
+      h.configured = data.configured || [];
+      saveAIHealth(h);
+      setHealth(h);
+    } catch {
+      setConfigured([]);
+    }
+    setPinging(false);
+  }
+  const stats = health.stats || { requests: 0, success: 0, fallback: 0, errors: 0 };
+  const log = health.log || [];
+  return (
+    <Card>
+      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>🤖 AI CORE</div>
+      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Система AI активна. Ключи только на сервере. Если все провайдеры молчат — игра берёт резервный режим.</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        {AI_PROVIDERS_META.map(p => {
+          const on = configured.includes(p.id) || (health.configured || []).includes(p.id);
+          return (
+            <span key={p.id} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: on ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.04)', color: on ? COLORS.green : COLORS.textMuted }}>
+              {on ? '🟢' : '⚪'} {p.name}
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>
+        Сегодня: {stats.requests} запросов · {stats.success} ок · {stats.fallback} fallback · {stats.errors} ошибок
+      </div>
+      <button className="lrpg-btn lrpg-cta" disabled={pinging} onClick={ping} style={{ width: '100%', marginBottom: 8 }}>
+        {pinging ? 'Проверяю…' : 'Проверить AI'}
+      </button>
+      {log.slice(0, 6).map((e, i) => (
+        <div key={i} style={{ fontSize: 10, color: COLORS.textMuted, display: 'flex', gap: 6, padding: '3px 0', borderTop: `1px solid ${COLORS.border}` }}>
+          <span>{e.ok ? '✅' : '❌'}</span>
+          <span>{e.taskType}</span>
+          <span>{e.provider}</span>
+          <span>{e.latency ? `${e.latency} ms` : ''}</span>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 function SettingsTab({ character, setCharacterName, resetAllData, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, localBackupOk, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
@@ -7199,6 +7286,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
       </Card>
 
       <FeedbackSettingsCard />
+      <AICenterCard />
       <Card>
         <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Интеграции</div>
         {['Apple Health / шаги', 'Экранное время', 'Календарь'].map(x => (
