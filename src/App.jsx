@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.5';
+const APP_VERSION = '14.6';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -200,23 +200,73 @@ const HapticManager = {
 
 const SoundManager = {
   ctx: null,
+  master: null,
+  unlocked: false,
+  unlocking: false,
+  _bound: false,
   ensure() {
     if (this.ctx) return this.ctx;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
-    this.ctx = new AC();
-    return this.ctx;
+    const ctx = new AC();
+    const master = ctx.createGain();
+    master.gain.value = FEEDBACK_PREFS.volume;
+    master.connect(ctx.destination);
+    this.ctx = ctx;
+    this.master = master;
+    this.bindUnlock();
+    return ctx;
   },
-  setVolume(v) { saveFeedbackPrefs({ volume: Math.max(0, Math.min(1, v)) }); },
-  mute() { saveFeedbackPrefs({ sfxOn: false }); },
-  unmute() { saveFeedbackPrefs({ sfxOn: true }); },
+  bindUnlock() {
+    if (this._bound || typeof window === 'undefined') return;
+    this._bound = true;
+    const kick = () => { this.unlock(); };
+    ['pointerdown', 'touchstart', 'mousedown', 'keydown', 'click'].forEach(ev => {
+      window.addEventListener(ev, kick, { passive: true });
+    });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.unlock(); });
+    window.addEventListener('pageshow', () => this.unlock());
+  },
+  async unlock() {
+    const ctx = this.ensure();
+    if (!ctx || this.unlocking) return ctx;
+    this.unlocking = true;
+    try {
+      if (ctx.state === 'suspended' || ctx.state === 'interrupted') await ctx.resume();
+      if (!this.unlocked && ctx.state === 'running') {
+        const buf = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(this.master);
+        src.start(0);
+        this.unlocked = true;
+      }
+    } catch (e) {}
+    this.unlocking = false;
+    return ctx;
+  },
+  setVolume(v) {
+    const vol = Math.max(0, Math.min(1, v));
+    saveFeedbackPrefs({ volume: vol });
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.02);
+  },
+  mute() { saveFeedbackPrefs({ sfxOn: false }); if (this.master && this.ctx) this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02); },
+  unmute() { saveFeedbackPrefs({ sfxOn: true }); this.unlock(); if (this.master && this.ctx) this.master.gain.setTargetAtTime(FEEDBACK_PREFS.volume, this.ctx.currentTime, 0.02); },
   playSound(name) {
     if (!FEEDBACK_PREFS.sfxOn) return;
     const ctx = this.ensure();
     if (!ctx) return;
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (ctx.state !== 'running') {
+      this.unlock().then(() => { if (this.ctx && this.ctx.state === 'running') this._emit(name); });
+      return;
+    }
+    this._emit(name);
+  },
+  _emit(name) {
+    const ctx = this.ctx;
+    if (!ctx) return;
     const now = ctx.currentTime;
-    const vol = FEEDBACK_PREFS.volume * 0.18;
+    const vol = 0.18;
     const beep = (freq, dur, type = 'sine', gain = 1, delay = 0) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
@@ -224,7 +274,7 @@ const SoundManager = {
       g.gain.setValueAtTime(0.0001, now + delay);
       g.gain.exponentialRampToValueAtTime(vol * gain, now + delay + 0.012);
       g.gain.exponentialRampToValueAtTime(0.0001, now + delay + dur);
-      o.connect(g); g.connect(ctx.destination);
+      o.connect(g); g.connect(this.master || ctx.destination);
       o.start(now + delay); o.stop(now + delay + dur + 0.02);
     };
     const table = {
@@ -279,6 +329,7 @@ function FeedbackLayer() {
   const parts = useRef([]);
   const raf = useRef(0);
 
+  useEffect(() => { SoundManager.ensure(); SoundManager.unlock(); }, []);
   useEffect(() => {
     const un = FeedbackBus.on(ev => {
       if (ev.vfx === 'error') setFlash({ c: 'rgba(255,80,80,0.18)', id: ev.at });
@@ -3465,6 +3516,11 @@ useEffect(() => {
         .lrpg-btn:active { transform: scale(0.96); filter: brightness(1.12); }
         @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
         @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        @keyframes lrpg-cloud-a { 0% { transform: translateX(-8%); } 100% { transform: translateX(18%); } }
+        @keyframes lrpg-cloud-b { 0% { transform: translateX(12%); } 100% { transform: translateX(-16%); } }
+        @keyframes lrpg-trees { 0%,100% { transform: translateX(0) scaleY(1); } 50% { transform: translateX(6px) scaleY(1.015); } }
+        @keyframes lrpg-bg-drift { 0% { background-position: 48% 62%; } 50% { background-position: 52% 60%; } 100% { background-position: 48% 62%; } }
+        @keyframes lrpg-leaf { 0% { transform: translate(0,0) rotate(0deg); opacity:.0; } 10%{opacity:.55} 100% { transform: translate(40px, 70px) rotate(80deg); opacity:0; } }
         .lrpg-cta {
           border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 800; color: #fff;
           background: linear-gradient(180deg, #8B85FF, #6C63FF);
@@ -4039,24 +4095,26 @@ function DailyGoalsPanel({ state, setTab, setSubTab }) {
     else if (key === 'nutrition') { setTab('profile'); setSubTab(s => ({ ...s, profile: 'body' })); }
     else { setTab('progress'); setSubTab(s => ({ ...s, progress: 'stats' })); }
   }
+  const done = goals.filter(g => g.done).length;
   return (
-    <HudCard style={{ padding: '8px 10px 10px' }}>
-      <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold, marginBottom: 6 }}>Цель на сегодня</div>
-      {goals.map((g, i) => (
-        <div key={g.key} className="lrpg-btn" onClick={() => goTo(g.key)} style={{
-          display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', background: 'none', width: '100%', textAlign: 'left',
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px',
+      borderRadius: 999, background: 'rgba(10,14,22,0.55)', border: '1px solid rgba(108,99,255,0.28)',
+    }}>
+      <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.teal, whiteSpace: 'nowrap' }}>{done}/4</span>
+      {goals.map(g => (
+        <button key={g.key} className="lrpg-btn" onClick={() => goTo(g.key)} title={g.label} style={{
+          background: 'none', padding: 0, display: 'flex', alignItems: 'center', gap: 3,
         }}>
-          {g.done
-            ? <span style={{ width: 11, height: 11, borderRadius: 99, background: COLORS.teal, flexShrink: 0 }} />
-            : <span style={{ width: 11, height: 11, borderRadius: 99, border: `1px solid ${COLORS.textMuted}`, flexShrink: 0 }} />}
-          <span style={{ fontSize: 10, color: g.done ? COLORS.teal : COLORS.text, flex: 1 }}>{g.label}</span>
-          <span style={{ fontSize: 9, color: COLORS.textMuted }}>{g.done ? '1/1' : '0/1'}</span>
-        </div>
+          <span style={{
+            width: 8, height: 8, borderRadius: 99, flexShrink: 0,
+            background: g.done ? COLORS.teal : 'transparent',
+            border: g.done ? 'none' : `1px solid ${COLORS.textMuted}`,
+          }} />
+          <span style={{ fontSize: 8, color: g.done ? COLORS.teal : COLORS.textMuted }}>{g.label}</span>
+        </button>
       ))}
-      <div style={{ fontSize: 8, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 7, lineHeight: 1.3 }}>
-        «Маленькие шаги приводят к большим результатам»
-      </div>
-    </HudCard>
+    </div>
   );
 }
 
@@ -4238,14 +4296,47 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
       position: 'fixed', left: 0, right: 0, top: 0, bottom: 62, zIndex: 5, overflow: 'hidden',
     }}>
       <div style={{
-        position: 'absolute', inset: 0,
+        position: 'absolute', inset: '-4%',
         backgroundImage: `url(${ROOM_BACKGROUND_IMAGE})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center 62%',
+        animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
       }} />
+      {!FEEDBACK_PREFS.batterySaver && (
+        <>
+          <div style={{
+            position: 'absolute', left: '18%', right: '18%', top: '10%', height: '28%', pointerEvents: 'none', overflow: 'hidden',
+          }}>
+            <div style={{
+              position: 'absolute', width: 160, height: 36, borderRadius: '50%',
+              background: 'radial-gradient(ellipse, rgba(200,220,255,0.22), rgba(200,220,255,0) 70%)',
+              top: 8, left: 0, filter: 'blur(6px)', animation: 'lrpg-cloud-a 36s linear infinite alternate',
+            }} />
+            <div style={{
+              position: 'absolute', width: 120, height: 28, borderRadius: '50%',
+              background: 'radial-gradient(ellipse, rgba(180,210,255,0.16), rgba(180,210,255,0) 70%)',
+              top: 28, left: 40, filter: 'blur(8px)', animation: 'lrpg-cloud-b 48s linear infinite alternate',
+            }} />
+            <div style={{
+              position: 'absolute', inset: 0,
+              background: 'linear-gradient(90deg, rgba(40,80,50,0.0) 0%, rgba(30,70,40,0.12) 40%, rgba(30,70,40,0.0) 80%)',
+              animation: 'lrpg-trees 9s ease-in-out infinite',
+              mixBlendMode: 'soft-light',
+            }} />
+            {[0,1,2].map(i => (
+              <span key={i} style={{
+                position: 'absolute', left: `${20+i*22}%`, top: 6, width: 4, height: 6, borderRadius: '0 70% 0 70%',
+                background: 'rgba(90,160,90,0.45)',
+                animation: `lrpg-leaf ${10+i*3}s linear ${i*2}s infinite`,
+              }} />
+            ))}
+          </div>
+        </>
+      )}
       <div style={{
         position: 'absolute', inset: 0,
         background: 'linear-gradient(180deg, rgba(8,7,14,0.28) 0%, rgba(8,7,14,0.00) 18%, rgba(8,7,14,0.00) 62%, rgba(8,7,14,0.38) 100%)',
+        pointerEvents: 'none',
       }} />
 
       <GameSceneCenter body={state.body} currentWeight={currentWeight} />
@@ -4261,10 +4352,10 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         <CoinsTimeBlock coins={state.coins} dayNumber={dayNumber} onOpenShop={() => { setTab('profile'); setSubTab(s => ({ ...s, profile: 'shop' })); }} />
       </div>
 
-      <div style={{ position: 'absolute', zIndex: 3, left: 8, top: 92, width: 138 }}>
+      <div style={{ position: 'absolute', zIndex: 3, left: 8, top: 86 }}>
         <DailyGoalsPanel state={state} setTab={setTab} setSubTab={setSubTab} />
       </div>
-      <div style={{ position: 'absolute', zIndex: 3, right: 8, top: 92, width: 138 }}>
+      <div style={{ position: 'absolute', zIndex: 3, right: 8, top: 92, width: 128 }}>
         <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
       </div>
 
