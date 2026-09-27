@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.10.5';
+const APP_VERSION = '14.11';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -509,6 +509,28 @@ const PENALTY = {
 };
 
 const DIFF_MULT = { Easy: 0, Normal: 0.5, Hard: 1 };
+
+// Игровые монеты != реальные деньги. Экономист (Вера) режет награду по типу/сложности, не по XP.
+const ECONOMIST_TABLE = {
+  Routine: { Easy: 0, Normal: 0, Hard: 2 },
+  Daily: { Easy: 0, Normal: 4, Hard: 8 },
+  Weekly: { Easy: 3, Normal: 8, Hard: 14 },
+  Monthly: { Easy: 8, Normal: 16, Hard: 28 },
+  Goal: { Easy: 6, Normal: 14, Hard: 24 },
+  Bonus: { Easy: 2, Normal: 6, Hard: 10 },
+  Event: { Easy: 0, Normal: 5, Hard: 12 },
+  Recovery: { Easy: 0, Normal: 0, Hard: 0 },
+  Boss: { Easy: 16, Normal: 32, Hard: 48 },
+};
+function economistPayout(type, difficulty, xp) {
+  const row = ECONOMIST_TABLE[type] || ECONOMIST_TABLE.Daily;
+  const d = DIFF_MULT[difficulty] != null ? difficulty : 'Normal';
+  let coins = row[d] != null ? row[d] : row.Normal;
+  if (type === 'Monthly' && (xp || 0) >= 500) coins = Math.min(coins, 28);
+  if ((difficulty === 'Easy' || type === 'Routine') && coins > 0 && Math.random) { /* cap already */ }
+  return coins;
+}
+
 const SKIP_REASONS = ['Работа', 'Поездка', 'Болезнь', 'Форс-мажор', 'Другое'];
 const SPHERES = ['Career', 'Finance', 'Knowledge', 'Physical', 'Relationships', 'Creator', 'Personal Development'];
 
@@ -569,7 +591,7 @@ function buildRandomEvent(s) {
   const t = templates[Math.floor(Math.random() * templates.length)];
   const baseXp = 40;
   const xp = Math.round(baseXp * tier.xpMult);
-  const coins = Math.round(xp * 0.4);
+  const coins = economistPayout('Event', 'Normal', xp);
   return { title: t.title, stat: t.stat, rarity: tier.rarity, xp, coins };
 }
 
@@ -1591,7 +1613,7 @@ function ensureDailyContent(s) {
       const xp = Math.round(lo + (hi - lo) * 0.3);
       quests.push({
         id: uid(), title: t.title, type: 'Bonus', difficulty: 'Normal',
-        xp, coins: Math.round(xp * 0.4), stat: t.stat, status: 'active',
+        xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp), stat: t.stat, status: 'active',
         deadline: today + 'T23:59', order: order++, createdAt: Date.now(),
         source: 'pool', genDate: today,
       });
@@ -1633,7 +1655,7 @@ function ensureDailyContent(s) {
       const [lo, hi] = TYPE_XP_RANGE.Recovery;
       const xp = Math.round(lo + (hi - lo) * 0.5);
       quests.push({
-        id: uid(), title, type: 'Recovery', difficulty: 'Easy', xp, coins: Math.round(xp * 0.4),
+        id: uid(), title, type: 'Recovery', difficulty: 'Easy', xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp),
         stat: 'discipline', status: 'active', deadline: null, order: order++, createdAt: Date.now(),
       });
     });
@@ -2284,6 +2306,11 @@ const COUNCIL_NPCS = [
     domain: 'цели и сроки',
     enter: ['Я вовремя. Кто опять без дедлайна?', 'Можно я сразу список приоритетов?'],
     greet: ['Расскажи цель. И срок. Пожалуйста, срок.', 'Я записываю. Не хаотично, ладно?'] },
+  { id: 'vera', name: 'Вера', role: 'Экономист', emoji: '⚖️', late: 0.2, swear: 'light',
+    vibe: 'холодная ревизорша монет. Ненавидит жирные награды за лёгкое. Говорит коротко, считает вслух.',
+    domain: 'игровые монеты, антиинфляция, магазин и колесо',
+    enter: ['Монеты — не зарплата. Я уже смотрела таблицы.', 'Если снова Monthly за 400 монет — я всех порежу.'],
+    greet: ['Покажи выплату. Если Easy и монеты — это баг.', 'Колесо крутить можно. Печатать монеты — нет.'] },
   { id: 'tio', name: 'Тио', role: 'Хранитель', emoji: '🌿', late: 0.35, swear: 'light',
     vibe: 'мягкий пассивно-агрессивный. Помнит сорванные стрики, вздыхает.',
     domain: 'привычки',
@@ -2913,7 +2940,7 @@ export default function LifeRPG() {
             const xp = Math.round(lo + (hi - lo) * 0.5);
             return {
               id: uid(), title: spec.title, type: spec.type, difficulty: 'Normal',
-              xp, coins: Math.round(xp * 0.4), stat: spec.stat, secondaryStat: spec.secondaryStat,
+              xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp), stat: spec.stat, secondaryStat: spec.secondaryStat,
               status: 'active', deadline: spec.type === 'Daily' ? today + 'T23:59' : null,
               order: order++, createdAt: Date.now(), source: 'ai', genDate: today,
             };
@@ -3083,7 +3110,7 @@ export default function LifeRPG() {
       const [lo, hi] = TYPE_XP_RANGE[data.type];
       const mult = DIFF_MULT[data.difficulty];
       const xp = Math.round(lo + (hi - lo) * mult);
-      const coins = Math.round(xp * 0.4);
+      const coins = economistPayout(data.type, data.difficulty, xp);
       const isBoss = data.type === 'Boss';
       const bossHP = isBoss ? Math.max(10, Number(data.bossHP) || 100) : null;
       const q = {
@@ -3199,6 +3226,32 @@ export default function LifeRPG() {
 
   // Раздел 13 ТЗ: покупка — проверка баланса, списание через Ledger, запись в Chronicle,
   // фиксация последней покупки для возможного Refund (раздел 14).
+  function spinFortune() {
+    const COST = 35;
+    setState(prev => {
+      if ((prev.coins || 0) < COST) return prev;
+      const roll = Math.random();
+      let prize = { kind: 'nothing', title: 'Пусто', coins: 0 };
+      if (roll < 0.42) prize = { kind: 'nothing', title: 'Ничего', coins: 0 };
+      else if (roll < 0.72) prize = { kind: 'coins', title: '+8 монет', coins: 8 };
+      else if (roll < 0.90) prize = { kind: 'coins', title: '+18 монет', coins: 18 };
+      else if (roll < 0.97) prize = { kind: 'title', title: 'Титул: Везунчик', coins: 0, label: 'Везунчик' };
+      else prize = { kind: 'jackpot', title: 'Джекпот +80', coins: 80 };
+      let s = applyCoinLedger(prev, 'spend', COST, 'wheel', 'Колесо удачи');
+      if (prize.coins) s = applyCoinLedger({ ...prev, ...s }, 'earn', prize.coins, 'wheel', prize.title);
+      const c = normalizeCouncil(prev.council);
+      const grants = { ...c.grants };
+      if (prize.label) grants.titles = [...(grants.titles || []), { id: 'w_' + uid(), label: prize.label }];
+      gameFeedback(prize.coins >= 18 ? 'COIN_GAIN' : 'QUEST_COMPLETE', { coins: prize.coins });
+      return {
+        ...prev, ...s,
+        lastWheel: { ts: Date.now(), prize: prize.title },
+        council: { ...c, grants },
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `🎰 Колесо: −${COST} · ${prize.title}`),
+      };
+    });
+  }
+
   function buyReward(r) {
     setState(prev => {
       if (r.enabled === false) return prev;
@@ -3732,7 +3785,7 @@ function addYouTubeQuest(ch, metric, delta) {
     const xp = Math.round(lo + (hi - lo) * DIFF_MULT[difficulty]);
     const q = {
       id: uid(), title: `${ch.name}: +${fmtNum(delta)} ${m.short} (до ${fmtNum(target)})`, type, difficulty,
-      xp, coins: Math.round(xp * 0.4), stat: 'creator', secondaryStat: 'discipline', status: 'active',
+      xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp), stat: 'creator', secondaryStat: 'discipline', status: 'active',
       deadline: null, order: prev.nextOrder, createdAt: Date.now(),
       ytLink: { channelRef: ch.id, metric, target },
     };
@@ -4009,7 +4062,7 @@ function addYouTubeQuest(ch, metric, delta) {
         const difficulty = DIFF_MULT[s.difficulty] !== undefined ? s.difficulty : 'Normal';
         const mult = DIFF_MULT[difficulty];
         const xp = Math.round(lo + (hi - lo) * mult);
-        const coins = Math.round(xp * 0.4);
+        const coins = economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp);
         const stat = STATS_DEF.some(st => st.key === s.stat) ? s.stat : 'discipline';
         const deadline = new Date(Date.now() + Math.max(1, s.dueInDays || 7) * 86400000).toISOString().slice(0, 16);
         const q = {
@@ -4442,6 +4495,7 @@ useEffect(() => {
                   refundLastPurchase={refundLastPurchase}
                   showAddReward={showAddReward} setShowAddReward={setShowAddReward}
                   addReward={addReward} deleteReward={deleteReward} setRewardEnabled={setRewardEnabled}
+                  spinFortune={spinFortune} lastWheel={state.lastWheel}
                 />
               )}
               {subTab.profile === 'achievements' && (
@@ -5711,7 +5765,7 @@ function StatsTab({ stats, energy, todayCheckin, setDailyCheckin, chronicle, rec
   );
 }
 
-function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled }) {
+function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled, spinFortune, lastWheel }) {
   const [title, setTitle] = useState('');
   const [cost, setCost] = useState(100);
   const [category, setCategory] = useState('reallife');
@@ -5736,6 +5790,12 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <Card>
+        <div style={{ fontSize: 13, fontWeight: 800 }}>🎰 Колесо удачи · 35 монет</div>
+        <div style={{ fontSize: 11, color: COLORS.textMuted, margin: '4px 0 8px' }}>Вера разрешила. Матожидание ниже цены — это не ферма.</div>
+        <button className="lrpg-btn lrpg-cta" disabled={!spinFortune || coins < 35} onClick={() => spinFortune && spinFortune()}>Крутить</button>
+        {lastWheel && <div style={{ fontSize: 11, color: COLORS.teal, marginTop: 6 }}>Последнее: {lastWheel.prize}</div>}
+      </Card>
       <Card style={{ cursor: 'pointer' }} onClick={() => setShowWallet(v => !v)}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 13, color: COLORS.textMuted }}>🪙 Coin Wallet</span>
