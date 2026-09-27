@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.8';
+const APP_VERSION = '14.8.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1119,7 +1119,7 @@ const AI_PROVIDERS_META = [
   { id: 'huggingface', name: 'Hugging Face' },
   { id: 'cloudflare', name: 'Cloudflare' },
 ];
-const AI_DEFAULT_ORDER = AI_PROVIDERS_META.map(p => p.id);
+const AI_DEFAULT_ORDER = ['groq','gemini','grok','cerebras','openrouter','mistral','nvidia'];
 const AI_HEALTH_KEY = 'liferpg_ai_health_v1';
 function loadAIHealth() {
   try { return JSON.parse(localStorage.getItem(AI_HEALTH_KEY) || '{}'); } catch { return {}; }
@@ -1153,7 +1153,9 @@ async function callClaudeAPI(system, messages, extra = {}) {
   if (!response.ok) {
     let bodyText = '';
     try { bodyText = (await response.text()).slice(0, 300); } catch (_) {}
-    pushAILog({ taskType: extra.taskType || 'CHAT', provider: 'router', ok: false, status: response.status, latency: Date.now() - started });
+    let short = bodyText.replace(/\s+/g,' ').slice(0, 140);
+    try { const j = JSON.parse(bodyText); short = (j.error || '') + ' ' + (Array.isArray(j.details) ? j.details.slice(0,3).join(' | ') : ''); } catch {}
+    pushAILog({ taskType: extra.taskType || 'CHAT', provider: 'router', ok: false, status: response.status, latency: Date.now() - started, error: short.trim() });
     const err = new Error(`HTTP ${response.status}: ${bodyText || response.statusText}`);
     err.status = response.status;
     throw err;
@@ -7452,6 +7454,7 @@ function AICenterCard() {
           <span>{e.taskType}</span>
           <span>{e.provider}</span>
           <span>{e.latency ? `${e.latency} ms` : ''}</span>
+          {e.error ? <span style={{ color: COLORS.crimson }}>{String(e.error).slice(0, 80)}</span> : null}
         </div>
       ))}
     </Card>
