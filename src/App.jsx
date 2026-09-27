@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.12.1';
+const APP_VERSION = '14.12.3';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1078,11 +1078,18 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
     setReveal({ type: 'wheel', title: wheel.segs[idx].label });
     setSpinning(false);
   }
-  function doChest(ch) {
+  const [chestPhase, setChestPhase] = useState(null);
+  async function doChest(ch) {
+    if (chestPhase) return;
+    setChestPhase({ step: 'shake', ch });
+    await new Promise(r => setTimeout(r, 700));
+    setChestPhase({ step: 'burst', ch });
     if (openChest) openChest(ch);
-    setTimeout(() => {
-      setReveal({ type: 'chest', title: ch.title });
-    }, 50);
+    await new Promise(r => setTimeout(r, 650));
+    setChestPhase({ step: 'open', ch });
+    setReveal({ type: 'chest', title: ch.title });
+    await new Promise(r => setTimeout(r, 200));
+    setChestPhase(null);
   }
   const chestShow = reveal && reveal.type === 'chest' && eco.lastChest && (Date.now() - (eco.lastChest.ts || 0) < 120000);
   return (
@@ -1176,15 +1183,29 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
           ))}
         </>
       )}
-      {(reveal || chestShow) && (
+      {chestPhase && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.78)', zIndex: 85, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'relative', width: 160, height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {chestPhase.step !== 'open' && (
+              <div style={{
+                fontSize: 88, animation: chestPhase.step === 'shake' ? 'lrpg-chest-shake .7s ease-in-out' : 'lrpg-chest-glow .6s ease-in-out',
+              }}>📦</div>
+            )}
+            {chestPhase.step === 'burst' && (
+              <div style={{ position: 'absolute', width: 120, height: 120, borderRadius: '50%', background: 'radial-gradient(circle,#fff 0%,#C084FC 40%,transparent 70%)', animation: 'lrpg-chest-burst .65s ease-out' }} />
+            )}
+          </div>
+        </div>
+      )}
+      {(reveal || chestShow) && !chestPhase && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.72)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setReveal(null)}>
           <div style={{ background: '#121826', borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, textAlign: 'center', animation: 'lrpg-pop .35s ease-out' }} onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: 12, color: COLORS.textMuted }}>{chestShow ? 'Сундук открыт' : 'Приз колеса'}</div>
-            <div style={{ fontSize: 42, margin: '10px 0' }}>{chestShow ? (eco.lastChest.icon || '📦') : '🎰'}</div>
+            <div style={{ fontSize: 42, margin: '10px 0', animation: 'lrpg-npc-in .45s ease-out' }}>{chestShow ? (eco.lastChest.icon || '📦') : '🎰'}</div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{chestShow ? eco.lastChest.title : (reveal && reveal.title)}</div>
             {chestShow && eco.lastChest.dup && <div style={{ fontSize: 12, color: COLORS.teal }}>Уже было — добавлены осколки</div>}
             {chestShow && <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 6 }}>Лежит во вкладке «Коллекция»</div>}
-            <button className="lrpg-btn lrpg-cta" style={{ marginTop: 14 }} onClick={() => { setReveal(null); if (chestShow) setSub('inv'); }}>Понятно</button>
+            <button className="lrpg-btn lrpg-cta" style={{ marginTop: 14 }} onClick={() => { setReveal(null); if (chestShow) setSub('inv'); }}>Забрать</button>
           </div>
         </div>
       )}
@@ -4647,6 +4668,9 @@ useEffect(() => {
         @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,.45) } 50% { box-shadow: 0 0 0 6px rgba(0,229,255,0) } }
         @keyframes lrpg-div { 0% { opacity:0; transform: scale(.94) } 100% { opacity:1; transform: scale(1) } }
         @keyframes lrpg-pop { 0% { transform: translateY(10px) scale(.92); opacity:0 } 100% { transform: translateY(0) scale(1); opacity:1 } }
+        @keyframes lrpg-chest-shake { 0%,100% { transform: rotate(0) } 20% { transform: rotate(-12deg) scale(1.05) } 40% { transform: rotate(12deg) } 60% { transform: rotate(-8deg) } 80% { transform: rotate(8deg) } }
+        @keyframes lrpg-chest-burst { 0% { transform: scale(.4); opacity:0 } 40% { opacity:1 } 100% { transform: scale(2.2); opacity:0 } }
+        @keyframes lrpg-chest-glow { 0%,100% { filter: drop-shadow(0 0 6px #C084FC) } 50% { filter: drop-shadow(0 0 22px #00E5FF) } }
         @keyframes lrpg-npc-bubble { 0% { transform: translateX(-12px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
         @keyframes lrpg-npc-seat { 0% { transform: translateY(10px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
         @keyframes lrpg-cloud-a { 0% { transform: translate3d(-40%,0,0); } 100% { transform: translate3d(55%,0,0); } }
@@ -5444,42 +5468,39 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
       }} />
       <div style={{
-        position: 'absolute', left: '12%', right: '12%', top: '8%', height: '42%',
+        position: 'absolute', left: '2%', top: '4%', width: '62%', height: '40%',
         pointerEvents: 'none', overflow: 'hidden', zIndex: 1,
+        borderRadius: '0 0 18% 0',
       }}>
-        <div style={{
-          position: 'absolute', width: '70%', height: 70, borderRadius: '50%',
-          left: '-10%', top: 10,
-          background: 'radial-gradient(ellipse at center, rgba(230,240,255,0.55) 0%, rgba(180,200,230,0.18) 45%, rgba(180,200,230,0) 70%)',
-          animation: 'lrpg-cloud-a 22s ease-in-out infinite alternate',
-          willChange: 'transform',
-        }} />
-        <div style={{
-          position: 'absolute', width: '55%', height: 54, borderRadius: '50%',
-          left: '30%', top: 36,
-          background: 'radial-gradient(ellipse at center, rgba(210,225,255,0.42) 0%, rgba(160,190,230,0.14) 50%, rgba(160,190,230,0) 72%)',
-          animation: 'lrpg-cloud-b 28s ease-in-out infinite alternate',
-          willChange: 'transform',
-        }} />
-        <div style={{
-          position: 'absolute', width: '48%', height: 44, borderRadius: '50%',
-          left: '8%', top: 58,
-          background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.28) 0%, rgba(200,215,240,0.1) 48%, rgba(200,215,240,0) 70%)',
-          animation: 'lrpg-cloud-c 34s ease-in-out infinite alternate',
-          willChange: 'transform',
-        }} />
-        <div style={{
-          position: 'absolute', left: 0, bottom: 0, width: '40%', height: '55%',
-          background: 'linear-gradient(180deg, rgba(20,50,28,0) 0%, rgba(18,48,26,0.22) 100%)',
-          animation: 'lrpg-trees 8s ease-in-out infinite',
-        }} />
+        <div style={{ position:'absolute', width:'90%', height:86, left:'-20%', top:6, borderRadius:'50%',
+          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.72) 0%, rgba(200,220,255,0.28) 42%, transparent 70%)',
+          animation:'lrpg-cloud-a 18s ease-in-out infinite alternate' }} />
+        <div style={{ position:'absolute', width:'70%', height:64, left:'25%', top:28, borderRadius:'50%',
+          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.55) 0%, rgba(180,205,240,0.22) 50%, transparent 72%)',
+          animation:'lrpg-cloud-b 24s ease-in-out infinite alternate' }} />
+        <div style={{ position:'absolute', width:'60%', height:50, left:'5%', top:52, borderRadius:'50%',
+          background:'radial-gradient(ellipse at center, rgba(230,240,255,0.4) 0%, transparent 70%)',
+          animation:'lrpg-cloud-c 30s ease-in-out infinite alternate' }} />
+        <div style={{ position:'absolute', left:0, top:'28%', fontSize:14, opacity:0.85,
+          animation:'lrpg-plane 32s linear infinite', animationDelay:'6s' }}>✈</div>
+        <div style={{ position:'absolute', left:0, top:'18%', fontSize:11, opacity:0.7,
+          animation:'lrpg-plane 48s linear infinite', animationDelay:'22s' }}>✈</div>
+        {(new Date().getHours() >= 19 || new Date().getHours() < 6) && (
+          <>
+            <div style={{ position:'absolute', width:90, height:2, left:'8%', top:'12%',
+              background:'linear-gradient(90deg, transparent, #fff 40%, #cde 70%, transparent)',
+              animation:'lrpg-shoot 7s ease-out infinite', animationDelay:'4s' }} />
+            <div style={{ position:'absolute', width:70, height:2, left:'20%', top:'30%',
+              background:'linear-gradient(90deg, transparent, #fff, transparent)',
+              animation:'lrpg-shoot 11s ease-out infinite', animationDelay:'9s' }} />
+            {[...Array(7)].map((_,i)=>(
+              <div key={i} style={{ position:'absolute', width:3, height:3, borderRadius:'50%', background:'#fff',
+                left: `${12+i*10}%`, top: `${8+(i%3)*9}%`,
+                animation:`lrpg-twinkle ${2.2+i*0.4}s ease-in-out infinite`, animationDelay:`${i*0.3}s` }} />
+            ))}
+          </>
+        )}
       </div>
-      <div style={{
-        position: 'absolute', inset: 0,
-        background: 'linear-gradient(180deg, rgba(8,7,14,0.28) 0%, rgba(8,7,14,0.00) 18%, rgba(8,7,14,0.00) 62%, rgba(8,7,14,0.38) 100%)',
-        pointerEvents: 'none',
-      }} />
-
       <GameSceneCenter body={state.body} currentWeight={currentWeight} />
 
       <div style={{
