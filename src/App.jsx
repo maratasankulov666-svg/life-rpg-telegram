@@ -136,26 +136,28 @@ import {
 // 14.2  Home как референс: сцена на весь экран, панели поверх, персонаж меньше в центре.
 // 14.1  Home visual: новый фон комнаты, полный рост персонажа (чёрное худи), левое меню с подписями, меньше виньетки.
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
-const APP_VERSION = '14.3';
+// 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
+const APP_VERSION = '14.4';
 
 const COLORS = {
-  bg: '#0B0A12',
-  bgCard: '#14121F',
-  bgCardAlt: '#191629',
-  border: '#2E2A42',
-  borderLight: '#3A3552',
-  text: '#EDE7D9',
-  textMuted: '#8A8496',
-  gold: '#D9A54B',
-  goldSoft: 'rgba(217,165,75,0.15)',
-  teal: '#4FD1C5',
-  tealSoft: 'rgba(79,209,197,0.15)',
-  crimson: '#C24444',
-  crimsonSoft: 'rgba(194,68,68,0.15)',
-  violet: '#8B7CD8',
-  violetSoft: 'rgba(139,124,216,0.15)',
-  orange: '#E08A3C',
-  orangeSoft: 'rgba(224,138,60,0.15)',
+  bg: '#0B0F14',
+  bgCard: '#121826',
+  bgCardAlt: '#161D2E',
+  border: '#243044',
+  borderLight: '#33415C',
+  text: '#E8EEF8',
+  textMuted: '#8B97AD',
+  gold: '#F6C445',
+  goldSoft: 'rgba(246,196,69,0.16)',
+  teal: '#00E5FF',
+  tealSoft: 'rgba(0,229,255,0.16)',
+  crimson: '#FF6B6B',
+  crimsonSoft: 'rgba(255,107,107,0.16)',
+  violet: '#6C63FF',
+  violetSoft: 'rgba(108,99,255,0.18)',
+  orange: '#FF8A4C',
+  orangeSoft: 'rgba(255,138,76,0.16)',
+  green: '#4ADE80',
 };
 
 // ===================== АРТ: спрайты персонажа (8 типов телосложения) и фон комнаты =====================
@@ -1558,7 +1560,7 @@ function PillTabs({ options, active, onChange }) {
         return (
           <button key={o.key} className="lrpg-btn" onClick={() => onChange(o.key)} style={{
             flexShrink: 0, padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 700,
-            background: on ? `linear-gradient(160deg, ${COLORS.violet}, #5b4cb8)` : 'rgba(255,255,255,0.04)',
+            background: on ? 'linear-gradient(180deg, #8B85FF, #6C63FF)' : 'rgba(255,255,255,0.04)',
             color: on ? '#fff' : COLORS.textMuted,
             border: on ? `1px solid ${COLORS.violet}` : '1px solid rgba(255,255,255,0.08)',
             boxShadow: on ? `0 0 14px ${COLORS.violet}55` : 'none',
@@ -1578,7 +1580,7 @@ function ScreenHeader({ title, icon: Icon, extra }) {
             <Icon size={14} color={COLORS.gold} />
           </span>
         )}
-        <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: COLORS.gold }}>{title}</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#E8EEF8" }}>{title}</div>
       </div>
       {extra}
     </div>
@@ -1695,8 +1697,9 @@ function ActionsHub({
                 <div style={{ fontSize: 10, color: COLORS.teal, marginTop: 2 }}>{a.bonus}</div>
               </div>
               <button className="lrpg-btn" onClick={a.action} style={{
-                background: `linear-gradient(160deg, ${COLORS.violet}, #5b4cb8)`, color: '#fff',
+                background: 'linear-gradient(180deg, #8B85FF, #6C63FF)', color: '#fff',
                 borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700, flexShrink: 0,
+                boxShadow: '0 0 12px rgba(108,99,255,0.4)',
               }}>{a.kind === 'habit' ? 'Выполнить' : 'Начать'}</button>
             </div>
           ))}
@@ -1733,7 +1736,7 @@ function ActionsHub({
                   <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{p.hint} · {p.energy} энергии · +{p.xp} XP</div>
                 </div>
                 <button className="lrpg-btn" disabled={done} onClick={() => startPreset(p)} style={{
-                  background: done ? 'rgba(255,255,255,0.06)' : `linear-gradient(160deg, ${COLORS.violet}, #5b4cb8)`,
+                  background: done ? 'rgba(255,255,255,0.06)' : 'linear-gradient(180deg, #8B85FF, #6C63FF)',
                   color: done ? COLORS.teal : '#fff', borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700,
                 }}>{done ? 'Готово' : 'Начать'}</button>
               </div>
@@ -3236,6 +3239,22 @@ useEffect(() => {
         .lrpg-root ::-webkit-scrollbar-thumb { background: var(--gold); opacity: 0.4; border-radius: 3px; }
         .lrpg-btn { cursor: pointer; border: none; font-family: inherit; }
         .lrpg-btn:active { transform: translateY(1px); }
+        .lrpg-cta {
+          border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 800; color: #fff;
+          background: linear-gradient(180deg, #8B85FF, #6C63FF);
+          box-shadow: 0 0 16px rgba(108,99,255,0.45);
+        }
+        .lrpg-cta-ok {
+          border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 800; color: #042018;
+          background: linear-gradient(180deg, #7CFFC4, #4ADE80);
+          box-shadow: 0 0 16px rgba(74,222,128,0.35);
+        }
+        .lrpg-panel-neon {
+          background: linear-gradient(180deg, rgba(18,24,38,0.88), rgba(11,15,24,0.82));
+          border: 1px solid rgba(108,99,255,0.35);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(108,99,255,0.12);
+          border-radius: 18px;
+        }
         .lrpg-input { background: var(--panel-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 8px 10px; font-size: 14px; width: 100%; box-shadow: inset 0 1px 4px rgba(0,0,0,0.35); }
         .lrpg-input:focus { outline: none; border-color: var(--violet); box-shadow: inset 0 1px 4px rgba(0,0,0,0.35), 0 0 0 2px ${COLORS.violet}33; }
 
@@ -3490,9 +3509,9 @@ useEffect(() => {
 
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40, display: 'flex',
-        background: 'linear-gradient(180deg, rgba(20,18,31,0.72), rgba(11,10,18,0.96))',
-        borderTop: `1px solid ${COLORS.violet}33`, boxShadow: `0 -8px 24px rgba(0,0,0,0.45)`,
-        padding: '6px 6px calc(8px + env(safe-area-inset-bottom, 0px))', backdropFilter: 'blur(10px)',
+        background: 'linear-gradient(180deg, rgba(12,16,26,0.55), rgba(8,11,18,0.96))',
+        borderTop: '1px solid rgba(108,99,255,0.22)',
+        padding: '8px 8px calc(10px + env(safe-area-inset-bottom, 0px))', backdropFilter: 'blur(14px)',
       }}>
         {TABS.map(t => {
           const Icon = t.icon;
@@ -3500,17 +3519,17 @@ useEffect(() => {
           return (
             <button key={t.key} className="lrpg-btn" onClick={() => setTab(t.key)} style={{
               flex: 1, background: 'none', display: 'flex', flexDirection: 'column',
-              alignItems: 'center', gap: 3, color: active ? COLORS.gold : COLORS.textMuted, padding: '2px 1px',
+              alignItems: 'center', gap: 4, color: active ? '#fff' : COLORS.textMuted, padding: '0',
             }}>
               <span style={{
-                width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: active ? COLORS.goldSoft : 'transparent',
-                boxShadow: active ? `0 0 12px ${COLORS.gold}55` : 'none',
-                border: active ? `1px solid ${COLORS.gold}55` : '1px solid transparent',
+                width: 42, height: 42, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: active ? 'linear-gradient(180deg, rgba(108,99,255,0.35), rgba(108,99,255,0.08))' : 'rgba(255,255,255,0.03)',
+                boxShadow: active ? '0 0 16px rgba(108,99,255,0.45), inset 0 0 0 1px rgba(140,160,255,0.45)' : 'inset 0 0 0 1px rgba(255,255,255,0.05)',
+                color: active ? '#C7C4FF' : COLORS.textMuted,
               }}>
-                <Icon size={16} />
+                <Icon size={18} />
               </span>
-              <span style={{ fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap' }}>{t.label}</span>
+              <span style={{ fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap', color: active ? '#C7C4FF' : COLORS.textMuted }}>{t.label}</span>
             </button>
           );
         })}
@@ -3705,8 +3724,8 @@ function HudCard({ children, style }) {
     <div style={{
       borderRadius: 16,
       background: 'linear-gradient(165deg, rgba(18,16,32,0.72), rgba(10,9,18,0.66))',
-      border: '1px solid rgba(217,165,75,0.38)',
-      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.35)',
+      border: '1px solid rgba(108,99,255,0.38)',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(108,99,255,0.12)',
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
       ...style,
@@ -3743,7 +3762,7 @@ function RightStatsPanel({ body, currentWeight, onEdit }) {
     { icon: Users, label: 'Пол', value: body.sex === 'female' ? 'Женский' : 'Мужской' },
   ];
   return (
-    <HudCard style={{ padding: '8px 10px 10px', width: 132 }}>
+    <HudCard style={{ padding: '8px 10px 10px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
         <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold }}>Параметры</span>
         <button className="lrpg-btn" onClick={onEdit} style={{ background: 'none', padding: 0 }}>
@@ -3794,7 +3813,7 @@ function DailyGoalsPanel({ state, setTab, setSubTab }) {
     else { setTab('progress'); setSubTab(s => ({ ...s, progress: 'stats' })); }
   }
   return (
-    <HudCard style={{ padding: '8px 10px 10px', width: 132 }}>
+    <HudCard style={{ padding: '8px 10px 10px' }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold, marginBottom: 6 }}>Цель на сегодня</div>
       {goals.map((g, i) => (
         <div key={g.key} className="lrpg-btn" onClick={() => goTo(g.key)} style={{
@@ -4015,12 +4034,11 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         <CoinsTimeBlock coins={state.coins} dayNumber={dayNumber} onOpenShop={() => { setTab('profile'); setSubTab(s => ({ ...s, profile: 'shop' })); }} />
       </div>
 
-      <div style={{
-        position: 'absolute', zIndex: 3, right: 8, top: 92, bottom: 10,
-        display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end',
-      }}>
-        <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
+      <div style={{ position: 'absolute', zIndex: 3, left: 8, top: 92, width: 138 }}>
         <DailyGoalsPanel state={state} setTab={setTab} setSubTab={setSubTab} />
+      </div>
+      <div style={{ position: 'absolute', zIndex: 3, right: 8, top: 92, width: 138 }}>
+        <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
       </div>
 
       {modal === 'identity' && (
