@@ -110,7 +110,7 @@
 //       теперь видно пол/ковёр, на котором стоят ноги. (4) Панели HUD переведены с "плавающих"
 //       золотых скобок по углам на срезанные (chamfered) углы с тонкой обводкой — надёжнее и ближе
 //       к референсу, чем прошлая попытка. (5) HP/Energy/XP теперь показывают числа "значение/макс".
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Home as HomeIcon, Sword, Target, Activity, ScrollText,
   Dumbbell, ShieldCheck, BookOpen, Crosshair, Wallet, Briefcase,
@@ -137,7 +137,8 @@ import {
 // 14.1  Home visual: новый фон комнаты, полный рост персонажа (чёрное худи), левое меню с подписями, меньше виньетки.
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
-const APP_VERSION = '14.4';
+// 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
+const APP_VERSION = '14.5';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -159,6 +160,224 @@ const COLORS = {
   orangeSoft: 'rgba(255,138,76,0.16)',
   green: '#4ADE80',
 };
+
+// ===================== FEEDBACK SYSTEM (motion / sfx / haptic / vfx) =====================
+const FEEDBACK_STORAGE = 'liferpg_feedback_v1';
+function loadFeedbackPrefs() {
+  try { return { sfxOn: true, volume: 0.7, batterySaver: false, ...JSON.parse(localStorage.getItem(FEEDBACK_STORAGE) || '{}') }; }
+  catch { return { sfxOn: true, volume: 0.7, batterySaver: false }; }
+}
+let FEEDBACK_PREFS = loadFeedbackPrefs();
+function saveFeedbackPrefs(p) {
+  FEEDBACK_PREFS = { ...FEEDBACK_PREFS, ...p };
+  try { localStorage.setItem(FEEDBACK_STORAGE, JSON.stringify(FEEDBACK_PREFS)); } catch {}
+}
+
+const FeedbackBus = {
+  listeners: new Set(),
+  on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+  emit(event) { this.listeners.forEach(fn => { try { fn(event); } catch {} }); },
+};
+
+const HapticManager = {
+  fire(kind = 'light') {
+    try {
+      const tg = window.Telegram?.WebApp?.HapticFeedback;
+      if (tg) {
+        if (kind === 'success') tg.notificationOccurred('success');
+        else if (kind === 'error') tg.notificationOccurred('error');
+        else if (kind === 'heavy' || kind === 'medium') tg.impactOccurred(kind === 'heavy' ? 'heavy' : 'medium');
+        else tg.impactOccurred('light');
+        return;
+      }
+      if (navigator.vibrate) {
+        const map = { light: 8, medium: 18, heavy: 32, success: [10, 40, 18], error: [30, 40, 30], legendary: [20, 40, 20, 40, 40] };
+        navigator.vibrate(map[kind] || 8);
+      }
+    } catch {}
+  },
+};
+
+const SoundManager = {
+  ctx: null,
+  ensure() {
+    if (this.ctx) return this.ctx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    this.ctx = new AC();
+    return this.ctx;
+  },
+  setVolume(v) { saveFeedbackPrefs({ volume: Math.max(0, Math.min(1, v)) }); },
+  mute() { saveFeedbackPrefs({ sfxOn: false }); },
+  unmute() { saveFeedbackPrefs({ sfxOn: true }); },
+  playSound(name) {
+    if (!FEEDBACK_PREFS.sfxOn) return;
+    const ctx = this.ensure();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const now = ctx.currentTime;
+    const vol = FEEDBACK_PREFS.volume * 0.18;
+    const beep = (freq, dur, type = 'sine', gain = 1, delay = 0) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, now + delay);
+      g.gain.setValueAtTime(0.0001, now + delay);
+      g.gain.exponentialRampToValueAtTime(vol * gain, now + delay + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + delay + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(now + delay); o.stop(now + delay + dur + 0.02);
+    };
+    const table = {
+      ui_click: () => beep(420, 0.05, 'triangle', 0.6),
+      ui_back: () => beep(280, 0.06, 'triangle', 0.5),
+      ui_open: () => { beep(360, 0.06, 'sine', 0.5); beep(520, 0.07, 'sine', 0.4, 0.05); },
+      ui_close: () => { beep(520, 0.05, 'sine', 0.4); beep(320, 0.07, 'sine', 0.35, 0.05); },
+      success: () => { beep(520, 0.08, 'sine', 0.7); beep(780, 0.12, 'sine', 0.55, 0.07); },
+      error: () => beep(170, 0.16, 'square', 0.45),
+      locked: () => beep(140, 0.12, 'square', 0.35),
+      xp_gain: () => { beep(660, 0.07, 'sine', 0.55); beep(880, 0.1, 'sine', 0.4, 0.06); },
+      quest_complete: () => { beep(480, 0.08, 'triangle', 0.6); beep(720, 0.1, 'sine', 0.5, 0.08); beep(960, 0.12, 'sine', 0.4, 0.16); },
+      coin_gain: () => { beep(880, 0.05, 'square', 0.28); beep(1170, 0.08, 'square', 0.22, 0.05); },
+      purchase: () => { beep(400, 0.06, 'triangle', 0.45); beep(600, 0.1, 'sine', 0.4, 0.06); },
+      achievement: () => { beep(392, 0.1, 'sine', 0.5); beep(523, 0.12, 'sine', 0.5, 0.1); beep(659, 0.16, 'sine', 0.55, 0.2); },
+      level_up: () => { beep(330, 0.1, 'sawtooth', 0.28); beep(440, 0.12, 'sine', 0.45, 0.1); beep(660, 0.16, 'sine', 0.5, 0.22); beep(880, 0.2, 'sine', 0.4, 0.36); },
+      item_common: () => beep(500, 0.08, 'sine', 0.35),
+      item_rare: () => { beep(500, 0.08, 'sine', 0.4); beep(750, 0.1, 'sine', 0.35, 0.07); },
+      item_epic: () => { beep(420, 0.1, 'triangle', 0.4); beep(640, 0.12, 'sine', 0.4, 0.08); beep(860, 0.14, 'sine', 0.35, 0.16); },
+      item_legendary: () => { beep(300, 0.12, 'sawtooth', 0.22); beep(500, 0.14, 'sine', 0.4, 0.1); beep(800, 0.18, 'sine', 0.4, 0.24); },
+    };
+    (table[name] || table.ui_click)();
+  },
+};
+
+const EVENT_MAP = {
+  BUTTON_PRESS: { sound: 'ui_click', haptic: 'light' },
+  MENU_OPEN: { sound: 'ui_open', haptic: 'light' },
+  MENU_CLOSE: { sound: 'ui_close', haptic: 'light' },
+  QUEST_COMPLETE: { sound: 'quest_complete', haptic: 'medium', vfx: 'quest' },
+  XP_GAIN: { sound: 'xp_gain', haptic: 'light', vfx: 'xp' },
+  COIN_GAIN: { sound: 'coin_gain', haptic: 'light', vfx: 'coins' },
+  LEVEL_UP: { sound: 'level_up', haptic: 'success', vfx: 'level' },
+  ACHIEVEMENT_UNLOCK: { sound: 'achievement', haptic: 'success', vfx: 'achieve' },
+  ITEM_UNLOCK: { sound: 'item_rare', haptic: 'medium', vfx: 'item' },
+  ERROR: { sound: 'error', haptic: 'error', vfx: 'error' },
+  LOCKED: { sound: 'locked', haptic: 'light', vfx: 'error' },
+  PURCHASE: { sound: 'purchase', haptic: 'medium', vfx: 'coins' },
+};
+
+function gameFeedback(type, payload = {}) {
+  const cfg = EVENT_MAP[type] || EVENT_MAP.BUTTON_PRESS;
+  SoundManager.playSound(cfg.sound);
+  HapticManager.fire(cfg.haptic);
+  FeedbackBus.emit({ type, vfx: cfg.vfx, payload, at: Date.now() });
+}
+
+function FeedbackLayer() {
+  const [toasts, setToasts] = useState([]);
+  const [flash, setFlash] = useState(null);
+  const canvasRef = useRef(null);
+  const parts = useRef([]);
+  const raf = useRef(0);
+
+  useEffect(() => {
+    const un = FeedbackBus.on(ev => {
+      if (ev.vfx === 'error') setFlash({ c: 'rgba(255,80,80,0.18)', id: ev.at });
+      if (ev.vfx === 'level') setFlash({ c: 'rgba(108,99,255,0.22)', id: ev.at });
+      if (ev.vfx === 'achieve') setFlash({ c: 'rgba(246,196,69,0.16)', id: ev.at });
+      const label = ev.type === 'QUEST_COMPLETE' ? `+${ev.payload.xp || 0} XP`
+        : ev.type === 'XP_GAIN' ? `+${ev.payload.xp || 0} XP`
+        : ev.type === 'COIN_GAIN' ? `+${ev.payload.coins || 0}`
+        : ev.type === 'LEVEL_UP' ? `LEVEL ${ev.payload.level || ''} UP`
+        : ev.type === 'ACHIEVEMENT_UNLOCK' ? (ev.payload.title || 'Достижение')
+        : null;
+      if (label) setToasts(t => [...t.slice(-4), { id: ev.at + Math.random(), label, kind: ev.vfx }]);
+      const n = FEEDBACK_PREFS.batterySaver ? 8 : (ev.vfx === 'level' ? 36 : ev.vfx === 'quest' ? 22 : 14);
+      const col = ev.vfx === 'coins' ? '#F6C445' : ev.vfx === 'level' ? '#C7C4FF' : ev.vfx === 'error' ? '#FF6B6B' : '#00E5FF';
+      const cx = window.innerWidth / 2, cy = window.innerHeight * 0.42;
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 0.8 + Math.random() * 2.4;
+        parts.current.push({ x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1.2, life: 1, size: 1.5 + Math.random() * 2.5, col });
+      }
+    });
+    const tick = () => {
+      const c = canvasRef.current;
+      if (c) {
+        const ctx = c.getContext('2d');
+        if (c.width !== window.innerWidth || c.height !== window.innerHeight) {
+          c.width = window.innerWidth; c.height = window.innerHeight;
+        }
+        ctx.clearRect(0, 0, c.width, c.height);
+        parts.current = parts.current.filter(p => p.life > 0);
+        parts.current.forEach(p => {
+          p.x += p.vx; p.y += p.vy; p.vy += 0.04; p.life -= 0.018;
+          ctx.globalAlpha = Math.max(0, p.life);
+          ctx.fillStyle = p.col;
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+      }
+      raf.current = requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+    return () => { un(); cancelAnimationFrame(raf.current); };
+  }, []);
+
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 280);
+    return () => clearTimeout(t);
+  }, [flash]);
+
+  useEffect(() => {
+    if (!toasts.length) return;
+    const t = setTimeout(() => setToasts(s => s.slice(1)), 900);
+    return () => clearTimeout(t);
+  }, [toasts]);
+
+  return (
+    <>
+      <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 80 }} />
+      {flash && <div style={{ position: 'fixed', inset: 0, background: flash.c, pointerEvents: 'none', zIndex: 79 }} />}
+      <div style={{ position: 'fixed', left: 0, right: 0, top: '18%', pointerEvents: 'none', zIndex: 81, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{
+            padding: '6px 12px', borderRadius: 999, fontSize: t.kind === 'level' ? 16 : 13, fontWeight: 800,
+            color: t.kind === 'coins' ? '#F6C445' : t.kind === 'level' ? '#fff' : '#7CFFC4',
+            background: 'rgba(10,14,22,0.55)', border: '1px solid rgba(108,99,255,0.35)',
+            animation: 'lrpg-float-up 0.9s ease-out both',
+          }}>{t.label}</div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function FeedbackSettingsCard() {
+  const [sfxOn, setSfxOn] = useState(FEEDBACK_PREFS.sfxOn);
+  const [volume, setVolume] = useState(Math.round(FEEDBACK_PREFS.volume * 100));
+  const [saver, setSaver] = useState(FEEDBACK_PREFS.batterySaver);
+  return (
+    <Card>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Sound Effects</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 12 }}>SFX</span>
+        <button className="lrpg-btn" onClick={() => { const n = !sfxOn; setSfxOn(n); n ? SoundManager.unmute() : SoundManager.mute(); gameFeedback('BUTTON_PRESS'); }} style={{
+          background: sfxOn ? COLORS.violet : COLORS.bgCardAlt, color: '#fff', borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
+        }}>{sfxOn ? 'ON' : 'OFF'}</button>
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>Громкость {volume}%</div>
+      <input type="range" min={0} max={100} value={volume} onChange={e => { const v = Number(e.target.value); setVolume(v); SoundManager.setVolume(v / 100); }} style={{ width: '100%' }} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+        <span style={{ fontSize: 12 }}>Battery saver</span>
+        <button className="lrpg-btn" onClick={() => { const n = !saver; setSaver(n); saveFeedbackPrefs({ batterySaver: n }); gameFeedback('BUTTON_PRESS'); }} style={{
+          background: saver ? COLORS.teal : COLORS.bgCardAlt, color: saver ? '#042018' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
+        }}>{saver ? 'ON' : 'OFF'}</button>
+      </div>
+    </Card>
+  );
+}
+
 
 // ===================== АРТ: спрайты персонажа (8 типов телосложения) и фон комнаты =====================
 // Сгенерированы отдельно и встроены как data URI — не требуют внешнего хостинга.
@@ -2255,12 +2474,16 @@ export default function LifeRPG() {
       if (leveledUp) {
         chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${character.level} уровня.`);
         setLevelUpFlash(character.level);
+        gameFeedback('LEVEL_UP', { level: character.level });
         setTimeout(() => setLevelUpFlash(null), 3200);
       }
       const ledger1 = applyCoinLedger(prev, 'earn', awardedCoins, 'quest', q.title, q.id);
       const ledger2 = bonusCoins > 0 ? applyCoinLedger({ ...prev, ...ledger1 }, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : ledger1;
       return { ...prev, ...ledger2, character, stats, quests, chronicle };
     });
+    gameFeedback('QUEST_COMPLETE', { xp: Math.max(1, Math.round(q.xp)), coins: Math.max(0, Math.round(q.coins)) });
+    if (q.xp) gameFeedback('XP_GAIN', { xp: Math.max(1, Math.round(q.xp)) });
+    if (q.coins) gameFeedback('COIN_GAIN', { coins: Math.max(0, Math.round(q.coins)) });
   }
 
   function hitBossQuest(id, amount) {
@@ -2581,6 +2804,7 @@ export default function LifeRPG() {
       }
       return { ...prev, habits, stats, chronicle };
     });
+    gameFeedback('QUEST_COMPLETE', { xp: 10, coins: 0 });
   }
 
   function toggleRecoveryMode() {
@@ -3237,8 +3461,10 @@ useEffect(() => {
         .lrpg-display { font-family: 'Cinzel', serif; letter-spacing: 0.02em; }
         .lrpg-root ::-webkit-scrollbar { width: 6px; height: 6px; }
         .lrpg-root ::-webkit-scrollbar-thumb { background: var(--gold); opacity: 0.4; border-radius: 3px; }
-        .lrpg-btn { cursor: pointer; border: none; font-family: inherit; }
-        .lrpg-btn:active { transform: translateY(1px); }
+        .lrpg-btn { cursor: pointer; border: none; font-family: inherit; transition: transform .12s ease, filter .12s ease, box-shadow .12s ease; }
+        .lrpg-btn:active { transform: scale(0.96); filter: brightness(1.12); }
+        @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
+        @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
         .lrpg-cta {
           border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 800; color: #fff;
           background: linear-gradient(180deg, #8B85FF, #6C63FF);
@@ -3507,6 +3733,7 @@ useEffect(() => {
       </>
       )}
 
+      <FeedbackLayer />
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40, display: 'flex',
         background: 'linear-gradient(180deg, rgba(12,16,26,0.55), rgba(8,11,18,0.96))',
@@ -3576,7 +3803,7 @@ function PlayerCharacter({ heightCm, weight }) {
     <div style={{
       position: 'relative', height: '100%', width: '100%',
       display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      transform: `scale(${Math.min(1.05, scale)})`, transformOrigin: 'bottom center',
+      transform: `scale(${Math.min(1.05, scale)})`, transformOrigin: 'bottom center', animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-breathe 3.6s ease-in-out infinite',
       pointerEvents: 'none',
     }}>
       <img src={src} alt="Персонаж" draggable={false} style={{
@@ -6879,6 +7106,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
         <input className="lrpg-input" type="number" min={0} placeholder="Часов в неделю" value={availableHoursPerWeek || ''} onChange={e => setAvailableHours(Number(e.target.value) || null)} />
       </Card>
 
+      <FeedbackSettingsCard />
       <Card>
         <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Интеграции</div>
         {['Apple Health / шаги', 'Экранное время', 'Календарь'].map(x => (
