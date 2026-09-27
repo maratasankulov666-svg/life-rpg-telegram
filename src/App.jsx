@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.8.1';
+const APP_VERSION = '14.9.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1553,6 +1553,7 @@ function defaultState() {
     statsHistory: [],
     lastStatsSnapshotDate: null,
     nextOrder: 1,
+    council: emptyCouncil(),
     ai: { order: AI_DEFAULT_ORDER, enabled: Object.fromEntries(AI_PROVIDERS_META.map(p => [p.id, true])) },
   };
 }
@@ -2257,6 +2258,211 @@ function ProfileRow({ icon: Icon, label, onClick }) {
   );
 }
 
+const COUNCIL_NPCS = [
+  { id: 'kaylen', name: 'Кайлен', role: 'Директор штаба', vibe: 'сухой, требовательный, малословно, слегка архаичная речь', domain: 'приоритеты дня, кому дать слово, что НЕ делать' },
+  { id: 'brum', name: 'Брум', role: 'Тренер', vibe: 'ворчун. Ненавидит отговорки и «потом». Говорит коротко и грубо, но по делу', domain: 'сон, энергия, тренировка, вес, Recovery Mode' },
+  { id: 'kasper', name: 'Каспер', role: 'Финансист', vibe: 'ленивый циник. Делает вид, что ему лень, но цифры долгов и кэша считает точно', domain: 'кэш, долги-боссы, траты, такси, монеты как игра — не путать с реалом' },
+  { id: 'nori', name: 'Нори', role: 'Продюсер', vibe: 'на приколе, лёгкий троллинг, но YouTube-пайплайн держит жёстко', domain: 'идеи, сценарий, публикация, без выдуманной аналитики' },
+  { id: 'mira', name: 'Мира', role: 'Стратег целей', vibe: 'тревожная перфекционистка. Боится расползшихся дедлайнов', domain: 'цели, сроки, конфликт задач, доступные часы' },
+  { id: 'tio', name: 'Тио', role: 'Хранитель привычек', vibe: 'мягкий, чуть пассивно-агрессивный. Помнит каждый сорванный стрик', domain: 'привычки, стрики, не ломать Recovery' },
+];
+
+function emptyNpcBond(id) {
+  return { id, affinity: 40, mood: 'neutral', notes: [], lastSpoke: null };
+}
+function emptyCouncil() {
+  return {
+    lastMorningDate: null,
+    lastNoonDate: null,
+    meetings: [],
+    pending: null,
+    grants: { achievements: [], titles: [], gear: [], cosmetics: [] },
+    facts: [],
+    bonds: Object.fromEntries((typeof COUNCIL_NPCS !== 'undefined' ? COUNCIL_NPCS : []).map(n => [n.id, emptyNpcBond(n.id)])),
+  };
+}
+
+function normalizeCouncil(c) {
+  const d = emptyCouncil();
+  if (!c || typeof c !== 'object') return d;
+  const bonds = { ...d.bonds, ...(c.bonds || {}) };
+  (typeof COUNCIL_NPCS !== 'undefined' ? COUNCIL_NPCS : []).forEach(n => {
+    if (!bonds[n.id]) bonds[n.id] = emptyNpcBond(n.id);
+  });
+  return {
+    ...d,
+    ...c,
+    meetings: Array.isArray(c.meetings) ? c.meetings.slice(0, 30) : [],
+    grants: { ...d.grants, ...(c.grants || {}) },
+    pending: c.pending || null,
+    facts: Array.isArray(c.facts) ? c.facts.slice(0, 80) : [],
+    bonds,
+  };
+}
+
+function councilSlotNow() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return 'morning';
+  if (h >= 12 && h < 17) return 'noon';
+  return 'evening';
+}
+
+function councilDue(council) {
+  const c = normalizeCouncil(council);
+  const today = todayStr();
+  const slot = councilSlotNow();
+  if (slot === 'morning' && c.lastMorningDate !== today) return 'morning';
+  if (slot === 'noon' && c.lastNoonDate !== today) return 'noon';
+  return null;
+}
+
+function councilStateBrief(state) {
+  const w = latestWeight(state.body);
+  const yt = normalizeYoutube(state.youtube || { channels: [] });
+  const debts = (state.finance?.debts || []).filter(d => d.remaining > 0).length;
+  const activeQ = (state.quests || []).filter(q => q.status === 'active').slice(0, 5).map(q => q.title);
+  const goals = (state.goals || []).slice(0, 3).map(g => `${g.title} ${g.progress || 0}%`);
+  const habits = (state.habits || []).slice(0, 4).map(h => `${h.title} стрик ${h.streakCurrent || 0}`);
+  return {
+    name: state.character?.name, level: state.character?.level, title: state.character?.title,
+    coins: state.coins, energyHint: 'смотри чекин',
+    height: state.body?.heightCm, weight: w, recovery: !!state.recoveryMode,
+    activeQuests: activeQ, goals, habits,
+    cash: state.finance?.cashBalance, openDebts: debts,
+    ytChannels: yt.channels.length, ytIdeas: yt.ideas.length, ytPipeline: yt.contentItems.filter(i => i.status !== 'PUBLISHED').length,
+  };
+}
+
+function parseCouncilJson(text) {
+  const cleaned = String(text || '').replace(/```json|```/g, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('no JSON');
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, setCharacterTitle }) {
+  const council = normalizeCouncil(state.council);
+  const [topic, setTopic] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const due = councilDue(state.council);
+  const last = council.meetings[0];
+  const pending = council.pending;
+
+  async function go(slot, extraTopic) {
+    setBusy(true); setErr(null);
+    try { await runCouncil(slot, extraTopic || topic); setTopic(''); }
+    catch (e) { setErr(e.message || String(e)); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <ScreenHeader title="Штаб Кайлена" icon={Users} />
+      <HudCard style={{ padding: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 800 }}>Директор — Мастер Кайлен</div>
+        <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>
+          Совет сам собирается утром (5–12) и в обед (12–17). Можно собрать вне очереди и кинуть тему — каждый говорит из своей роли и помнит прошлые заседания.
+        </div>
+        {due && <div style={{ fontSize: 11, color: COLORS.teal, marginTop: 6 }}>Сейчас слот: {due === 'morning' ? 'утренний' : 'обеденный'} совет.</div>}
+      </HudCard>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {COUNCIL_NPCS.map(n => {
+          const b = council.bonds[n.id] || emptyNpcBond(n.id);
+          return (
+            <span key={n.id} style={{ fontSize: 10, padding: '4px 8px', borderRadius: 999, background: 'rgba(108,99,255,0.12)', color: COLORS.text }}>
+              {n.name} · {n.role} · {b.affinity}
+            </span>
+          );
+        })}
+      </div>
+      {council.facts[0] && (
+        <div style={{ fontSize: 11, color: COLORS.textMuted }}>Штаб помнит: {council.facts[0].text}</div>
+      )}
+
+      <input className="lrpg-input" placeholder="Тема совета (необязательно)" value={topic} onChange={e => setTopic(e.target.value)} />
+      <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={() => go(due || 'topic', topic)}>
+        {busy ? 'Штаб собирается…' : due ? 'Начать положенный совет' : 'Собрать внеочередной совет'}
+      </button>
+      {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
+
+      {pending && (
+        <HudCard style={{ padding: 12, border: `1px solid ${COLORS.gold}55` }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold }}>Решения ждут подтверждения</div>
+          <div style={{ fontSize: 12, marginTop: 6, whiteSpace: 'pre-wrap' }}>{pending.director}</div>
+          {(pending.actions || []).length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {(pending.actions || []).map((a, i) => (
+                <div key={i} style={{ fontSize: 11, color: COLORS.textMuted }}>• {a.type}: {a.label || a.title}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button className="lrpg-btn lrpg-cta" onClick={acceptCouncil}>Принять</button>
+            <button className="lrpg-btn" onClick={dismissCouncil} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Отклонить дары</button>
+          </div>
+        </HudCard>
+      )}
+
+      {last && (
+        <Card>
+          <div style={{ fontSize: 10, color: COLORS.textMuted }}>{new Date(last.ts).toLocaleString('ru-RU')} · {last.slot}</div>
+          {last.topic && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>Тема: {last.topic}</div>}
+          <div style={{ fontSize: 12, marginTop: 6, whiteSpace: 'pre-wrap' }}>{last.director}</div>
+          {(last.lines || []).map((ln, i) => {
+            const npc = COUNCIL_NPCS.find(n => n.id === ln.id) || { name: ln.id };
+            return (
+              <div key={i} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${COLORS.border}` }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.violet }}>{npc.name}</div>
+                <div style={{ fontSize: 12 }}>{ln.text}</div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {council.meetings.length > 1 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 6 }}>Память штаба</div>
+          {council.meetings.slice(1, 8).map(m => (
+            <div key={m.ts} style={{ fontSize: 11, color: COLORS.textMuted, padding: '4px 0', borderBottom: `1px solid ${COLORS.border}` }}>
+              {new Date(m.ts).toLocaleDateString('ru-RU')} · {m.slot}: {m.memory || m.director?.slice(0, 80)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(council.grants.achievements.length + council.grants.titles.length + council.grants.gear.length) > 0 && (
+        <Card>
+          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Дары штаба</div>
+          {council.grants.titles.map(t => (
+            <div key={t.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+              <span>Титул: {t.label}</span>
+              <button className="lrpg-btn" onClick={() => setCharacterTitle(t.label)} style={{ background: COLORS.violetSoft, borderRadius: 8, padding: '2px 8px', fontSize: 10 }}>Надеть</button>
+            </div>
+          ))}
+          {council.grants.achievements.map(a => <div key={a.id} style={{ fontSize: 12 }}>Ачивка: {a.label}</div>)}
+          {council.grants.gear.map(g => <div key={g.id} style={{ fontSize: 12 }}>Шмот: {g.label} ({g.slot})</div>)}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+const COUNCIL_SYSTEM = `Ты секретарь штаба Life RPG. Директор — Мастер Кайлен. Отвечай ТОЛЬКО JSON без markdown.
+Формат:
+{"director":"итог Кайлена 1-3 предложения","lines":[{"id":"brum","text":"..."}],"actions":[{"type":"achievement|title|gear|cosmetic|quest","label":"коротко","desc":"","rarity":"Common|Rare","slot":"clothes|weapon|accessory"}],"memory":"1 фраза, что штаб должен помнить"}
+Правила:
+- lines: выступите Кайлен (id kaylen) и 3-5 других NPC из списка. Каждый говорит СВОИМ характером и ТОЛЬКО про свою область. Не повторяйте друг друга.
+- Не выдумывайте метрики, которых нет во входе.
+- actions необязательны и редки. Максимум 3. Ачивка/титул/шмот — только если игрок реально сделал что-то достойное в данных, не за «потенциал».
+- quest в actions — один маленький квест на сегодня, если дыра очевидна.
+- Помните прошлые заседания из блока ПАМЯТЬ: ссылайтесь на вчера/неделю, если это уместно.
+- Язык русский, коротко.`;
+
+
 function ProfileHub({
   state, energy, xpNeed, setTab, setSubTab, openProfile,
 }) {
@@ -2320,6 +2526,7 @@ function ProfileHub({
         <ProfileRow icon={SettingsIcon} label="Основные" onClick={() => openProfile('settings')} />
         <ProfileRow icon={Save} label="Сохранение" onClick={() => openProfile('settings')} />
         <ProfileRow icon={ScrollText} label="Хроника" onClick={() => openProfile('chronicle')} />
+        <ProfileRow icon={Users} label="Штаб Кайлена" onClick={() => openProfile('council')} />
         <ProfileRow icon={MessageCircle} label="Наставник" onClick={() => openProfile('mentor')} />
         <ProfileRow icon={HeartHandshake} label="События жизни" onClick={() => openProfile('events')} />
       </div>
@@ -2332,6 +2539,7 @@ function ProfileHub({
 }
 
 
+/* council defs injected below */
 export default function LifeRPG() {
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -2397,6 +2605,7 @@ export default function LifeRPG() {
       if (typeof s.coinsSpentAllTime !== 'number') s.coinsSpentAllTime = 0;
       if (!Array.isArray(s.coinTransactions)) s.coinTransactions = [];
       if (!s.cosmetics) s.cosmetics = { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } };
+      s.council = normalizeCouncil(s.council);
       // Календарь "дней в игре": отмечаем сегодняшний день как сыгранный (без дублей) и
       // фиксируем дату первого запуска, если это самое первое сохранение.
       if (!Array.isArray(s.playLog)) s.playLog = [];
@@ -3325,6 +3534,123 @@ function addYouTubeQuest(ch, metric, delta) {
     });
   }
 
+  function applyCouncilMemory(c, data, meeting, slot, today) {
+    const bonds = { ...c.bonds };
+    (data.bonds || []).forEach(b => {
+      if (!b || !bonds[b.id]) return;
+      const cur = bonds[b.id];
+      const nextAff = Math.max(0, Math.min(100, (cur.affinity || 40) + Number(b.affinityDelta || 0)));
+      const notes = [...(cur.notes || [])];
+      if (b.note) notes.unshift({ ts: Date.now(), text: String(b.note).slice(0, 160) });
+      bonds[b.id] = { ...cur, affinity: nextAff, mood: b.mood || cur.mood, lastSpoke: Date.now(), notes: notes.slice(0, 16) };
+    });
+    meeting.lines.forEach(ln => {
+      if (bonds[ln.id]) bonds[ln.id] = { ...bonds[ln.id], lastSpoke: Date.now() };
+    });
+    const extraFacts = (data.facts || []).map(f => ({ ts: Date.now(), text: String(f).slice(0, 180), who: 'council' }));
+    if (meeting.memory) extraFacts.unshift({ ts: Date.now(), text: meeting.memory, who: 'kaylen' });
+    return {
+      ...c,
+      lastMorningDate: slot === 'morning' ? today : c.lastMorningDate,
+      lastNoonDate: slot === 'noon' ? today : c.lastNoonDate,
+      pending: meeting,
+      meetings: [meeting, ...c.meetings].slice(0, 30),
+      facts: [...extraFacts, ...(c.facts || [])].slice(0, 80),
+      bonds,
+    };
+  }
+
+  async function runCouncil(slot, topic) {
+    const prev = state;
+    const council = normalizeCouncil(prev.council);
+    const mem = council.meetings.slice(0, 12).map(m => ({
+      date: new Date(m.ts).toISOString().slice(0, 10), slot: m.slot, topic: m.topic, memory: m.memory, director: (m.director || '').slice(0, 160),
+    }));
+    const userMsg = JSON.stringify({
+      slot, topic: topic || null, now: new Date().toISOString(),
+      brief: councilStateBrief(prev),
+      energy,
+      память_заседаний: mem,
+      факты_штаба: (council.facts || []).slice(0, 24),
+      связи: Object.values(council.bonds || {}),
+      npc: COUNCIL_NPCS,
+    });
+    const raw = await callClaudeAPIWithRetry(COUNCIL_SYSTEM, [{ role: 'user', content: userMsg }], 2, { taskType: 'COUNCIL', jsonMode: true });
+    let data;
+    try { data = parseCouncilJson(raw); }
+    catch { data = { director: raw.slice(0, 400), lines: [], actions: [], memory: topic || slot }; }
+    const meeting = {
+      ts: Date.now(), slot, topic: topic || null,
+      director: String(data.director || '').slice(0, 500),
+      lines: Array.isArray(data.lines) ? data.lines.slice(0, 8).map(l => ({ id: l.id, text: String(l.text || '').slice(0, 400) })) : [],
+      actions: Array.isArray(data.actions) ? data.actions.slice(0, 3) : [],
+      memory: String(data.memory || data.director || '').slice(0, 220),
+    };
+    const today = todayStr();
+    setState(s => {
+      const c = normalizeCouncil(s.council);
+      return {
+        ...s,
+        council: applyCouncilMemory(c, data, meeting, slot, today),
+        chronicle: pushChronicle(s.chronicle, 'SYSTEM', `⚔️ Штаб Кайлена (${slot}): ${(meeting.director || 'совет состоялся').slice(0, 120)}`),
+      };
+    });
+    gameFeedback('QUEST_COMPLETE', { xp: 5 });
+  }
+
+  function dismissCouncil() {
+    setState(prev => ({ ...prev, council: { ...normalizeCouncil(prev.council), pending: null } }));
+  }
+
+  function acceptCouncil() {
+    setState(prev => {
+      const c = normalizeCouncil(prev.council);
+      const pending = c.pending;
+      if (!pending) return prev;
+      const grants = { ...c.grants };
+      let character = prev.character;
+      let quests = prev.quests;
+      let nextOrder = prev.nextOrder;
+      let chronicle = prev.chronicle;
+      let unlockedAchievements = [...prev.unlockedAchievements];
+      let xpGain = 8;
+      (pending.actions || []).forEach(a => {
+        const type = a.type;
+        const label = String(a.label || a.title || '').slice(0, 60);
+        if (!label) return;
+        if (type === 'achievement') {
+          const id = 'c_' + uid();
+          grants.achievements = [...grants.achievements, { id, label, desc: String(a.desc || '').slice(0, 140), rarity: a.rarity || 'Rare' }];
+          unlockedAchievements.push(id);
+          chronicle = pushChronicle(chronicle, 'SYSTEM', `🏆 Штаб открыл ачивку: ${label}`);
+        } else if (type === 'title') {
+          const id = 't_' + uid();
+          grants.titles = [...grants.titles, { id, label }];
+          chronicle = pushChronicle(chronicle, 'SYSTEM', `🎖️ Штаб выдал титул: ${label}`);
+        } else if (type === 'gear' || type === 'cosmetic') {
+          const id = 'g_' + uid();
+          grants.gear = [...grants.gear, { id, label, slot: a.slot || 'clothes', rarity: a.rarity || 'Common' }];
+          chronicle = pushChronicle(chronicle, 'SYSTEM', `🎒 Штаб выдал шмот: ${label}`);
+        } else if (type === 'quest') {
+          quests = [...quests, {
+            id: uid(), title: label, type: 'Daily', difficulty: 'Easy', xp: 25, coins: 10,
+            stat: 'discipline', status: 'active', deadline: null, order: nextOrder, createdAt: Date.now(),
+          }];
+          nextOrder += 1;
+          chronicle = pushChronicle(chronicle, 'QUEST_CREATED', `Штаб поставил квест: ${label}`);
+        }
+      });
+      const applied = applyXP(character, xpGain);
+      character = applied.character;
+      if (applied.leveledUp) gameFeedback('LEVEL_UP', { level: character.level });
+      else gameFeedback('ACHIEVEMENT_UNLOCK', { title: 'Штаб' });
+      return {
+        ...prev, character, quests, nextOrder, chronicle, unlockedAchievements,
+        council: { ...c, pending: null, grants, meetings: c.meetings },
+      };
+    });
+  }
+
   function setBodyProfile(patch) {
     setState(prev => ({ ...prev, body: { ...prev.body, ...patch } }));
   }
@@ -3789,7 +4115,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'inventory' && (
-                <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} />
+                <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} councilGear={(state.council && state.council.grants && state.council.grants.gear) || []} />
               )}
               {subTab.profile === 'shop' && (
                 <ShopTab
@@ -3828,6 +4154,9 @@ useEffect(() => {
                   addManualChronicleEntry={addManualChronicleEntry}
                   editChronicleEntry={editChronicleEntry} deleteChronicleEntry={deleteChronicleEntry}
                 />
+              )}
+              {subTab.profile === 'council' && (
+                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} setCharacterTitle={setCharacterTitle} />
               )}
               {subTab.profile === 'mentor' && <MentorTab state={state} />}
               {subTab.profile === 'events' && (
@@ -6560,6 +6889,9 @@ function WorldTab({ stats, unlockedAchievements, state }) {
           <Trophy size={15} color={COLORS.gold} /> Achievements ({unlockedAchievements.length}/{ACHIEVEMENTS.length})
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {(state.council && state.council.grants && state.council.grants.achievements || []).map(a => (
+            <Card key={a.id}><div style={{ fontWeight: 700, fontSize: 13 }}>{a.label}</div><div style={{ fontSize: 11, color: COLORS.textMuted }}>{a.desc}</div><Tag color={RARITY_COLOR[a.rarity] || COLORS.gold}>{a.rarity || 'Rare'}</Tag></Card>
+          ))}
           {ACHIEVEMENTS.map(a => {
             const unlocked = unlockedAchievements.includes(a.id);
             const color = RARITY_COLOR[a.rarity];
@@ -8034,9 +8366,15 @@ function CalendarTab({ playLog, firstOpenedAt }) {
   );
 }
 
-function InventoryTab({ stats, unlockedSets }) {
+function InventoryTab({ stats, unlockedSets, councilGear = [] }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {councilGear.length > 0 && (
+        <Card>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Шмот от штаба</div>
+          {councilGear.map(g => <div key={g.id} style={{ fontSize: 12, padding: '4px 0' }}>{g.label} · {g.slot} · {g.rarity || 'Common'}</div>)}
+        </Card>
+      )}
       <Card>
         <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.5, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <Backpack size={16} color={COLORS.violet} style={{ flexShrink: 0, marginTop: 1 }} />
