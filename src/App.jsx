@@ -133,8 +133,9 @@ import {
 //      Финансы, Гараж, YouTube, Магазин, Инвентарь, Настройки убраны из нижнего меню
 //      и живут внутри Профиля (Моя жизнь / Моё / Система). Home остаётся эталоном UI.
 //      Старые вкладки не удалены — перенесены внутрь новой карты.
+// 14.2  Home как референс: сцена на весь экран, панели поверх, персонаж меньше в центре.
 // 14.1  Home visual: новый фон комнаты, полный рост персонажа (чёрное худи), левое меню с подписями, меньше виньетки.
-const APP_VERSION = '14.1';
+const APP_VERSION = '14.2';
 
 const COLORS = {
   bg: '#0B0A12',
@@ -3553,36 +3554,44 @@ function PlayerCharacter({ heightCm, weight }) {
   const src = CHARACTER_SPRITE_LIST[idx];
   return (
     <div style={{
-      position: 'relative', height: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      transform: `scale(${scale})`, transformOrigin: 'bottom center',
+      position: 'relative', height: '100%', width: '100%',
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      transform: `scale(${Math.min(1.05, scale)})`, transformOrigin: 'bottom center',
+      pointerEvents: 'none',
     }}>
       <img src={src} alt="Персонаж" draggable={false} style={{
-        height: '92%', maxHeight: '92%', width: 'auto', objectFit: 'contain',
-        filter: 'drop-shadow(0 18px 18px rgba(0,0,0,0.55))',
+        height: '100%', width: 'auto', maxWidth: '72%', objectFit: 'contain', objectPosition: 'bottom center',
+        filter: 'drop-shadow(0 14px 16px rgba(0,0,0,0.55))',
         WebkitUserSelect: 'none', userSelect: 'none',
       }} />
     </div>
   );
 }
 
-function MiniHudBar({ icon: Icon, value, max = 100, color, showValue }) {
+function MiniHudBar({ icon: Icon, value, max = 100, colorFrom, colorTo, showValue }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-      <div className="lrpg-badge-icon" style={{ width: 14, height: 14, borderRadius: 5, flexShrink: 0 }}>
-        <Icon size={8} color={color} />
+      <Icon size={9} color={colorFrom} style={{ flexShrink: 0 }} />
+      <div style={{
+        flex: 1, height: 6, minWidth: 0, borderRadius: 99, overflow: 'hidden',
+        background: 'rgba(0,0,0,0.45)', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
+      }}>
+        <div style={{
+          width: `${pct}%`, height: '100%',
+          background: `linear-gradient(90deg, ${colorFrom}, ${colorTo})`,
+          boxShadow: `0 0 8px ${colorFrom}88`,
+        }} />
       </div>
-      <div className="lrpg-gauge-track" style={{ flex: 1, height: 6, minWidth: 0 }}>
-        <div className="lrpg-gauge-fill" style={{ width: `${pct}%`, background: `linear-gradient(180deg, ${color}, ${color}cc)`, boxShadow: `0 0 6px ${color}99` }} />
-        <div className="lrpg-gauge-ticks" />
-      </div>
-      {showValue && <span style={{ fontSize: 8, fontWeight: 700, color, flexShrink: 0, minWidth: 26, textAlign: 'right' }}>{Math.round(value)}/{max}</span>}
+      {showValue && (
+        <span style={{ fontSize: 8, fontWeight: 700, color: '#d8d2e6', flexShrink: 0, minWidth: 34, textAlign: 'right' }}>
+          {Math.round(value)}/{max}
+        </span>
+      )}
     </div>
   );
 }
 
-// Модалка поверх сцены — общий каркас для редактирования (имя/фото/титул, параметры тела, чек-ин),
-// чтобы функциональность осталась доступной без постоянного места в layout Home.
 function GameModal({ title, icon: Icon, color = COLORS.violet, onClose, children }) {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'flex-end' }}>
@@ -3618,26 +3627,35 @@ function ParamRow({ label, children }) {
 // ---- Верхняя строка HUD ----
 
 function CharacterStatusCard({ state, xpNeed, energy, hp, onOpenIdentity, onOpenCheckin }) {
-  const eLabel = energyLabel(energy);
   return (
-    <div className="lrpg-glass lrpg-chamfer" style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 13, padding: '7px 10px', minWidth: 0, flex: 1 }}>
-      <button className="lrpg-btn" onClick={onOpenIdentity} style={{
-        position: 'relative', width: 34, height: 34, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-        background: COLORS.bgCardAlt, border: `2px solid ${COLORS.gold}66`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    <button className="lrpg-btn lrpg-glass" onClick={onOpenIdentity} style={{
+      display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left',
+      borderRadius: 16, padding: '7px 10px 7px 7px', minWidth: 0, flex: 1,
+      border: '1px solid rgba(217,165,75,0.32)',
+      boxShadow: 'inset 0 0 0 1px rgba(217,165,75,0.12), 0 8px 18px rgba(0,0,0,0.35)',
+      background: 'linear-gradient(160deg, rgba(24,20,38,0.78), rgba(12,10,20,0.72))',
+    }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
+        border: '1.5px solid rgba(217,165,75,0.55)', background: '#1a1628',
       }}>
-        {state.character.photo ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Camera size={13} color={COLORS.textMuted} />}
-      </button>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div className="lrpg-display" onClick={onOpenIdentity} style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textShadow: `0 0 8px ${COLORS.gold}55` }}>
+        {state.character.photo
+          ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          : <User size={16} color={COLORS.textMuted} style={{ margin: 10 }} />}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="lrpg-display" style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           Lv.{state.character.level} {state.character.name}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
-          <MiniHudBar icon={HeartPulse} value={hp} max={100} color={COLORS.crimson} showValue />
-          <div onClick={onOpenCheckin}><MiniHudBar icon={Zap} value={energy} max={100} color={eLabel.color} showValue /></div>
-          <MiniHudBar icon={Sparkles} value={state.character.xp} max={xpNeed} color={COLORS.gold} showValue />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+          <MiniHudBar icon={HeartPulse} value={hp} max={100} colorFrom="#ff4d6d" colorTo="#ff9aa8" showValue />
+          <div onClick={e => { e.stopPropagation(); onOpenCheckin(); }}>
+            <MiniHudBar icon={Zap} value={energy} max={100} colorFrom="#3b82f6" colorTo="#67e8f9" showValue />
+          </div>
+          <MiniHudBar icon={Sparkles} value={state.character.xp} max={xpNeed} colorFrom="#f5c15d" colorTo="#ffe7a3" showValue />
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -3650,15 +3668,19 @@ function CoinsTimeBlock({ coins, dayNumber, onOpenShop }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, flexShrink: 0 }}>
       <button className="lrpg-btn" onClick={onOpenShop} style={{
-        display: 'flex', alignItems: 'center', gap: 5, borderRadius: 999, padding: '5px 6px 5px 5px',
-        background: 'radial-gradient(120% 160% at 25% 15%, rgba(255,224,160,0.35), transparent 55%), linear-gradient(160deg, #3a2c14, #1c1608)',
-        border: `1px solid ${COLORS.gold}55`, boxShadow: `inset 0 1px 0 rgba(255,255,255,0.18), 0 3px 10px rgba(0,0,0,0.4)`,
+        display: 'flex', alignItems: 'center', gap: 5, borderRadius: 999, padding: '5px 8px',
+        background: 'linear-gradient(160deg, #3a2c14, #1c1608)',
+        border: `1px solid ${COLORS.gold}66`,
       }}>
-        <span className="lrpg-badge-icon" style={{ width: 17, height: 17, borderRadius: 999 }}><CoinsIcon size={10} color={COLORS.gold} /></span>
-        <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.gold, textShadow: `0 0 8px ${COLORS.gold}55` }}>{coins}</span>
-        <Plus size={11} color={COLORS.textMuted} style={{ marginRight: 2 }} />
+        <CoinsIcon size={11} color={COLORS.gold} />
+        <span style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold }}>{coins}</span>
+        <Plus size={11} color={COLORS.textMuted} />
       </button>
-      <div className="lrpg-glass" style={{ borderRadius: 999, padding: '4px 10px', fontSize: 10, color: COLORS.textMuted, display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{
+        borderRadius: 999, padding: '4px 9px', fontSize: 10, color: COLORS.textMuted,
+        display: 'flex', alignItems: 'center', gap: 4,
+        background: 'rgba(12,10,20,0.62)', border: '1px solid rgba(255,255,255,0.08)',
+      }}>
         <Moon size={10} color={COLORS.violet} /> {timeStr} · День {dayNumber}
       </div>
     </div>
@@ -3677,27 +3699,36 @@ const GAME_MENU_ITEMS = [
   { key: 'settings', label: 'Настройки', icon: SettingsIcon, go: (setTab, setSubTab) => { setTab('profile'); setSubTab(s => ({ ...s, profile: 'settings' })); } },
 ];
 
+function HudCard({ children, style }) {
+  return (
+    <div style={{
+      borderRadius: 16,
+      background: 'linear-gradient(165deg, rgba(18,16,32,0.72), rgba(10,9,18,0.66))',
+      border: '1px solid rgba(217,165,75,0.38)',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.35)',
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      ...style,
+    }}>{children}</div>
+  );
+}
+
 function LeftGameMenu({ setTab, setSubTab, onOpenParams }) {
   return (
-    <div className="lrpg-glass lrpg-chamfer lrpg-chamfer-violet" style={{
-      width: 86, borderRadius: 16, padding: '8px 6px', display: 'flex', flexDirection: 'column', gap: 2,
-      alignItems: 'stretch', height: '100%', overflowY: 'auto',
-      border: '1px solid rgba(217,165,75,0.28)',
-    }}>
+    <HudCard style={{ width: 124, padding: '8px 8px 6px' }}>
       {GAME_MENU_ITEMS.map(item => {
         const Icon = item.icon;
         return (
           <button key={item.key} className="lrpg-btn" onClick={() => item.special === 'params' ? onOpenParams() : item.go(setTab, setSubTab)} style={{
-            display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 6, background: 'transparent', padding: '7px 4px', borderRadius: 10,
+            display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8,
+            background: 'transparent', padding: '6px 2px', borderRadius: 8, width: '100%',
           }}>
-            <span className="lrpg-badge-icon" style={{ width: 22, height: 22, borderRadius: 7, flexShrink: 0 }}>
-              <Icon size={12} color={COLORS.violet} />
-            </span>
-            <span style={{ fontSize: 9, fontWeight: 650, color: COLORS.text, lineHeight: 1.15, textAlign: 'left' }}>{item.label}</span>
+            <Icon size={13} color="#c4b4ff" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 10, fontWeight: 650, color: '#efeaf8', lineHeight: 1.1, textAlign: 'left' }}>{item.label}</span>
           </button>
         );
       })}
-    </div>
+    </HudCard>
   );
 }
 
@@ -3711,28 +3742,27 @@ function RightStatsPanel({ body, currentWeight, onEdit }) {
     { icon: Users, label: 'Пол', value: body.sex === 'female' ? 'Женский' : 'Мужской' },
   ];
   return (
-    <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 13, padding: '9px 10px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: COLORS.teal, textShadow: `0 0 8px ${COLORS.teal}44` }}>Параметры</span>
-        <button className="lrpg-btn" onClick={onEdit} style={{ background: 'none', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <HudCard style={{ padding: '8px 10px 10px', width: 132 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold }}>Параметры</span>
+        <button className="lrpg-btn" onClick={onEdit} style={{ background: 'none', padding: 0 }}>
           <Pencil size={11} color={COLORS.textMuted} />
         </button>
       </div>
       {rows.map(r => {
         const Icon = r.icon;
         return (
-          <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 0' }}>
-            <Icon size={10} color={COLORS.violet} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: 9, color: COLORS.textMuted, flex: 1 }}>{r.label}</span>
-            <span style={{ fontSize: 9, fontWeight: 700, color: COLORS.text }}>{r.value}</span>
+          <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
+            <Icon size={11} color={COLORS.textMuted} />
+            <span style={{ fontSize: 10, color: COLORS.textMuted, flex: 1 }}>{r.label}</span>
+            <span style={{ fontSize: 10, fontWeight: 700 }}>{r.value}</span>
           </div>
         );
       })}
-    </div>
+    </HudCard>
   );
 }
 
-// Цели на сегодня — честный срез реальных данных (квесты/привычки/чек-ин/питание), не отдельное состояние.
 function computeDailyGoalsStatus(state) {
   const today = todayStr();
   const completedTodayByStat = stat => state.quests.some(q => q.status === 'completed' && q.stat === stat && q.completedAt
@@ -3763,36 +3793,40 @@ function DailyGoalsPanel({ state, setTab, setSubTab }) {
     else { setTab('progress'); setSubTab(s => ({ ...s, progress: 'stats' })); }
   }
   return (
-    <div className="lrpg-glass lrpg-chamfer lrpg-chamfer-violet" style={{ borderRadius: 13, padding: '9px 10px' }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: COLORS.violet, marginBottom: 5, textShadow: `0 0 8px ${COLORS.violet}44` }}>Цель на сегодня</div>
+    <HudCard style={{ padding: '8px 10px 10px', width: 132 }}>
+      <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold, marginBottom: 6 }}>Цель на сегодня</div>
       {goals.map((g, i) => (
         <div key={g.key} className="lrpg-btn" onClick={() => goTo(g.key)} style={{
           display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', background: 'none', width: '100%', textAlign: 'left',
-          borderTop: i > 0 ? '1px solid rgba(255,255,255,0.06)' : 'none',
         }}>
           {g.done
-            ? <span style={{ width: 12, height: 12, borderRadius: 99, background: `linear-gradient(160deg, ${COLORS.teal}, #1f8f82)`, boxShadow: `0 0 7px ${COLORS.teal}88`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Check size={8} color="#0B1F1D" /></span>
-            : <span style={{ width: 12, height: 12, borderRadius: 99, border: `1px solid ${COLORS.textMuted}`, background: 'rgba(0,0,0,0.3)', flexShrink: 0, display: 'inline-block' }} />}
-          <span style={{ fontSize: 9, color: g.done ? COLORS.teal : COLORS.text, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
-          <span style={{ fontSize: 8, color: COLORS.textMuted }}>{g.done ? '1/1' : '0/1'}</span>
+            ? <span style={{ width: 11, height: 11, borderRadius: 99, background: COLORS.teal, flexShrink: 0 }} />
+            : <span style={{ width: 11, height: 11, borderRadius: 99, border: `1px solid ${COLORS.textMuted}`, flexShrink: 0 }} />}
+          <span style={{ fontSize: 10, color: g.done ? COLORS.teal : COLORS.text, flex: 1 }}>{g.label}</span>
+          <span style={{ fontSize: 9, color: COLORS.textMuted }}>{g.done ? '1/1' : '0/1'}</span>
         </div>
       ))}
-      <div style={{ fontSize: 8, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 6, lineHeight: 1.3 }}>
+      <div style={{ fontSize: 8, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 7, lineHeight: 1.3 }}>
         «Маленькие шаги приводят к большим результатам»
       </div>
-    </div>
+    </HudCard>
   );
 }
 
 // ---- Центр сцены ----
 
 function GameSceneCenter({ body, currentWeight }) {
-  // Фон комнаты теперь на весь экран (рисуется в HomeTab, за этой колонкой) — тут только сам персонаж
-  // и мягкая тень-пятно под ногами, чтобы он "стоял" на полу, а не висел вырезанным прямоугольником.
   return (
-    <div className="lrpg-scene" style={{ height: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0 }}>
-      <div className="lrpg-ground-shadow" />
-      <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+    <div style={{
+      position: 'absolute', left: '18%', right: '18%', top: '18%', bottom: '2%',
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      pointerEvents: 'none',
+    }}>
+      <div style={{
+        position: 'absolute', left: '22%', right: '22%', bottom: '2%', height: '10%',
+        background: 'radial-gradient(ellipse, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0) 70%)',
+      }} />
+      <div style={{ height: '78%', width: '100%' }}>
         <PlayerCharacter heightCm={body.heightCm} weight={currentWeight} />
       </div>
     </div>
@@ -3940,7 +3974,7 @@ function CheckinModal({ energy, todayCheckin, setDailyCheckin, onClose }) {
 // ---- Home: GameShell (фикс. высота, без скролла) ----
 
 function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight }) {
-  const [modal, setModal] = useState(null); // null | 'identity' | 'params' | 'checkin'
+  const [modal, setModal] = useState(null);
   const currentWeight = latestWeight(state.body);
   const dayNumber = state.firstOpenedAt
     ? Math.max(1, Math.floor((Date.now() - state.firstOpenedAt) / 86400000) + 1)
@@ -3950,23 +3984,24 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
   return (
     <div style={{
       position: 'fixed', left: 0, right: 0, top: 0, bottom: 62, zIndex: 5, overflow: 'hidden',
-      height: 'auto', maxHeight: 'none',
     }}>
-      {/* фон — комната во весь экран, а не в отдельной коробке; персонаж и HUD стоят прямо на нём */}
       <div style={{
-        position: 'absolute', inset: 0, backgroundImage: `url(${ROOM_BACKGROUND_IMAGE})`,
-        backgroundSize: 'cover', backgroundPosition: 'center 70%',
+        position: 'absolute', inset: 0,
+        backgroundImage: `url(${ROOM_BACKGROUND_IMAGE})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center 58%',
       }} />
       <div style={{
         position: 'absolute', inset: 0,
-        background: 'linear-gradient(180deg, rgba(11,10,18,0.35) 0%, rgba(11,10,18,0.04) 22%, rgba(11,10,18,0.00) 50%, rgba(11,10,18,0.42) 100%)',
+        background: 'linear-gradient(180deg, rgba(8,7,14,0.28) 0%, rgba(8,7,14,0.00) 18%, rgba(8,7,14,0.00) 62%, rgba(8,7,14,0.38) 100%)',
       }} />
+
+      <GameSceneCenter body={state.body} currentWeight={currentWeight} />
+
       <div style={{
-        position: 'relative', zIndex: 1, height: '100%',
-        display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 8,
-        padding: `calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px))`,
+        position: 'absolute', zIndex: 3, left: 8, right: 8, top: 'calc(8px + env(safe-area-inset-top, 0px))',
+        display: 'flex', alignItems: 'flex-start', gap: 8,
       }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
         <CharacterStatusCard
           state={state} xpNeed={xpNeed} energy={energy} hp={state.stats.physical}
           onOpenIdentity={() => setModal('identity')} onOpenCheckin={() => setModal('checkin')}
@@ -3974,15 +4009,16 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         <CoinsTimeBlock coins={state.coins} dayNumber={dayNumber} onOpenShop={() => { setTab('profile'); setSubTab(s => ({ ...s, profile: 'shop' })); }} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '86px 1fr 122px', gap: 6, minHeight: 0 }}>
+      <div style={{ position: 'absolute', zIndex: 3, left: 8, top: 92, bottom: 10, display: 'flex', alignItems: 'flex-start' }}>
         <LeftGameMenu setTab={setTab} setSubTab={setSubTab} onOpenParams={() => setModal('params')} />
-        <GameSceneCenter body={state.body} currentWeight={currentWeight} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0, overflowY: 'auto' }}>
-          <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
-          <DailyGoalsPanel state={state} setTab={setTab} setSubTab={setSubTab} />
-        </div>
       </div>
 
+      <div style={{
+        position: 'absolute', zIndex: 3, right: 8, top: 92, bottom: 10,
+        display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end',
+      }}>
+        <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
+        <DailyGoalsPanel state={state} setTab={setTab} setSubTab={setSubTab} />
       </div>
 
       {modal === 'identity' && (
