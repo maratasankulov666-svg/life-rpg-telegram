@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.12.3';
+const APP_VERSION = '14.12.4';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -5468,37 +5468,41 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
       }} />
       <div style={{
-        position: 'absolute', left: '2%', top: '4%', width: '62%', height: '40%',
-        pointerEvents: 'none', overflow: 'hidden', zIndex: 1,
-        borderRadius: '0 0 18% 0',
+        position: 'absolute',
+        left: '18%',
+        width: '64%',
+        top: '22%',
+        height: '36%',
+        pointerEvents: 'none',
+        overflow: 'hidden',
+        zIndex: 1,
+        borderRadius: 4,
       }}>
-        <div style={{ position:'absolute', width:'90%', height:86, left:'-20%', top:6, borderRadius:'50%',
-          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.72) 0%, rgba(200,220,255,0.28) 42%, transparent 70%)',
-          animation:'lrpg-cloud-a 18s ease-in-out infinite alternate' }} />
-        <div style={{ position:'absolute', width:'70%', height:64, left:'25%', top:28, borderRadius:'50%',
-          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.55) 0%, rgba(180,205,240,0.22) 50%, transparent 72%)',
-          animation:'lrpg-cloud-b 24s ease-in-out infinite alternate' }} />
-        <div style={{ position:'absolute', width:'60%', height:50, left:'5%', top:52, borderRadius:'50%',
-          background:'radial-gradient(ellipse at center, rgba(230,240,255,0.4) 0%, transparent 70%)',
-          animation:'lrpg-cloud-c 30s ease-in-out infinite alternate' }} />
-        <div style={{ position:'absolute', left:0, top:'28%', fontSize:14, opacity:0.85,
-          animation:'lrpg-plane 32s linear infinite', animationDelay:'6s' }}>✈</div>
-        <div style={{ position:'absolute', left:0, top:'18%', fontSize:11, opacity:0.7,
-          animation:'lrpg-plane 48s linear infinite', animationDelay:'22s' }}>✈</div>
+        <div style={{ position:'absolute', width:'80%', height:70, left:'-30%', top:'6%', borderRadius:'50%',
+          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.38) 0%, rgba(180,210,255,0.12) 50%, transparent 72%)',
+          animation:'lrpg-cloud-a 20s ease-in-out infinite alternate' }} />
+        <div style={{ position:'absolute', width:'55%', height:48, left:'40%', top:'2%', borderRadius:'50%',
+          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.28) 0%, transparent 70%)',
+          animation:'lrpg-cloud-b 26s ease-in-out infinite alternate' }} />
+        <div style={{ position:'absolute', left:'28%', top:'18%', width:10, height:'62%',
+          background:'radial-gradient(ellipse at center, rgba(255,220,150,0.55) 0%, rgba(255,180,80,0.12) 40%, transparent 70%)',
+          filter:'blur(1px)',
+          animation:'lrpg-twinkle 2.8s ease-in-out infinite' }} />
+        <div style={{ position:'absolute', left:'27%', top:'12%', width:6, height:6, borderRadius:'50%',
+          background:'#ffe9a8', boxShadow:'0 0 10px 4px rgba(255,210,120,.75)',
+          animation:'lrpg-twinkle 1.8s ease-in-out infinite' }} />
+        {[
+          ['12%','48%'],['14%','62%'],['16%','54%'],['58%','50%'],['62%','58%'],['66%','46%'],['70%','64%'],['74%','52%'],
+          ['8%','70%'],['78%','70%'],['54%','66%'],['20%','68%']
+        ].map((p,i)=>(
+          <div key={i} style={{ position:'absolute', left:p[0], top:p[1], width:3, height:3, borderRadius:1,
+            background: i%3===0 ? '#ffe7a0' : '#fff6c8',
+            animation:`lrpg-twinkle ${1.6 + (i%4)*0.5}s ease-in-out infinite`, animationDelay:`${i*0.22}s` }} />
+        ))}
         {(new Date().getHours() >= 19 || new Date().getHours() < 6) && (
-          <>
-            <div style={{ position:'absolute', width:90, height:2, left:'8%', top:'12%',
-              background:'linear-gradient(90deg, transparent, #fff 40%, #cde 70%, transparent)',
-              animation:'lrpg-shoot 7s ease-out infinite', animationDelay:'4s' }} />
-            <div style={{ position:'absolute', width:70, height:2, left:'20%', top:'30%',
-              background:'linear-gradient(90deg, transparent, #fff, transparent)',
-              animation:'lrpg-shoot 11s ease-out infinite', animationDelay:'9s' }} />
-            {[...Array(7)].map((_,i)=>(
-              <div key={i} style={{ position:'absolute', width:3, height:3, borderRadius:'50%', background:'#fff',
-                left: `${12+i*10}%`, top: `${8+(i%3)*9}%`,
-                animation:`lrpg-twinkle ${2.2+i*0.4}s ease-in-out infinite`, animationDelay:`${i*0.3}s` }} />
-            ))}
-          </>
+          <div style={{ position:'absolute', width:70, height:2, left:'10%', top:'10%',
+            background:'linear-gradient(90deg, transparent, #fff, transparent)',
+            animation:'lrpg-shoot 9s ease-out infinite', animationDelay:'5s' }} />
         )}
       </div>
       <GameSceneCenter body={state.body} currentWeight={currentWeight} />
