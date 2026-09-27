@@ -2,7 +2,7 @@
 // { content: [{ type:'text', text }], _provider, _model, fallbackUsed }
 
 const OPENAI_COMPAT = [
-  { id: 'groq', env: 'GROQ_API_KEY', url: 'https://api.groq.com/openai/v1/chat/completions', modelEnv: 'GROQ_MODEL', model: 'llama-3.1-8b-instant', vision: false },
+  { id: 'groq', env: 'GROQ_API_KEY', url: 'https://api.groq.com/openai/v1/chat/completions', modelEnv: 'GROQ_MODEL', model: 'llama-3.3-70b-versatile', models: ['llama-3.3-70b-versatile','llama-3.1-8b-instant','openai/gpt-oss-120b'], vision: false },
   { id: 'grok', env: 'XAI_API_KEY', url: 'https://api.x.ai/v1/chat/completions', modelEnv: 'XAI_MODEL', model: 'grok-2-latest', vision: false },
   { id: 'openrouter', env: 'OPENROUTER_API_KEY', url: 'https://openrouter.ai/api/v1/chat/completions', modelEnv: 'OPENROUTER_MODEL', model: 'openrouter/auto', vision: true },
   { id: 'mistral', env: 'MISTRAL_API_KEY', url: 'https://api.mistral.ai/v1/chat/completions', modelEnv: 'MISTRAL_MODEL', model: 'mistral-small-latest', vision: false },
@@ -87,36 +87,42 @@ async function tryOpenAICompat(p, system, messages, { timeoutMs = 18000, maxToke
   const apiKey = process.env[p.env];
   if (!apiKey) throw Object.assign(new Error('NOT_CONFIGURED'), { code: 'NOT_CONFIGURED' });
   if (hasImageContent(messages) && !p.vision) throw Object.assign(new Error('SKIP_VISION'), { retryable: true });
-  const model = process.env[p.modelEnv] || p.model;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
-    if (p.id === 'openrouter') headers['HTTP-Referer'] = 'https://life-rpg-telegram-five.vercel.app';
-    const response = await fetch(p.url, {
-      method: 'POST',
-      headers,
-      signal: ctrl.signal,
-      body: JSON.stringify({
-        model,
-        messages: [
-          ...(system ? [{ role: 'system', content: system }] : []),
-          ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: asText(m.content) })),
-        ],
-        max_tokens: maxTokens,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      const err = new Error(`${p.id} HTTP ${response.status}`);
-      err.status = response.status;
-      err.retryable = response.status === 429 || response.status >= 500;
-      throw err;
-    }
-    const text = (data.choices || []).map(c => c.message?.content || '').join('\n').trim();
-    if (!text) throw new Error('EMPTY');
-    return { text, model };
-  } finally { clearTimeout(t); }
+  const models = [];
+  if (process.env[p.modelEnv]) models.push(process.env[p.modelEnv]);
+  if (p.model && !models.includes(p.model)) models.push(p.model);
+  (p.models || []).forEach(m => { if (!models.includes(m)) models.push(m); });
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  if (p.id === 'openrouter') headers['HTTP-Referer'] = 'https://life-rpg-telegram-five.vercel.app';
+  const payloadMessages = [
+    ...(system ? [{ role: 'system', content: system }] : []),
+    ...messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: asText(m.content) })),
+  ];
+  let lastErr = null;
+  for (const model of models) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const response = await fetch(p.url, {
+        method: 'POST',
+        headers,
+        signal: ctrl.signal,
+        body: JSON.stringify({ model, messages: payloadMessages, max_tokens: maxTokens }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const err = new Error(`${p.id} HTTP ${response.status} (${model})`);
+        err.status = response.status;
+        err.retryable = response.status === 429 || response.status >= 500 || response.status === 404;
+        lastErr = err;
+        if (response.status === 404) continue;
+        throw err;
+      }
+      const text = (data.choices || []).map(c => c.message?.content || '').join('\n').trim();
+      if (!text) throw new Error('EMPTY');
+      return { text, model };
+    } finally { clearTimeout(t); }
+  }
+  throw lastErr || new Error(`${p.id} failed`);
 }
 
 const DEFAULT_ORDER = ['gemini', 'grok', 'groq', 'cerebras', 'openrouter', 'mistral', 'nvidia'];
@@ -165,7 +171,8 @@ export default async function handler(req, res) {
       fallbackUsed = attempted > 0;
       errors.push(`${id}: ${e.message || e}`);
       if (e.code === 'NOT_CONFIGURED') continue;
-      if (e.retryable === false && e.status && e.status >= 400 && e.status < 500 && e.status !== 429) {
+      // 4xx провайдера (404 модель, 401 ключ) — идём к следующему, не останавливаем цепочку.
+      if (e.status === 400 && e.retryable === false) {
         res.status(e.status).json({ error: e.message, details: errors });
         return;
       }
