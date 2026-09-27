@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.10';
+const APP_VERSION = '14.10.2';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2521,12 +2521,34 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: '70vh' }}>
         <button className="lrpg-btn" onClick={() => setView('hall')} style={{ alignSelf: 'flex-start', background: 'none', color: COLORS.textMuted, fontSize: 12 }}>← Зал</button>
         <div style={{ fontSize: 14, fontWeight: 800 }}>Совет</div>
+        <div style={{ display: 'flex', gap: 6, minHeight: 52, marginBottom: 4 }}>
+          {COUNCIL_NPCS.filter(n => shown.some(m => m.who === n.id)).map((n, i) => (
+            <div key={n.id} style={{
+              width: 44, textAlign: 'center', animation: 'lrpg-npc-in .45s ease-out both', animationDelay: `${i * 40}ms`,
+            }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: '50%', margin: '0 auto',
+                background: 'linear-gradient(180deg,#2a2540,#151822)',
+                border: '1px solid rgba(108,99,255,.45)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+                boxShadow: '0 0 12px rgba(108,99,255,.25)',
+              }}>{n.emoji}</div>
+              <div style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 2 }}>{n.name}</div>
+            </div>
+          ))}
+        </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {shown.map(m => {
             const n = COUNCIL_NPCS.find(x => x.id === m.who);
             const mine = m.who === 'you';
             return (
-              <div key={m.id || m.ts} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
+              <div key={m.id || m.ts} style={{
+                alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%',
+                animation: mine ? 'none' : (m.kind === 'join' ? 'lrpg-npc-in .4s ease-out' : 'lrpg-npc-bubble .28s ease-out'),
+              }}>
+                {m.kind === 'join' && (
+                  <div style={{ fontSize: 10, color: COLORS.teal, marginBottom: 2 }}>вошёл в комнату</div>
+                )}
                 <div style={{ fontSize: 10, color: COLORS.textMuted }}>{mine ? 'Ты' : `${n?.emoji || ''} ${n?.name || m.who}`}</div>
                 <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: mine ? 'rgba(108,99,255,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
               </div>
@@ -3736,18 +3758,59 @@ function addYouTubeQuest(ch, metric, delta) {
     gameFeedback('QUEST_COMPLETE', { xp: 5 });
   }
 
+  function applySpokenActions(prev, actions, speaker) {
+    if (!actions || !actions.length) return prev;
+    let quests = prev.quests;
+    let nextOrder = prev.nextOrder;
+    let chronicle = prev.chronicle;
+    let applied = 0;
+    actions.slice(0, 3).forEach(a => {
+      const title = String(a.title || a.label || '').slice(0, 70);
+      if (!title) return;
+      if (a.type === 'quest' || a.type === 'habit' && a.type === 'quest') {
+        const exists = quests.some(q => q.status === 'active' && q.title.toLowerCase() === title.toLowerCase());
+        if (exists) return;
+        quests = [...quests, {
+          id: uid(), title, type: 'Daily', difficulty: 'Easy', xp: 25, coins: 8,
+          stat: speaker === 'brum' ? 'physical' : speaker === 'kasper' ? 'finance' : 'discipline',
+          status: 'active', deadline: null, order: nextOrder, createdAt: Date.now(),
+        }];
+        nextOrder += 1; applied += 1;
+        chronicle = pushChronicle(chronicle, 'QUEST_CREATED', `${speaker} поставил задачу: ${title}`);
+      }
+    });
+    if (!applied) return prev;
+    gameFeedback('QUEST_COMPLETE', { xp: 5 });
+    return { ...prev, quests, nextOrder, chronicle };
+  }
+
   async function talkToNpc(npcId, text) {
     const npc = COUNCIL_NPCS.find(n => n.id === npcId);
     if (!npc) return;
+    const hist = ((state.council && state.council.chats && state.council.chats[npcId]) || []).slice(-8).map(m => ({ who: m.who, text: m.text }));
     const ctx = ContextManager.build('CHAT', state, { npc, bond: (state.council && state.council.bonds || {})[npcId] });
-    const sys = 'Ты ' + npc.name + ', ' + npc.role + ' в Life RPG. Характер: ' + npc.vibe + '. Область: ' + npc.domain + '. Мат: ' + npc.swear + '. По-русски, 1-4 коротких реплики. Не выдумывай цифры.';
-    const reply = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, игрок: text }) }], 2, { taskType: 'CHAT' });
+    const sys = 'Ты ' + npc.name + ' (' + npc.role + '). ' + npc.vibe + ' Область: ' + npc.domain + '. Мат: ' + npc.swear + '.\n'
+      + 'Слушай ИМЕННО последнюю фразу игрока. Не повторяй прошлые свои реплики. Не ври, что уже добавил задачу, если в JSON нет action.\n'
+      + 'Если просит план/добавить в задачи/квест — сделай конкретный план в тексте И верни action type quest.\n'
+      + 'Ответ ТОЛЬКО JSON: {"text":"одна живая реплика без списка тире","actions":[{"type":"quest","title":"короткий квест"}]} actions можно [].';
+    const raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, история: hist, сейчас_игрок_сказал: text, активные_квесты: (state.quests||[]).filter(q=>q.status==='active').map(q=>q.title).slice(0,6) }) }], 2, { taskType: 'CHAT', jsonMode: true });
+    let data;
+    try { data = parseCouncilJson(raw); } catch { data = { text: String(raw).slice(0, 400), actions: [] }; }
+    let actions = Array.isArray(data.actions) ? data.actions : [];
+    const wantTask = /добав|задач|квест|план|запиш/i.test(text);
+    if (wantTask && !actions.length) {
+      actions = [{ type: 'quest', title: npc.id === 'brum' ? 'Тренировка по плану Брума' : text.slice(0, 50) }];
+    }
+    const reply = String(data.text || raw).slice(0, 500);
     setState(prev => {
-      const c = normalizeCouncil(prev.council);
-      const chat = [...(c.chats[npcId] || []), { who: 'you', text, ts: Date.now() }, { who: npcId, text: String(reply).slice(0, 500), ts: Date.now() + 1 }];
+      let next = prev;
+      next = applySpokenActions(next, actions, npc.name);
+      const c = normalizeCouncil(next.council);
+      const chat = [...(c.chats[npcId] || []), { who: 'you', text, ts: Date.now() }, { who: npcId, text: reply, ts: Date.now() + 1 }];
+      if (actions.length) chat.push({ who: npcId, text: '✓ в задачи: ' + actions.map(a => a.title || a.label).join(', '), ts: Date.now() + 2 });
       const bonds = { ...c.bonds };
       if (bonds[npcId]) bonds[npcId] = { ...bonds[npcId], lastSpoke: Date.now(), notes: [{ ts: Date.now(), text: text.slice(0, 80) }, ...(bonds[npcId].notes || [])].slice(0, 16) };
-      return { ...prev, council: { ...c, chats: { ...c.chats, [npcId]: chat.slice(-40) }, bonds } };
+      return { ...next, council: { ...c, chats: { ...c.chats, [npcId]: chat.slice(-40) }, bonds } };
     });
   }
 
@@ -3756,14 +3819,21 @@ function addYouTubeQuest(ch, metric, delta) {
     if (mode === 'talk' && text) incoming.push({ id: 'you-' + Date.now(), who: 'you', text, kind: 'talk', ts: Date.now() });
     if (joinLines) incoming.push(...joinLines);
     const ctx = ContextManager.build('COUNCIL', state, { mode, topic: text });
-    const sys = 'Пиши штаб Life RPG как живой чат. Мат можно, если персонажу можно. Тема любая. ТОЛЬКО JSON {"lines":[{"id":"nori","text":"..."}]}. open: 3-6 реплик. talk: 1-3 ответа, не хором. ' + COUNCIL_NPCS.map(n => n.id + ':' + n.vibe).join('; ');
+    const said = (state.council && state.council.room || []).map(m => (m.text || '').toLowerCase().slice(0, 80));
+    const sys = 'Живой чат штаба. Не повторяй фразы из alreadySaid. Каждый id максимум 1 раз за ответ. open: 4 разных входа по характеру, без копипасты. talk: 1-2 человека отвечают НА ФРАЗУ ИГРОКА. JSON {"lines":[{"id":"brum","text":"..."}]}';
     let lines = [];
     try {
-      const raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, last: (state.council && state.council.room || []).slice(-8), user: text, mode }) }], 2, { taskType: 'COUNCIL', jsonMode: true });
+      const raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, alreadySaid: said.slice(-16), user: text, mode }) }], 2, { taskType: 'COUNCIL', jsonMode: true });
       const data = parseCouncilJson(raw);
-      lines = (data.lines || []).slice(0, 6).map(l => ({ id: 'r-' + Math.random().toString(36).slice(2,8), who: l.id, text: String(l.text || '').slice(0, 280), kind: 'talk', ts: Date.now() }));
+      const seenWho = new Set();
+      const seenTxt = new Set(said);
+      lines = (data.lines || []).filter(l => {
+        const tx = String(l.text || '').trim().toLowerCase();
+        if (!tx || seenTxt.has(tx.slice(0, 80)) || seenWho.has(l.id)) return false;
+        seenTxt.add(tx.slice(0, 80)); seenWho.add(l.id); return true;
+      }).slice(0, mode === 'talk' ? 2 : 5).map(l => ({ id: 'r-' + Math.random().toString(36).slice(2,8), who: l.id, text: String(l.text).slice(0, 280), kind: 'talk', ts: Date.now() }));
     } catch (e) {
-      lines = [{ id: 'r-fb', who: 'kaylen', text: 'Говорите. Штаб слушает.', kind: 'talk', ts: Date.now() }];
+      lines = [{ id: 'r-fb', who: 'kaylen', text: 'Слушаю. Повторять не буду — говори суть.', kind: 'talk', ts: Date.now() }];
     }
     setState(prev => {
       const c = normalizeCouncil(prev.council);
@@ -4066,6 +4136,9 @@ useEffect(() => {
         .lrpg-btn:active { transform: scale(0.96); filter: brightness(1.12); }
         @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
         @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        @keyframes lrpg-npc-in { 0% { transform: translateY(18px) scale(.86); opacity: 0; } 70% { transform: translateY(-3px) scale(1.04); opacity: 1; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes lrpg-npc-bubble { 0% { transform: translateX(-12px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
+        @keyframes lrpg-npc-seat { 0% { transform: translateY(10px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
         @keyframes lrpg-cloud-a { 0% { transform: translate3d(-40%,0,0); } 100% { transform: translate3d(55%,0,0); } }
         @keyframes lrpg-cloud-b { 0% { transform: translate3d(50%,8px,0); } 100% { transform: translate3d(-45%,-6px,0); } }
         @keyframes lrpg-cloud-c { 0% { transform: translate3d(-20%,4px,0); } 100% { transform: translate3d(30%,-10px,0); } }
