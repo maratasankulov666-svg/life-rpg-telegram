@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.10.4';
+const APP_VERSION = '14.10.5';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2491,8 +2491,11 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
 
   async function startRoom() {
     const theme = topic.trim() || 'Встреча штаба';
-    setView('room'); setErr(null); setJoining([]); setTypingWho(null);
+    setView('room'); setErr(null); setTypingWho(null);
     setMeeting({ title: theme, at: Date.now() });
+    const divider = { id: 'meet-' + Date.now(), kind: 'meet', who: 'system', text: theme, ts: Date.now() };
+    setJoining([divider]);
+    if (appendCouncilRoom) appendCouncilRoom([divider]);
     setBusy(true);
     const order = pickEnterOrder();
     const aiP = sendCouncilChat(theme, null, 'open').catch(e => { setErr(e.message || String(e)); return []; });
@@ -2546,11 +2549,6 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
           <div style={{ fontSize: 14, fontWeight: 800 }}>Совет</div>
           <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 12, color: COLORS.textMuted }}>Выйти</button>
         </div>
-        {meeting && (
-          <div style={{ fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>
-            🕒 {new Date(meeting.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · {meeting.title}
-          </div>
-        )}
         <div style={{ display: 'flex', gap: 6, minHeight: 52, marginBottom: 4 }}>
           {COUNCIL_NPCS.filter(n => shown.some(m => m.who === n.id)).map((n, i) => (
             <div key={n.id} style={{
@@ -2559,34 +2557,51 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
               <div style={{
                 width: 40, height: 40, borderRadius: '50%', margin: '0 auto',
                 background: 'linear-gradient(180deg,#2a2540,#151822)',
-                border: '1px solid rgba(108,99,255,.45)',
+                border: typingWho === n.id ? '1px solid #00E5FF' : '1px solid rgba(108,99,255,.45)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
-                boxShadow: '0 0 12px rgba(108,99,255,.25)',
+                animation: typingWho === n.id ? 'lrpg-pulse 1.1s ease-out infinite' : 'none',
               }}>{n.emoji}</div>
-              <div style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 2 }}>{n.name}</div>
+              <div style={{ fontSize: 9, color: typingWho === n.id ? '#00E5FF' : COLORS.textMuted, marginTop: 2 }}>{n.name}</div>
             </div>
           ))}
         </div>
         <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 8 }}>
           {shown.map(m => {
+            if (m.kind === 'meet') {
+              const tm = new Date(m.ts || Date.now()).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+              return (
+                <div key={m.id || m.ts} style={{ alignSelf: 'center', textAlign: 'center', margin: '10px 0', animation: 'lrpg-div .35s ease-out' }}>
+                  <div style={{ fontSize: 10, letterSpacing: 1, color: COLORS.textMuted, textTransform: 'uppercase' }}>встреча</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#E8EEF8' }}>{m.text}</div>
+                  <div style={{ fontSize: 11, color: '#00E5FF', marginTop: 2 }}>{tm}</div>
+                </div>
+              );
+            }
             const n = COUNCIL_NPCS.find(x => x.id === m.who);
             const mine = m.who === 'you';
             return (
               <div key={m.id || m.ts} style={{
                 alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%',
-                animation: mine ? 'none' : (m.kind === 'join' ? 'lrpg-npc-in .4s ease-out' : 'lrpg-npc-bubble .28s ease-out'),
+                animation: 'lrpg-pop .32s cubic-bezier(.2,1.4,.4,1)',
               }}>
                 {m.kind === 'join' && (
                   <div style={{ fontSize: 10, color: COLORS.teal, marginBottom: 2 }}>вошёл в комнату</div>
                 )}
-                <div style={{ fontSize: 10, color: COLORS.textMuted }}>{mine ? 'Ты' : `${n?.emoji || ''} ${n?.name || m.who}`}</div>
-                <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: mine ? 'rgba(108,99,255,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
+                <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>{mine ? 'Ты' : `${n?.emoji || ''} ${n?.name || m.who}`}</div>
+                <div style={{
+                  fontSize: 13, padding: '8px 10px', borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                  background: mine ? 'linear-gradient(180deg,#5b54d6,#6C63FF)' : 'rgba(255,255,255,0.07)',
+                  boxShadow: mine ? '0 6px 16px rgba(108,99,255,.25)' : 'none',
+                }}>{m.text}</div>
               </div>
             );
           })}
           {typingWho && (
-            <div style={{ fontSize: 12, color: COLORS.teal, animation: 'lrpg-npc-bubble .3s ease-out' }}>
-              {(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).emoji} {(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).name} печатает…
+            <div style={{ alignSelf: 'flex-start', animation: 'lrpg-pop .25s ease-out' }}>
+              <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>{(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).name} печатает</div>
+              <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderRadius: '14px 14px 14px 4px', background: 'rgba(255,255,255,0.07)' }}>
+                {[0,1,2].map(i => <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#00E5FF', animation: `lrpg-dot 1s ${i*0.15}s infinite` }} />)}
+              </div>
             </div>
           )}
         </div>
@@ -4187,6 +4202,10 @@ useEffect(() => {
         @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
         @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
         @keyframes lrpg-npc-in { 0% { transform: translateY(18px) scale(.86); opacity: 0; } 70% { transform: translateY(-3px) scale(1.04); opacity: 1; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes lrpg-dot { 0%,80%,100% { transform: translateY(0); opacity:.35 } 40% { transform: translateY(-4px); opacity:1 } }
+        @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,.45) } 50% { box-shadow: 0 0 0 6px rgba(0,229,255,0) } }
+        @keyframes lrpg-div { 0% { opacity:0; transform: scale(.94) } 100% { opacity:1; transform: scale(1) } }
+        @keyframes lrpg-pop { 0% { transform: translateY(10px) scale(.92); opacity:0 } 100% { transform: translateY(0) scale(1); opacity:1 } }
         @keyframes lrpg-npc-bubble { 0% { transform: translateX(-12px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
         @keyframes lrpg-npc-seat { 0% { transform: translateY(10px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
         @keyframes lrpg-cloud-a { 0% { transform: translate3d(-40%,0,0); } 100% { transform: translate3d(55%,0,0); } }
