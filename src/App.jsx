@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.9.1';
+const APP_VERSION = '14.10';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2259,12 +2259,36 @@ function ProfileRow({ icon: Icon, label, onClick }) {
 }
 
 const COUNCIL_NPCS = [
-  { id: 'kaylen', name: 'Кайлен', role: 'Директор штаба', vibe: 'сухой, требовательный, малословно, слегка архаичная речь', domain: 'приоритеты дня, кому дать слово, что НЕ делать' },
-  { id: 'brum', name: 'Брум', role: 'Тренер', vibe: 'ворчун. Ненавидит отговорки и «потом». Говорит коротко и грубо, но по делу', domain: 'сон, энергия, тренировка, вес, Recovery Mode' },
-  { id: 'kasper', name: 'Каспер', role: 'Финансист', vibe: 'ленивый циник. Делает вид, что ему лень, но цифры долгов и кэша считает точно', domain: 'кэш, долги-боссы, траты, такси, монеты как игра — не путать с реалом' },
-  { id: 'nori', name: 'Нори', role: 'Продюсер', vibe: 'на приколе, лёгкий троллинг, но YouTube-пайплайн держит жёстко', domain: 'идеи, сценарий, публикация, без выдуманной аналитики' },
-  { id: 'mira', name: 'Мира', role: 'Стратег целей', vibe: 'тревожная перфекционистка. Боится расползшихся дедлайнов', domain: 'цели, сроки, конфликт задач, доступные часы' },
-  { id: 'tio', name: 'Тио', role: 'Хранитель привычек', vibe: 'мягкий, чуть пассивно-агрессивный. Помнит каждый сорванный стрик', domain: 'привычки, стрики, не ломать Recovery' },
+  { id: 'kaylen', name: 'Кайлен', role: 'Директор', emoji: '⚔️', late: 0, swear: 'light',
+    vibe: 'сухой ворчун-директор. Малословно, архаика, редко матерится точечно. Не любит балаган.',
+    domain: 'приоритеты, порядок совета',
+    enter: ['Все на места. Совет начат.', 'Опять собрались. Говорите по делу.'],
+    greet: ['Говори. Времени мало.', 'Слушаю. Коротко.'] },
+  { id: 'brum', name: 'Брум', role: 'Тренер', emoji: '💪', late: 0.15, swear: 'heavy',
+    vibe: 'злой ворчун. Мат норма, ненавидит отговорки, орёт про сон и тренировки.',
+    domain: 'тело, сон, энергия',
+    enter: ['Ну блин, опять совещание вместо приседаний.', 'Я на месте. Кто тут опять «потом потренируюсь»?'],
+    greet: ['Ну. Спина цела? Не ври.', 'Говори. Только без сказок про «нет времени».'] },
+  { id: 'kasper', name: 'Каспер', role: 'Финансист', emoji: '💰', late: 0.55, swear: 'medium',
+    vibe: 'ленивый циник, вечно опаздывает. Делает вид что спит, но долги считает в уме.',
+    domain: 'деньги, долги, кэш',
+    enter: ['…а, вы без меня начали. Класс.', 'Минуту, кофе допил. Ну ладно, что опять потратил.'],
+    greet: ['Если это не про деньги — я могу полежать.', 'Ну давай, покажи дыру в бюджете.'] },
+  { id: 'nori', name: 'Нори', role: 'Продюсер', emoji: '🎬', late: 0.25, swear: 'medium',
+    vibe: 'на приколе, троллит, заходит с еууу. YouTube держит жёстко, аналитику не выдумывает.',
+    domain: 'YouTube, контент',
+    enter: ['Еууу че тут у нас, семейка опять мудрит.', 'Йо. Если без сценария — я сразу уйду.'],
+    greet: ['Еу, говори. Это про ролик или опять нытьё?', 'Окей ок, я слушаю. Жги.'] },
+  { id: 'mira', name: 'Мира', role: 'Стратег', emoji: '🎯', late: 0.05, swear: 'none',
+    vibe: 'тревожная перфекционистка. Не матерится. Паникует из-за дедлайнов.',
+    domain: 'цели и сроки',
+    enter: ['Я вовремя. Кто опять без дедлайна?', 'Можно я сразу список приоритетов?'],
+    greet: ['Расскажи цель. И срок. Пожалуйста, срок.', 'Я записываю. Не хаотично, ладно?'] },
+  { id: 'tio', name: 'Тио', role: 'Хранитель', emoji: '🌿', late: 0.35, swear: 'light',
+    vibe: 'мягкий пассивно-агрессивный. Помнит сорванные стрики, вздыхает.',
+    domain: 'привычки',
+    enter: ['О, совет. Привычку за сегодня уже отметили? …подумала.', 'Я тут. Тихо. Как вчерашняя медитация, которой не было.'],
+    greet: ['Привет. Стрик жив?', 'Можно не кричать. Просто скажи, что бросил.'] },
 ];
 
 function emptyNpcBond(id) {
@@ -2278,6 +2302,8 @@ function emptyCouncil() {
     pending: null,
     grants: { achievements: [], titles: [], gear: [], cosmetics: [] },
     facts: [],
+    chats: {},
+    room: [],
     bonds: Object.fromEntries((typeof COUNCIL_NPCS !== 'undefined' ? COUNCIL_NPCS : []).map(n => [n.id, emptyNpcBond(n.id)])),
   };
 }
@@ -2296,6 +2322,8 @@ function normalizeCouncil(c) {
     grants: { ...d.grants, ...(c.grants || {}) },
     pending: c.pending || null,
     facts: Array.isArray(c.facts) ? c.facts.slice(0, 80) : [],
+    chats: c.chats && typeof c.chats === 'object' ? c.chats : {},
+    room: Array.isArray(c.room) ? c.room.slice(-80) : [],
     bonds,
   };
 }
@@ -2315,6 +2343,92 @@ function councilDue(council) {
   if (slot === 'noon' && c.lastNoonDate !== today) return 'noon';
   return null;
 }
+
+
+const CONTEXT_BUDGET = {
+  COUNCIL: 3600,
+  CHAT: 2400,
+  MENTOR: 2400,
+  CONTENT_IDEAS: 1800,
+  CONTENT_PLAN: 1800,
+  YOUTUBE_ANALYTICS: 1600,
+  GOAL_PLANNING: 2000,
+  QUEST_GENERATION: 1600,
+  DEFAULT: 2000,
+};
+
+const ContextManager = {
+  clip(v, n) {
+    const s = v == null ? '' : String(v);
+    return s.length <= n ? s : s.slice(0, n - 1) + '…';
+  },
+  uniq(arr) {
+    const seen = new Set();
+    const out = [];
+    (arr || []).forEach(x => {
+      const k = typeof x === 'string' ? x : JSON.stringify(x);
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      out.push(x);
+    });
+    return out;
+  },
+  takeChars(items, max, fmt) {
+    const out = [];
+    let used = 0;
+    for (const it of items || []) {
+      const s = fmt(it);
+      if (!s) continue;
+      if (used + s.length > max) break;
+      out.push(typeof it === 'string' ? s : it);
+      used += s.length + 1;
+    }
+    return out;
+  },
+  gameSlice(state) {
+    const yt = normalizeYoutube(state.youtube || { channels: [] });
+    return {
+      hero: this.clip(state.character?.name, 24),
+      lv: state.character?.level,
+      title: this.clip(state.character?.title, 32),
+      coins: state.coins,
+      recovery: !!state.recoveryMode,
+      quests: (state.quests || []).filter(q => q.status === 'active').slice(0, 4).map(q => this.clip(q.title, 42)),
+      goals: (state.goals || []).slice(0, 3).map(g => this.clip(`${g.title}:${g.progress || 0}%`, 48)),
+      habits: (state.habits || []).slice(0, 3).map(h => this.clip(`${h.title}#${h.streakCurrent || 0}`, 40)),
+      cash: state.finance?.cashBalance,
+      debts: (state.finance?.debts || []).filter(d => d.remaining > 0).length,
+      yt: { n: yt.channels.length, ideas: yt.ideas.length, work: yt.contentItems.filter(i => i.status !== 'PUBLISHED').length },
+    };
+  },
+  memorySlice(council, budget) {
+    const c = normalizeCouncil(council);
+    const facts = this.takeChars(c.facts || [], Math.floor(budget * 0.35), f => (f && f.text) || '');
+    const meetings = this.takeChars(c.meetings || [], Math.floor(budget * 0.25), m => `${m.slot}:${m.memory || m.director || ''}`);
+    const bonds = Object.values(c.bonds || {}).map(b => ({
+      id: b.id,
+      aff: b.affinity,
+      mood: b.mood,
+      notes: (b.notes || []).slice(0, 3).map(n => this.clip(n.text, 80)),
+    }));
+    return { facts: facts.map(f => this.clip(f.text || f, 140)), meetings: meetings.map(m => ({ d: m.slot, t: this.clip(m.memory || m.director, 120) })), bonds };
+  },
+  build(taskType, state, extra = {}) {
+    const cap = CONTEXT_BUDGET[taskType] || CONTEXT_BUDGET.DEFAULT;
+    const payload = {
+      task: taskType,
+      game: this.gameSlice(state),
+      memory: this.memorySlice(state.council, cap),
+      ...extra,
+    };
+    let raw = JSON.stringify(payload);
+    if (raw.length <= cap) return payload;
+    const slim = { task: taskType, game: payload.game, memory: { facts: payload.memory.facts.slice(0, 8), bonds: payload.memory.bonds, meetings: payload.memory.meetings.slice(0, 4) }, topic: extra.topic || extra.slot || null };
+    raw = JSON.stringify(slim);
+    if (raw.length <= cap) return slim;
+    return { task: taskType, game: payload.game, topic: extra.topic || null };
+  },
+};
 
 function councilStateBrief(state) {
   const w = latestWeight(state.body);
@@ -2341,111 +2455,144 @@ function parseCouncilJson(text) {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, setCharacterTitle }) {
+function pickEnterOrder() {
+  const withDelay = COUNCIL_NPCS.map(n => ({ n, t: 300 + Math.random() * 900 + (Math.random() < n.late ? 1400 + Math.random() * 1800 : 0) }));
+  withDelay.sort((a, b) => a.t - b.t);
+  return withDelay;
+}
+
+function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, setCharacterTitle, talkToNpc, sendCouncilChat }) {
   const council = normalizeCouncil(state.council);
+  const [view, setView] = useState('hall');
   const [topic, setTopic] = useState('');
+  const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [joining, setJoining] = useState([]);
   const due = councilDue(state.council);
-  const last = council.meetings[0];
   const pending = council.pending;
+  const npcId = view.startsWith('npc:') ? view.slice(4) : null;
+  const npc = COUNCIL_NPCS.find(n => n.id === npcId);
+  const dm = npc ? (council.chats[npc.id] || []) : [];
+  const room = council.room || [];
 
-  async function go(slot, extraTopic) {
-    setBusy(true); setErr(null);
-    try { await runCouncil(slot, extraTopic || topic); setTopic(''); }
+  async function startRoom() {
+    setView('room'); setErr(null); setJoining([]);
+    const order = pickEnterOrder();
+    let acc = [];
+    for (const step of order) {
+      await new Promise(r => setTimeout(r, step.t));
+      const line = step.n.enter[Math.floor(Math.random() * step.n.enter.length)];
+      acc = [...acc, { id: 'join-' + step.n.id + Date.now(), who: step.n.id, text: line, kind: 'join', ts: Date.now() }];
+      setJoining(acc);
+    }
+    setBusy(true);
+    try { await sendCouncilChat(topic, acc, 'open'); setTopic(''); }
     catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
+  }
+
+  async function sendRoom() {
+    if (!draft.trim() || busy) return;
+    const text = draft.trim(); setDraft(''); setBusy(true); setErr(null);
+    try { await sendCouncilChat(text, null, 'talk'); }
+    catch (e) { setErr(e.message || String(e)); }
+    setBusy(false);
+  }
+
+  async function sendDm() {
+    if (!draft.trim() || !npc || busy) return;
+    const text = draft.trim(); setDraft(''); setBusy(true); setErr(null);
+    try { await talkToNpc(npc.id, text); }
+    catch (e) { setErr(e.message || String(e)); }
+    setBusy(false);
+  }
+
+  async function reco() {
+    setBusy(true); setErr(null);
+    try { await runCouncil(due || 'topic', topic); }
+    catch (e) { setErr(e.message || String(e)); }
+    setBusy(false);
+  }
+
+  if (view === 'room') {
+    const shown = [...joining.filter(j => !room.some(r => r.kind === 'join' && r.who === j.who)), ...room];
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: '70vh' }}>
+        <button className="lrpg-btn" onClick={() => setView('hall')} style={{ alignSelf: 'flex-start', background: 'none', color: COLORS.textMuted, fontSize: 12 }}>← Зал</button>
+        <div style={{ fontSize: 14, fontWeight: 800 }}>Совет</div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {shown.map(m => {
+            const n = COUNCIL_NPCS.find(x => x.id === m.who);
+            const mine = m.who === 'you';
+            return (
+              <div key={m.id || m.ts} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
+                <div style={{ fontSize: 10, color: COLORS.textMuted }}>{mine ? 'Ты' : `${n?.emoji || ''} ${n?.name || m.who}`}</div>
+                <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: mine ? 'rgba(108,99,255,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
+              </div>
+            );
+          })}
+          {busy && <div style={{ fontSize: 11, color: COLORS.textMuted }}>печатают…</div>}
+        </div>
+        {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input className="lrpg-input" placeholder="Скажи совету что угодно" value={draft} onChange={e => setDraft(e.target.value)} />
+          <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={sendRoom}>➤</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (npc) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: '70vh' }}>
+        <button className="lrpg-btn" onClick={() => setView('hall')} style={{ alignSelf: 'flex-start', background: 'none', color: COLORS.textMuted, fontSize: 12 }}>← Зал</button>
+        <div style={{ fontSize: 15, fontWeight: 800 }}>{npc.emoji} {npc.name}</div>
+        <div style={{ fontSize: 11, color: COLORS.textMuted }}>{npc.role} · связь {(council.bonds[npc.id] || {}).affinity ?? 40}</div>
+        {dm.length === 0 && <div style={{ fontSize: 12, color: COLORS.textMuted }}>{npc.greet[0]}</div>}
+        {dm.map(m => (
+          <div key={m.ts} style={{ alignSelf: m.who === 'you' ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
+            <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: m.who === 'you' ? 'rgba(108,99,255,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
+          </div>
+        ))}
+        {busy && <div style={{ fontSize: 11, color: COLORS.textMuted }}>{npc.name} печатает…</div>}
+        {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input className="lrpg-input" placeholder={'Написать ' + npc.name} value={draft} onChange={e => setDraft(e.target.value)} />
+          <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={sendDm}>➤</button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <ScreenHeader title="Штаб Кайлена" icon={Users} />
-      <HudCard style={{ padding: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 800 }}>Директор — Мастер Кайлен</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>
-          Совет сам собирается утром (5–12) и в обед (12–17). Можно собрать вне очереди и кинуть тему — каждый говорит из своей роли и помнит прошлые заседания.
-        </div>
-        {due && <div style={{ fontSize: 11, color: COLORS.teal, marginTop: 6 }}>Сейчас слот: {due === 'morning' ? 'утренний' : 'обеденный'} совет.</div>}
-      </HudCard>
-
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {COUNCIL_NPCS.map(n => {
-          const b = council.bonds[n.id] || emptyNpcBond(n.id);
-          return (
-            <span key={n.id} style={{ fontSize: 10, padding: '4px 8px', borderRadius: 999, background: 'rgba(108,99,255,0.12)', color: COLORS.text }}>
-              {n.name} · {n.role} · {b.affinity}
-            </span>
-          );
-        })}
-      </div>
-      {council.facts[0] && (
-        <div style={{ fontSize: 11, color: COLORS.textMuted }}>Штаб помнит: {council.facts[0].text}</div>
-      )}
-
-      <input className="lrpg-input" placeholder="Тема совета (необязательно)" value={topic} onChange={e => setTopic(e.target.value)} />
-      <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={() => go(due || 'topic', topic)}>
-        {busy ? 'Штаб собирается…' : due ? 'Начать положенный совет' : 'Собрать внеочередной совет'}
-      </button>
+      <div style={{ fontSize: 11, color: COLORS.textMuted }}>Поговори с кем-то лично или собери всех в чат. Рекомендации штаба — отдельно.</div>
+      {COUNCIL_NPCS.map(n => {
+        const b = council.bonds[n.id] || emptyNpcBond(n.id);
+        return (
+          <button key={n.id} className="lrpg-btn" onClick={() => { setView('npc:' + n.id); setDraft(''); setErr(null); }}
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: 14, background: 'rgba(255,255,255,0.04)', textAlign: 'left' }}>
+            <span><span style={{ fontSize: 16 }}>{n.emoji}</span> <b>{n.name}</b> · {n.role}</span>
+            <span style={{ fontSize: 10, color: COLORS.textMuted }}>{b.affinity}</span>
+          </button>
+        );
+      })}
+      <input className="lrpg-input" placeholder="Тема, если есть (необязательно)" value={topic} onChange={e => setTopic(e.target.value)} />
+      <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={startRoom}>{busy ? 'Собираются…' : 'Собрать совет'}</button>
+      <button className="lrpg-btn" disabled={busy} onClick={reco} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Дать рекомендации</button>
       {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
-
       {pending && (
         <HudCard style={{ padding: 12, border: `1px solid ${COLORS.gold}55` }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold }}>Решения ждут подтверждения</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold }}>Рекомендации штаба</div>
           <div style={{ fontSize: 12, marginTop: 6, whiteSpace: 'pre-wrap' }}>{pending.director}</div>
-          {(pending.actions || []).length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              {(pending.actions || []).map((a, i) => (
-                <div key={i} style={{ fontSize: 11, color: COLORS.textMuted }}>• {a.type}: {a.label || a.title}</div>
-              ))}
-            </div>
-          )}
+          {(pending.actions || []).map((a, i) => <div key={i} style={{ fontSize: 11, color: COLORS.textMuted }}>• {a.type}: {a.label || a.title}</div>)}
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button className="lrpg-btn lrpg-cta" onClick={acceptCouncil}>Принять</button>
-            <button className="lrpg-btn" onClick={dismissCouncil} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Отклонить дары</button>
+            <button className="lrpg-btn" onClick={dismissCouncil} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Отклонить</button>
           </div>
         </HudCard>
-      )}
-
-      {last && (
-        <Card>
-          <div style={{ fontSize: 10, color: COLORS.textMuted }}>{new Date(last.ts).toLocaleString('ru-RU')} · {last.slot}</div>
-          {last.topic && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>Тема: {last.topic}</div>}
-          <div style={{ fontSize: 12, marginTop: 6, whiteSpace: 'pre-wrap' }}>{last.director}</div>
-          {(last.lines || []).map((ln, i) => {
-            const npc = COUNCIL_NPCS.find(n => n.id === ln.id) || { name: ln.id };
-            return (
-              <div key={i} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${COLORS.border}` }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: COLORS.violet }}>{npc.name}</div>
-                <div style={{ fontSize: 12 }}>{ln.text}</div>
-              </div>
-            );
-          })}
-        </Card>
-      )}
-
-      {council.meetings.length > 1 && (
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 6 }}>Память штаба</div>
-          {council.meetings.slice(1, 8).map(m => (
-            <div key={m.ts} style={{ fontSize: 11, color: COLORS.textMuted, padding: '4px 0', borderBottom: `1px solid ${COLORS.border}` }}>
-              {new Date(m.ts).toLocaleDateString('ru-RU')} · {m.slot}: {m.memory || m.director?.slice(0, 80)}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {(council.grants.achievements.length + council.grants.titles.length + council.grants.gear.length) > 0 && (
-        <Card>
-          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Дары штаба</div>
-          {council.grants.titles.map(t => (
-            <div key={t.id} style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-              <span>Титул: {t.label}</span>
-              <button className="lrpg-btn" onClick={() => setCharacterTitle(t.label)} style={{ background: COLORS.violetSoft, borderRadius: 8, padding: '2px 8px', fontSize: 10 }}>Надеть</button>
-            </div>
-          ))}
-          {council.grants.achievements.map(a => <div key={a.id} style={{ fontSize: 12 }}>Ачивка: {a.label}</div>)}
-          {council.grants.gear.map(g => <div key={g.id} style={{ fontSize: 12 }}>Шмот: {g.label} ({g.slot})</div>)}
-        </Card>
       )}
     </div>
   );
@@ -3563,18 +3710,9 @@ function addYouTubeQuest(ch, metric, delta) {
   async function runCouncil(slot, topic) {
     const prev = state;
     const council = normalizeCouncil(prev.council);
-    const mem = council.meetings.slice(0, 12).map(m => ({
-      date: new Date(m.ts).toISOString().slice(0, 10), slot: m.slot, topic: m.topic, memory: m.memory, director: (m.director || '').slice(0, 160),
+    const userMsg = JSON.stringify(ContextManager.build('COUNCIL', prev, {
+      slot, topic: topic || null, energy, npc: COUNCIL_NPCS.map(n => ({ id: n.id, name: n.name, role: n.role, vibe: n.vibe, domain: n.domain })),
     }));
-    const userMsg = JSON.stringify({
-      slot, topic: topic || null, now: new Date().toISOString(),
-      brief: councilStateBrief(prev),
-      energy,
-      память_заседаний: mem,
-      факты_штаба: (council.facts || []).slice(0, 24),
-      связи: Object.values(council.bonds || {}),
-      npc: COUNCIL_NPCS,
-    });
     const raw = await callClaudeAPIWithRetry(COUNCIL_SYSTEM, [{ role: 'user', content: userMsg }], 2, { taskType: 'COUNCIL', jsonMode: true });
     let data;
     try { data = parseCouncilJson(raw); }
@@ -3596,6 +3734,41 @@ function addYouTubeQuest(ch, metric, delta) {
       };
     });
     gameFeedback('QUEST_COMPLETE', { xp: 5 });
+  }
+
+  async function talkToNpc(npcId, text) {
+    const npc = COUNCIL_NPCS.find(n => n.id === npcId);
+    if (!npc) return;
+    const ctx = ContextManager.build('CHAT', state, { npc, bond: (state.council && state.council.bonds || {})[npcId] });
+    const sys = 'Ты ' + npc.name + ', ' + npc.role + ' в Life RPG. Характер: ' + npc.vibe + '. Область: ' + npc.domain + '. Мат: ' + npc.swear + '. По-русски, 1-4 коротких реплики. Не выдумывай цифры.';
+    const reply = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, игрок: text }) }], 2, { taskType: 'CHAT' });
+    setState(prev => {
+      const c = normalizeCouncil(prev.council);
+      const chat = [...(c.chats[npcId] || []), { who: 'you', text, ts: Date.now() }, { who: npcId, text: String(reply).slice(0, 500), ts: Date.now() + 1 }];
+      const bonds = { ...c.bonds };
+      if (bonds[npcId]) bonds[npcId] = { ...bonds[npcId], lastSpoke: Date.now(), notes: [{ ts: Date.now(), text: text.slice(0, 80) }, ...(bonds[npcId].notes || [])].slice(0, 16) };
+      return { ...prev, council: { ...c, chats: { ...c.chats, [npcId]: chat.slice(-40) }, bonds } };
+    });
+  }
+
+  async function sendCouncilChat(text, joinLines, mode) {
+    const incoming = [];
+    if (mode === 'talk' && text) incoming.push({ id: 'you-' + Date.now(), who: 'you', text, kind: 'talk', ts: Date.now() });
+    if (joinLines) incoming.push(...joinLines);
+    const ctx = ContextManager.build('COUNCIL', state, { mode, topic: text });
+    const sys = 'Пиши штаб Life RPG как живой чат. Мат можно, если персонажу можно. Тема любая. ТОЛЬКО JSON {"lines":[{"id":"nori","text":"..."}]}. open: 3-6 реплик. talk: 1-3 ответа, не хором. ' + COUNCIL_NPCS.map(n => n.id + ':' + n.vibe).join('; ');
+    let lines = [];
+    try {
+      const raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, last: (state.council && state.council.room || []).slice(-8), user: text, mode }) }], 2, { taskType: 'COUNCIL', jsonMode: true });
+      const data = parseCouncilJson(raw);
+      lines = (data.lines || []).slice(0, 6).map(l => ({ id: 'r-' + Math.random().toString(36).slice(2,8), who: l.id, text: String(l.text || '').slice(0, 280), kind: 'talk', ts: Date.now() }));
+    } catch (e) {
+      lines = [{ id: 'r-fb', who: 'kaylen', text: 'Говорите. Штаб слушает.', kind: 'talk', ts: Date.now() }];
+    }
+    setState(prev => {
+      const c = normalizeCouncil(prev.council);
+      return { ...prev, council: { ...c, room: [...(c.room || []), ...incoming, ...lines].slice(-80) } };
+    });
   }
 
   function dismissCouncil() {
@@ -4156,7 +4329,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'council' && (
-                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} setCharacterTitle={setCharacterTitle} />
+                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} setCharacterTitle={setCharacterTitle} talkToNpc={talkToNpc} sendCouncilChat={sendCouncilChat} />
               )}
               {subTab.profile === 'mentor' && <MentorTab state={state} />}
               {subTab.profile === 'events' && (
