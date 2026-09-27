@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.12';
+const APP_VERSION = '14.12.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -911,6 +911,7 @@ const REWARD_CATEGORIES = [
 // (заработал/потратил/вернул/скорректировал) проходят сюда и попадают в Coin Ledger.
 // amount для earn/spend/refund всегда положительный (направление задаёт type);
 // для adjustment amount — со знаком (штрафы за пропуск квеста и т.п.).
+function rarityRu(r){return ({Common:'Обычный',Rare:'Редкий',Epic:'Эпический',Legendary:'Легендарный'})[r]||r;}
 function hashSeed(str) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -922,22 +923,22 @@ function rng(seed) {
 }
 
 const RPG_ITEM_POOL = [
-  { id: 'shadow-runner', title: 'Shadow Runner', rarity: 'Rare', category: 'equipment', icon: '👟', cost: 450, currency: 'coins', effect: '+5% XP за квесты движения', collection: 'discipline', lore: 'Для тех, кто не ищет лёгких путей.' },
-  { id: 'discipline-core', title: 'Discipline Core', rarity: 'Epic', category: 'accessory', icon: '💠', cost: 1800, currency: 'coins', effect: '+10% XP Discipline', collection: 'discipline', lore: 'Ядро привычки.' },
-  { id: 'neon-frame', title: 'Neon Frame', rarity: 'Rare', category: 'frame', icon: '🟪', cost: 520, currency: 'coins', effect: 'Рамка профиля', collection: 'neon' },
-  { id: 'warrior-aura', title: 'Warrior Aura', rarity: 'Epic', category: 'aura', icon: '🔥', cost: 1600, currency: 'coins', effect: 'Аура HUD', collection: 'warrior' },
-  { id: 'focus-lens', title: 'Focus Lens', rarity: 'Common', category: 'accessory', icon: '🔍', cost: 90, currency: 'coins', effect: 'Мелочь для фокуса', collection: 'focus' },
-  { id: 'iron-badge', title: 'Iron Badge', rarity: 'Common', category: 'badge', icon: '🛡️', cost: 80, currency: 'coins', collection: 'warrior' },
-  { id: 'gold-thread', title: 'Gold Thread', rarity: 'Rare', category: 'cosmetic', icon: '✨', cost: 380, currency: 'coins', collection: 'wealth' },
-  { id: 'void-cloak', title: 'Void Cloak', rarity: 'Legendary', category: 'armor', icon: '🌑', cost: 8, currency: 'crystals', effect: 'Плащ пустоты', collection: 'void' },
-  { id: 'streak-charm', title: 'Streak Charm', rarity: 'Rare', category: 'accessory', icon: '🔥', cost: 420, currency: 'coins', collection: 'discipline' },
-  { id: 'taxi-coin', title: 'Taxi Token', rarity: 'Common', category: 'cosmetic', icon: '🚕', cost: 70, currency: 'coins', collection: 'wealth' },
-  { id: 'creator-mic', title: 'Creator Mic', rarity: 'Rare', category: 'weapon', icon: '🎤', cost: 560, currency: 'coins', collection: 'creator' },
+  { id: 'shadow-runner', title: 'Тень бегуна', rarity: 'Rare', category: 'equipment', icon: '👟', cost: 450, currency: 'coins', effect: '+5% XP за квесты движения', collection: 'discipline', lore: 'Для тех, кто не ищет лёгких путей.' },
+  { id: 'discipline-core', title: 'Ядро дисциплины', rarity: 'Epic', category: 'accessory', icon: '💠', cost: 1800, currency: 'coins', effect: '+10% XP Discipline', collection: 'discipline', lore: 'Ядро привычки.' },
+  { id: 'neon-frame', title: 'Неоновая рамка', rarity: 'Rare', category: 'frame', icon: '🟪', cost: 520, currency: 'coins', effect: 'Рамка профиля', collection: 'neon' },
+  { id: 'warrior-aura', title: 'Аура воина', rarity: 'Epic', category: 'aura', icon: '🔥', cost: 1600, currency: 'coins', effect: 'Аура HUD', collection: 'warrior' },
+  { id: 'focus-lens', title: 'Линза фокуса', rarity: 'Common', category: 'accessory', icon: '🔍', cost: 90, currency: 'coins', effect: 'Мелочь для фокуса', collection: 'focus' },
+  { id: 'iron-badge', title: 'Железный знак', rarity: 'Common', category: 'badge', icon: '🛡️', cost: 80, currency: 'coins', collection: 'warrior' },
+  { id: 'gold-thread', title: 'Золотая нить', rarity: 'Rare', category: 'cosmetic', icon: '✨', cost: 380, currency: 'coins', collection: 'wealth' },
+  { id: 'void-cloak', title: 'Плащ пустоты', rarity: 'Legendary', category: 'armor', icon: '🌑', cost: 8, currency: 'crystals', effect: 'Плащ пустоты', collection: 'void' },
+  { id: 'streak-charm', title: 'Оберег серии', rarity: 'Rare', category: 'accessory', icon: '🔥', cost: 420, currency: 'coins', collection: 'discipline' },
+  { id: 'taxi-coin', title: 'Жетон такси', rarity: 'Common', category: 'cosmetic', icon: '🚕', cost: 70, currency: 'coins', collection: 'wealth' },
+  { id: 'creator-mic', title: 'Микрофон автора', rarity: 'Rare', category: 'weapon', icon: '🎤', cost: 560, currency: 'coins', collection: 'creator' },
   { id: 'dawn-title', title: 'Титул: Рассвет', rarity: 'Epic', category: 'title', icon: '🌅', cost: 4, currency: 'crystals', collection: 'focus' },
-  { id: 'wooden-shard', title: 'Wooden Shard', rarity: 'Common', category: 'fragment', icon: '🪵', cost: 50, currency: 'coins' },
-  { id: 'spark-vial', title: 'Spark Vial', rarity: 'Common', category: 'consumable', icon: '🧪', cost: 110, currency: 'coins' },
-  { id: 'night-runner', title: 'Night Runner', rarity: 'Rare', category: 'equipment', icon: '🌙', cost: 490, currency: 'coins', collection: 'discipline' },
-  { id: 'ledger-seal', title: 'Ledger Seal', rarity: 'Rare', category: 'badge', icon: '📒', cost: 300, currency: 'coins', collection: 'wealth' },
+  { id: 'wooden-shard', title: 'Деревянный осколок', rarity: 'Common', category: 'fragment', icon: '🪵', cost: 50, currency: 'coins' },
+  { id: 'spark-vial', title: 'Колба искры', rarity: 'Common', category: 'consumable', icon: '🧪', cost: 110, currency: 'coins' },
+  { id: 'night-runner', title: 'Ночной бегун', rarity: 'Rare', category: 'equipment', icon: '🌙', cost: 490, currency: 'coins', collection: 'discipline' },
+  { id: 'ledger-seal', title: 'Печать учёта', rarity: 'Rare', category: 'badge', icon: '📒', cost: 300, currency: 'coins', collection: 'wealth' },
 ];
 
 function emptyEconomy() {
@@ -990,7 +991,7 @@ function buildDailyShop(dateKey, salt) {
   }).map((it, i) => ({ ...it, shopId: dateKey + '-' + i, expiresAt: dateKey }));
 }
 
-const WHEEL_THEMES = ['Discipline', 'Warrior', 'Focus', 'Fitness', 'Wealth', 'Adventure', 'Jackpot'];
+const WHEEL_THEMES = ['Дисциплина', 'Воин', 'Фокус', 'Тело', 'Богатство', 'Приключение', 'Джекпот'];
 function buildWheel(dateKey) {
   const day = new Date(dateKey + 'T12:00:00').getDay();
   const theme = WHEEL_THEMES[day] || 'Adventure';
@@ -1000,10 +1001,10 @@ function buildWheel(dateKey) {
     { id: 'c150', label: '150¢', kind: 'coins', amount: 150, color: '#E0B84A' },
     { id: 'tix', label: 'Билет', kind: 'ticket', amount: 1, color: '#00E5FF' },
     { id: 'c80', label: '80¢', kind: 'coins', amount: 80, color: '#8B7355' },
-    { id: 'com', label: 'Common', kind: 'item', rarity: 'Common', color: '#9CA3AF' },
+    { id: 'com', label: 'Обычный', kind: 'item', rarity: 'Common', color: '#9CA3AF' },
     { id: 'cry', label: 'Кристалл', kind: 'crystals', amount: 1, color: '#A855F7' },
-    { id: 'rare', label: 'Rare', kind: 'item', rarity: 'Rare', color: '#5B8DEF' },
-    { id: 'epic', label: day === 0 ? 'Jackpot' : 'Epic', kind: day === 0 ? 'jackpot' : 'item', rarity: 'Epic', color: '#C084FC' },
+    { id: 'rare', label: 'Редкий', kind: 'item', rarity: 'Rare', color: '#5B8DEF' },
+    { id: 'epic', label: day === 0 ? 'Джекпот' : 'Эпик', kind: day === 0 ? 'jackpot' : 'item', rarity: 'Epic', color: '#C084FC' },
   ];
   if (rnd() > 0.5) segs[3] = { id: 'c40', label: '40¢', kind: 'coins', amount: 40, color: '#8B7355' };
   return { theme, segs };
@@ -1042,16 +1043,19 @@ function grantWheelPrize(prev, seg, dateKey) {
     s = { ...s, economy: eco };
   }
   const eco = normalizeEconomy(s.economy);
-  eco.lastWheel = { date: dateKey, prize: seg.label, ts: Date.now() };
+  eco.lastWheel = { date: dateKey, prize: seg.label, ts: Date.now(), idx: typeof seg._idx === 'number' ? seg._idx : null };
   eco.stats.spins = (eco.stats.spins || 0) + 1;
   const rare = seg.rarity === 'Rare' || seg.rarity === 'Epic' || seg.kind === 'crystals' || seg.kind === 'jackpot';
   eco.pityRare = rare ? 0 : (eco0.pityRare || 0) + 1;
   return { ...s, economy: eco };
 }
 
-function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin, spinning }) {
+function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin }) {
   useEffect(() => { if (ensureDailyShop) ensureDailyShop(); }, []);
   const [sub, setSub] = useState('shop');
+  const [spinning, setSpinning] = useState(false);
+  const [rot, setRot] = useState(0);
+  const [reveal, setReveal] = useState(null);
   const eco = normalizeEconomy(state.economy);
   const today = todayStr();
   const shop = (eco.shopDate === today && eco.shopItems.length) ? eco.shopItems : buildDailyShop(today, String(state.firstOpenedAt || 'x'));
@@ -1059,77 +1063,130 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
   const freeLeft = eco.lastFreeSpinDate !== today;
   const tabs = [
     { k: 'shop', l: 'Витрина' }, { k: 'wheel', l: 'Колесо' }, { k: 'chests', l: 'Сундуки' },
-    { k: 'inv', l: 'Коллекция' }, { k: 'life', l: 'Реал' },
+    { k: 'inv', l: 'Коллекция' },
   ];
+  async function doSpin() {
+    if (spinning) return;
+    if (!freeLeft && (eco.tickets || 0) < 1) return;
+    const idx = (typeof forcedIdx === 'number') ? forcedIdx : rollWheelIndex(wheel.segs, eco.pityRare || 0);
+    const segW = 360 / wheel.segs.length;
+    const target = 360 * 6 + (360 - (idx * segW + segW / 2));
+    setSpinning(true);
+    setRot(target);
+    await new Promise(r => setTimeout(r, 4200));
+    if (spinDailyWheel) spinDailyWheel(idx);
+    setReveal({ type: 'wheel', title: wheel.segs[idx].label });
+    setSpinning(false);
+  }
+  function doChest(ch) {
+    if (openChest) openChest(ch);
+    setTimeout(() => {
+      setReveal({ type: 'chest', title: ch.title });
+    }, 50);
+  }
+  const chestShow = reveal && reveal.type === 'chest' && eco.lastChest && (Date.now() - (eco.lastChest.ts || 0) < 120000);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
-        <span style={{ color: COLORS.gold }}>¢ {state.coins}</span>
-        <span style={{ color: '#A855F7' }}>◆ {eco.crystals}</span>
-        <span style={{ color: '#00E5FF' }}>🎟 {eco.tickets}</span>
-        <span style={{ color: COLORS.textMuted }}>осколки {eco.fragments}</span>
+        <span style={{ color: COLORS.gold }}>монеты {state.coins}</span>
+        <span style={{ color: '#A855F7' }}>кристаллы {eco.crystals}</span>
+        <span style={{ color: '#00E5FF' }}>билеты {eco.tickets}</span>
       </div>
       <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-        {tabs.map(t => (
-          <button key={t.k} className="lrpg-btn" onClick={() => setSub(t.k)} style={{ flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, background: sub === t.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,.05)', color: '#fff' }}>{t.l}</button>
+        {tabs.map(tb => (
+          <button key={tb.k} className="lrpg-btn" onClick={() => setSub(tb.k)} style={{ flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, background: sub === tb.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,.05)', color: '#fff' }}>{tb.l}</button>
         ))}
       </div>
       {sub === 'shop' && (
         <>
-          <div style={{ fontSize: 11, color: COLORS.textMuted }}>Витрина дня {today}. Завтра другой набор.</div>
+          <div style={{ fontSize: 11, color: COLORS.textMuted }}>Витрина на {today}. Завтра другой набор.</div>
           {shop.map(it => (
             <Card key={it.shopId || it.id} style={{ border: it.featured ? '1px solid #C084FC' : `1px solid ${COLORS.border}` }}>
-              {it.featured && <div style={{ fontSize: 10, color: '#C084FC', fontWeight: 800 }}>FEATURED</div>}
+              {it.featured && <div style={{ fontSize: 10, color: '#C084FC', fontWeight: 800 }}>хит дня</div>}
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <div>
                   <div style={{ fontSize: 16 }}>{it.icon} <b>{it.title}</b></div>
-                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>{it.rarity} · {it.effect || it.category}</div>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>{rarityRu(it.rarity)} · {it.effect || it.category}</div>
                 </div>
                 <button className="lrpg-btn lrpg-cta" onClick={() => buyShopItem(it)} style={{ padding: '8px 10px', fontSize: 11 }}>
-                  {it.currency === 'crystals' ? `◆${it.cost}` : `¢${it.cost}`}
+                  {it.currency === 'crystals' ? `${it.cost} кр.` : `${it.cost} монет`}
                 </button>
               </div>
             </Card>
           ))}
           <button className="lrpg-btn" onClick={() => rerollShopSlot()} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>
-            Реролл слота · {50 * Math.pow(2, eco.shopRerolls || 0)}¢
+            Заменить товар · {50 * Math.pow(2, eco.shopRerolls || 0)} монет
           </button>
         </>
       )}
       {sub === 'wheel' && (
         <Card>
-          <div style={{ fontSize: 13, fontWeight: 800 }}>✦ {wheel.theme} Wheel ✦</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, margin: '8px 0' }}>
-            {wheel.segs.map(s => <div key={s.id} style={{ fontSize: 11, padding: 6, borderRadius: 8, background: s.color + '22' }}>{s.label}</div>)}
+          <div style={{ fontSize: 13, fontWeight: 800, textAlign: 'center' }}>Колесо: {wheel.theme}</div>
+          <div style={{ position: 'relative', width: 260, height: 260, margin: '12px auto 8px' }}>
+            <div style={{ position: 'absolute', left: '50%', top: -6, transform: 'translateX(-50%)', zIndex: 3, fontSize: 22, color: '#00E5FF' }}>▼</div>
+            <div style={{
+              width: 260, height: 260, borderRadius: '50%',
+              background: `conic-gradient(${wheel.segs.map((s, i) => `${s.color} ${i * 12.5}% ${(i + 1) * 12.5}%`).join(',')})`,
+              transform: `rotate(${rot}deg)`,
+              transition: spinning ? 'transform 4.2s cubic-bezier(.12,.7,.08,1)' : 'none',
+              border: '6px solid #1a1f2c', boxShadow: '0 0 24px rgba(108,99,255,.35)',
+              position: 'relative',
+            }}>
+              {wheel.segs.map((s, i) => {
+                const ang = i * 45 + 22.5;
+                return (
+                  <div key={s.id} style={{
+                    position: 'absolute', left: '50%', top: '50%', width: 70, marginLeft: -35,
+                    transform: `rotate(${ang}deg) translateY(-96px)`,
+                    transformOrigin: '50% 0%',
+                    textAlign: 'center', fontSize: 10, fontWeight: 800, color: '#0B0F14',
+                  }}>{s.label}</div>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: COLORS.textMuted }}>Pity Rare через {Math.max(0, 7 - (eco.pityRare || 0))} спинов</div>
-          <button className="lrpg-btn lrpg-cta" disabled={spinning} onClick={() => spinDailyWheel()}>
+          <div style={{ fontSize: 11, color: COLORS.textMuted, textAlign: 'center' }}>
+            Гарантия редкого через {Math.max(0, 7 - (eco.pityRare || 0))} спинов
+          </div>
+          <button className="lrpg-btn lrpg-cta" disabled={spinning} onClick={doSpin} style={{ marginTop: 8 }}>
             {spinning ? 'Крутится…' : (freeLeft ? 'Бесплатный спин' : `Спин за билет (${eco.tickets})`)}
           </button>
-          {eco.lastWheel && eco.lastWheel.date === today && <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 6 }}>Сегодня: {eco.lastWheel.prize}</div>}
         </Card>
       )}
       {sub === 'chests' && (
         <>
+          <div style={{ fontSize: 11, color: COLORS.textMuted }}>Покупаешь — сундук сразу открывается. Награда в коллекции.</div>
           {[{ id: 'wood', title: 'Деревянный', cost: 250, cur: 'coins' }, { id: 'iron', title: 'Железный', cost: 700, cur: 'coins' }, { id: 'epic', title: 'Эпический', cost: 3, cur: 'crystals' }].map(ch => (
             <Card key={ch.id}>
-              <div style={{ fontWeight: 800 }}>{ch.title} сундук</div>
-              <button className="lrpg-btn lrpg-cta" style={{ marginTop: 8 }} onClick={() => openChest(ch)}>{ch.cur === 'crystals' ? `◆${ch.cost}` : `¢${ch.cost}`}</button>
+              <div style={{ fontSize: 28, textAlign: 'center' }}>📦</div>
+              <div style={{ fontWeight: 800, textAlign: 'center' }}>{ch.title} сундук</div>
+              <button className="lrpg-btn lrpg-cta" style={{ marginTop: 8 }} onClick={() => doChest(ch)}>
+                Открыть за {ch.cur === 'crystals' ? `${ch.cost} кр.` : `${ch.cost} монет`}
+              </button>
             </Card>
           ))}
-          {eco.lastChest && <div style={{ fontSize: 12, color: COLORS.teal }}>Последний: {eco.lastChest}</div>}
         </>
       )}
       {sub === 'inv' && (
         <>
-          <button className="lrpg-btn" onClick={claimDailyLogin} style={{ background: COLORS.violetSoft, borderRadius: 10, padding: '8px 12px' }}>
-            Ежедневка · день {(eco.dailyLogin.streak || 0) + (eco.dailyLogin.lastDate === today ? 0 : 1)}
-          </button>
-          {eco.inventory.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Пусто. Купи на витрине или крутни колесо.</div></Card>}
+          <button className="lrpg-btn" onClick={claimDailyLogin} style={{ background: COLORS.violetSoft, borderRadius: 10, padding: '8px 12px' }}>Забрать ежедневку</button>
+          {eco.inventory.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Пока пусто. Купи на витрине, открой сундук или крутни колесо.</div></Card>}
           {eco.inventory.map(it => (
-            <Card key={it.id + it.gotAt}><div>{it.icon} {it.title} · {it.rarity}</div><div style={{ fontSize: 11, color: COLORS.textMuted }}>{it.lore || it.effect}</div></Card>
+            <Card key={it.id + it.gotAt}><div>{it.icon} {it.title} · {rarityRu(it.rarity)}</div><div style={{ fontSize: 11, color: COLORS.textMuted }}>{it.lore || it.effect}</div></Card>
           ))}
         </>
+      )}
+      {(reveal || chestShow) && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.72)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setReveal(null)}>
+          <div style={{ background: '#121826', borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, textAlign: 'center', animation: 'lrpg-pop .35s ease-out' }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 12, color: COLORS.textMuted }}>{chestShow ? 'Сундук открыт' : 'Приз колеса'}</div>
+            <div style={{ fontSize: 42, margin: '10px 0' }}>{chestShow ? (eco.lastChest.icon || '📦') : '🎰'}</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>{chestShow ? eco.lastChest.title : (reveal && reveal.title)}</div>
+            {chestShow && eco.lastChest.dup && <div style={{ fontSize: 12, color: COLORS.teal }}>Уже было — добавлены осколки</div>}
+            {chestShow && <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 6 }}>Лежит во вкладке «Коллекция»</div>}
+            <button className="lrpg-btn lrpg-cta" style={{ marginTop: 14 }} onClick={() => { setReveal(null); if (chestShow) setSub('inv'); }}>Понятно</button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -3487,7 +3544,7 @@ export default function LifeRPG() {
       return { ...prev, ...led, economy: eco };
     });
   }
-  function spinDailyWheel() {
+  function spinDailyWheel(forcedIdx) {
     setState(prev => {
       const today = todayStr();
       const eco = normalizeEconomy(prev.economy);
@@ -3501,8 +3558,10 @@ export default function LifeRPG() {
       const e = normalizeEconomy(next.economy);
       e.lastFreeSpinDate = today;
       next = { ...next, economy: e };
-      next = grantWheelPrize(next, seg, today);
-      next = { ...next, chronicle: pushChronicle(next.chronicle, 'SYSTEM', 'Колесо (' + wheel.theme + '): ' + seg.label) };
+      next = grantWheelPrize(next, { ...seg, _idx: idx }, today);
+      const ee = normalizeEconomy(next.economy);
+      ee.lastWheel = { ...(ee.lastWheel || {}), idx, prize: seg.label, date: today, ts: Date.now() };
+      next = { ...next, economy: ee, chronicle: pushChronicle(next.chronicle, 'SYSTEM', 'Колесо (' + wheel.theme + '): ' + seg.label) };
       gameFeedback('COIN_GAIN', { coins: seg.amount || 1 });
       return next;
     });
@@ -3523,7 +3582,7 @@ export default function LifeRPG() {
       const eco = normalizeEconomy(next.economy);
       const owned = eco.inventory.some(x => x.id === item.id);
       if (owned) eco.fragments += 2; else eco.inventory = [...eco.inventory, { ...item, gotAt: Date.now(), source: 'chest' }];
-      eco.lastChest = item.title; eco.stats.chests = (eco.stats.chests || 0) + 1;
+      eco.lastChest = { title: item.title, icon: item.icon, rarity: item.rarity, dup: owned, ts: Date.now() }; eco.stats.chests = (eco.stats.chests || 0) + 1;
       return { ...next, economy: eco, chronicle: pushChronicle(next.chronicle, 'SYSTEM', 'Сундук: ' + item.title) };
     });
   }
