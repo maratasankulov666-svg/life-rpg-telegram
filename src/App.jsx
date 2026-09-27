@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.6';
+const APP_VERSION = '14.6.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -3516,8 +3516,9 @@ useEffect(() => {
         .lrpg-btn:active { transform: scale(0.96); filter: brightness(1.12); }
         @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
         @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-        @keyframes lrpg-cloud-a { 0% { transform: translateX(-8%); } 100% { transform: translateX(18%); } }
-        @keyframes lrpg-cloud-b { 0% { transform: translateX(12%); } 100% { transform: translateX(-16%); } }
+        @keyframes lrpg-cloud-a { 0% { transform: translate3d(-40%,0,0); } 100% { transform: translate3d(55%,0,0); } }
+        @keyframes lrpg-cloud-b { 0% { transform: translate3d(50%,8px,0); } 100% { transform: translate3d(-45%,-6px,0); } }
+        @keyframes lrpg-cloud-c { 0% { transform: translate3d(-20%,4px,0); } 100% { transform: translate3d(30%,-10px,0); } }
         @keyframes lrpg-trees { 0%,100% { transform: translateX(0) scaleY(1); } 50% { transform: translateX(6px) scaleY(1.015); } }
         @keyframes lrpg-bg-drift { 0% { background-position: 48% 62%; } 50% { background-position: 52% 60%; } 100% { background-position: 48% 62%; } }
         @keyframes lrpg-leaf { 0% { transform: translate(0,0) rotate(0deg); opacity:.0; } 10%{opacity:.55} 100% { transform: translate(40px, 70px) rotate(80deg); opacity:0; } }
@@ -4302,37 +4303,37 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         backgroundPosition: 'center 62%',
         animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
       }} />
-      {!FEEDBACK_PREFS.batterySaver && (
-        <>
-          <div style={{
-            position: 'absolute', left: '18%', right: '18%', top: '10%', height: '28%', pointerEvents: 'none', overflow: 'hidden',
-          }}>
-            <div style={{
-              position: 'absolute', width: 160, height: 36, borderRadius: '50%',
-              background: 'radial-gradient(ellipse, rgba(200,220,255,0.22), rgba(200,220,255,0) 70%)',
-              top: 8, left: 0, filter: 'blur(6px)', animation: 'lrpg-cloud-a 36s linear infinite alternate',
-            }} />
-            <div style={{
-              position: 'absolute', width: 120, height: 28, borderRadius: '50%',
-              background: 'radial-gradient(ellipse, rgba(180,210,255,0.16), rgba(180,210,255,0) 70%)',
-              top: 28, left: 40, filter: 'blur(8px)', animation: 'lrpg-cloud-b 48s linear infinite alternate',
-            }} />
-            <div style={{
-              position: 'absolute', inset: 0,
-              background: 'linear-gradient(90deg, rgba(40,80,50,0.0) 0%, rgba(30,70,40,0.12) 40%, rgba(30,70,40,0.0) 80%)',
-              animation: 'lrpg-trees 9s ease-in-out infinite',
-              mixBlendMode: 'soft-light',
-            }} />
-            {[0,1,2].map(i => (
-              <span key={i} style={{
-                position: 'absolute', left: `${20+i*22}%`, top: 6, width: 4, height: 6, borderRadius: '0 70% 0 70%',
-                background: 'rgba(90,160,90,0.45)',
-                animation: `lrpg-leaf ${10+i*3}s linear ${i*2}s infinite`,
-              }} />
-            ))}
-          </div>
-        </>
-      )}
+      <div style={{
+        position: 'absolute', left: '12%', right: '12%', top: '8%', height: '42%',
+        pointerEvents: 'none', overflow: 'hidden', zIndex: 1,
+      }}>
+        <div style={{
+          position: 'absolute', width: '70%', height: 70, borderRadius: '50%',
+          left: '-10%', top: 10,
+          background: 'radial-gradient(ellipse at center, rgba(230,240,255,0.55) 0%, rgba(180,200,230,0.18) 45%, rgba(180,200,230,0) 70%)',
+          animation: 'lrpg-cloud-a 22s ease-in-out infinite alternate',
+          willChange: 'transform',
+        }} />
+        <div style={{
+          position: 'absolute', width: '55%', height: 54, borderRadius: '50%',
+          left: '30%', top: 36,
+          background: 'radial-gradient(ellipse at center, rgba(210,225,255,0.42) 0%, rgba(160,190,230,0.14) 50%, rgba(160,190,230,0) 72%)',
+          animation: 'lrpg-cloud-b 28s ease-in-out infinite alternate',
+          willChange: 'transform',
+        }} />
+        <div style={{
+          position: 'absolute', width: '48%', height: 44, borderRadius: '50%',
+          left: '8%', top: 58,
+          background: 'radial-gradient(ellipse at center, rgba(255,255,255,0.28) 0%, rgba(200,215,240,0.1) 48%, rgba(200,215,240,0) 70%)',
+          animation: 'lrpg-cloud-c 34s ease-in-out infinite alternate',
+          willChange: 'transform',
+        }} />
+        <div style={{
+          position: 'absolute', left: 0, bottom: 0, width: '40%', height: '55%',
+          background: 'linear-gradient(180deg, rgba(20,50,28,0) 0%, rgba(18,48,26,0.22) 100%)',
+          animation: 'lrpg-trees 8s ease-in-out infinite',
+        }} />
+      </div>
       <div style={{
         position: 'absolute', inset: 0,
         background: 'linear-gradient(180deg, rgba(8,7,14,0.28) 0%, rgba(8,7,14,0.00) 18%, rgba(8,7,14,0.00) 62%, rgba(8,7,14,0.38) 100%)',
