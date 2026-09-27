@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.7';
+const APP_VERSION = '14.8';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1519,7 +1519,7 @@ function defaultState() {
       taxi: { dailyTarget: 10000, commissionPct: 9, orders: [] },
       emergencyFundGoalMonths: 3,
     },
-    youtube: { channels: [] }, // {id,name,handle,channelId,thumb,subs,views,videos,history:[{date,subs,views,videos}],lastSync}
+    youtube: { channels: [], activeChannelId: null, goals: [], ideas: [], contentItems: [], settings: { defaultPlanningPeriod: 7, defaultPublishFrequency: 3 } },
     garage: {
       photo: null,
       name: 'Моя машина',
@@ -3307,6 +3307,22 @@ function addYouTubeQuest(ch, metric, delta) {
   });
 }
 
+  function patchYoutube(mut) {
+    setState(prev => ({ ...prev, youtube: mut(normalizeYoutube(prev.youtube)) }));
+  }
+  function onCreatorAction(kind, title) {
+    setState(prev => {
+      const xp = kind === 'stage' ? 15 : kind === 'plan' ? 20 : 10;
+      const { character, leveledUp } = applyXP(prev.character, xp);
+      let chronicle = pushChronicle(prev.chronicle, 'SYSTEM', `📺 +${xp} XP за ${kind}: ${title}`);
+      if (leveledUp) {
+        chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Level Up! ${character.level}`);
+        gameFeedback('LEVEL_UP', { level: character.level });
+      } else gameFeedback('XP_GAIN', { xp });
+      return { ...prev, character, chronicle };
+    });
+  }
+
   function setBodyProfile(patch) {
     setState(prev => ({ ...prev, body: { ...prev.body, ...patch } }));
   }
@@ -3763,10 +3779,11 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'youtube' && (
-                <YouTubeTab
+                <YouTubeHQ
                   youtube={state.youtube} quests={state.quests}
                   addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats}
                   deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest}
+                  patchYoutube={patchYoutube} onCreatorAction={onCreatorAction}
                 />
               )}
               {subTab.profile === 'inventory' && (
@@ -6721,6 +6738,232 @@ function resizeImageFile(file, maxDim = 700, quality = 0.8) {
     reader.readAsDataURL(file);
   });
 }
+
+function normalizeYoutube(yt) {
+  const y = yt || {};
+  return {
+    channels: (y.channels || []).map(c => ({
+      status: c.status || 'ACTIVE', niche: c.niche || '', language: c.language || 'ru', format: c.format || 'mixed', ...c,
+    })),
+    activeChannelId: y.activeChannelId || ((y.channels || [])[0] && y.channels[0].id) || null,
+    goals: y.goals || [],
+    ideas: y.ideas || [],
+    contentItems: y.contentItems || [],
+    settings: { defaultPlanningPeriod: 7, defaultPublishFrequency: 3, ...(y.settings || {}) },
+  };
+}
+
+const YT_STAGES = [
+  { key: 'IDEAS', label: 'Идеи' },
+  { key: 'SCRIPT', label: 'Сценарий' },
+  { key: 'PRODUCTION', label: 'Съёмка' },
+  { key: 'EDITING', label: 'Монтаж' },
+  { key: 'THUMBNAIL', label: 'Превью' },
+  { key: 'READY', label: 'Готово' },
+  { key: 'PUBLISHED', label: 'Вышло' },
+];
+
+function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest, patchYoutube, onCreatorAction }) {
+  const yt = normalizeYoutube(youtube);
+  const [sub, setSub] = useState('overview');
+  const [busy, setBusy] = useState(null);
+  const [aiText, setAiText] = useState('');
+  const [ideaTitle, setIdeaTitle] = useState('');
+  const tabs = [
+    { key: 'overview', label: 'Обзор' },
+    { key: 'channels', label: 'Каналы' },
+    { key: 'desk', label: 'AI Desk' },
+    { key: 'plan', label: 'План' },
+    { key: 'ideas', label: 'Идеи' },
+    { key: 'analytics', label: 'Аналитика' },
+    { key: 'goals', label: 'Цели' },
+  ];
+  const ch = yt.channels.find(c => c.id === yt.activeChannelId) || yt.channels[0];
+  const pipeline = YT_STAGES.map(s => ({ ...s, n: yt.contentItems.filter(i => i.status === s.key).length }));
+  const todayHint = yt.contentItems.find(i => i.status !== 'PUBLISHED') || yt.ideas.find(i => i.status !== 'archived');
+
+  async function askAI(task, userMsg) {
+    setBusy(task); setAiText('');
+    try {
+      const ctx = ch ? `Канал: ${ch.name}, подп. ${ch.subs ?? 'н/д'}, просмотры ${ch.views ?? 'н/д'}, видео ${ch.videos ?? 'н/д'}, ниша ${ch.niche || 'не указана'}.` : 'Каналов нет.';
+      const text = await callClaudeAPIWithRetry(
+        'Ты YouTube-наставник в Life RPG. Не выдумывай метрики, которых нет. Пиши по-русски коротко.',
+        [{ role: 'user', content: ctx + '\n' + userMsg }],
+        2,
+        { taskType: task }
+      );
+      setAiText(text);
+    } catch (e) {
+      setAiText('AI временно недоступен. Резервный режим: выбери одну идею и напиши hook из 1 предложения.');
+    }
+    setBusy(null);
+  }
+
+  function addIdea(src = 'manual', title) {
+    const t = (title || ideaTitle).trim();
+    if (!t) return;
+    patchYoutube(y => ({
+      ...y,
+      ideas: [...y.ideas, { id: uid(), channelId: ch?.id || null, title: t, hook: '', concept: '', format: 'Long', difficulty: 'Normal', status: 'new', createdAt: Date.now(), source: src }],
+    }));
+    setIdeaTitle('');
+    onCreatorAction && onCreatorAction('idea', t);
+  }
+
+  function ideaToPlan(idea) {
+    patchYoutube(y => ({
+      ...y,
+      ideas: y.ideas.map(i => i.id === idea.id ? { ...i, status: 'planned' } : i),
+      contentItems: [...y.contentItems, {
+        id: uid(), channelId: idea.channelId, ideaId: idea.id, title: idea.title, format: idea.format || 'Long',
+        status: 'SCRIPT', publishAt: null, notes: idea.hook || '', createdAt: Date.now(),
+      }],
+    }));
+    onCreatorAction && onCreatorAction('plan', idea.title);
+  }
+
+  function advanceItem(item) {
+    const idx = YT_STAGES.findIndex(s => s.key === item.status);
+    const next = YT_STAGES[Math.min(idx + 1, YT_STAGES.length - 1)].key;
+    patchYoutube(y => ({ ...y, contentItems: y.contentItems.map(i => i.id === item.id ? { ...i, status: next, updatedAt: Date.now() } : i) }));
+    onCreatorAction && onCreatorAction('stage', item.title);
+  }
+
+  function addGoal() {
+    if (!ch) return;
+    const target = Number(window.prompt('Цель по подписчикам', String((ch.subs || 0) + 1000))) || 0;
+    if (!target) return;
+    patchYoutube(y => ({
+      ...y,
+      goals: [...y.goals, { id: uid(), channelId: ch.id, title: `${target} подписчиков`, metric: 'subs', target, current: ch.subs || 0, status: 'active' }],
+    }));
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: 16, fontWeight: 800 }}>YouTube HQ</div>
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+        {tabs.map(t => (
+          <button key={t.key} className="lrpg-btn" onClick={() => setSub(t.key)} style={{
+            flexShrink: 0, padding: '6px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+            background: sub === t.key ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,0.04)',
+            color: sub === t.key ? '#fff' : COLORS.textMuted,
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {sub === 'overview' && (
+        <>
+          <HudCard style={{ padding: 12 }}>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Каналов {yt.channels.length} · в работе {yt.contentItems.filter(i => i.status !== 'PUBLISHED').length}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, marginTop: 6 }}>Что делать сегодня</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>{todayHint ? `Продолжи: «${todayHint.title}»` : 'Добавь идею или канал — появится задача дня.'}</div>
+            <button className="lrpg-btn lrpg-cta" style={{ marginTop: 8 }} onClick={() => askAI('YOUTUBE_PLAN', 'Дай одну главную задачу на сегодня и почему.')}>Попросить AI помочь</button>
+          </HudCard>
+          <HudCard style={{ padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>PIPELINE</div>
+            <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+              {pipeline.map(s => (
+                <div key={s.key} style={{ minWidth: 64, textAlign: 'center', padding: 6, borderRadius: 10, background: 'rgba(255,255,255,0.04)' }}>
+                  <div style={{ fontSize: 16, fontWeight: 800 }}>{s.n}</div>
+                  <div style={{ fontSize: 9, color: COLORS.textMuted }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </HudCard>
+          {yt.goals[0] && (
+            <HudCard style={{ padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>Текущая цель</div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>{yt.goals[0].title}</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{yt.goals[0].current || 0} / {yt.goals[0].target}</div>
+            </HudCard>
+          )}
+          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+        </>
+      )}
+
+      {sub === 'channels' && (
+        <YouTubeTab youtube={youtube} quests={quests} addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats} deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest} />
+      )}
+
+      {sub === 'desk' && (
+        <>
+          <button className="lrpg-btn lrpg-cta" disabled={!!busy} onClick={() => askAI('CONTENT_IDEAS', 'Предложи 5 идей роликов: название, hook, формат, почему подходит. Без выдуманной аналитики.')}>{busy === 'CONTENT_IDEAS' ? 'Думаю…' : 'Придумать идеи'}</button>
+          <button className="lrpg-btn" onClick={() => askAI('CONTENT_PLAN', 'Собери план на 7 дней: дата, тема, формат, этап. Если данных мало — так и скажи.')} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>{busy === 'CONTENT_PLAN' ? 'Думаю…' : 'Контент-план на 7 дней'}</button>
+          <button className="lrpg-btn" onClick={() => askAI('YOUTUBE_ANALYTICS', 'По доступным цифрам (только реальные из контекста) скажи что проверить дальше. Не выдумывай CTR/удержание.')} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>{busy === 'YOUTUBE_ANALYTICS' ? 'Думаю…' : 'Разобрать ситуацию'}</button>
+          {aiText && (
+            <Card>
+              <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div>
+              <button className="lrpg-btn" style={{ marginTop: 8, background: COLORS.violetSoft, borderRadius: 8, padding: '6px 10px', fontSize: 11 }} onClick={() => addIdea('ai', (aiText.split('\n').find(l => l.trim()) || 'Идея AI').slice(0, 80))}>Добавить первую строку в идеи</button>
+            </Card>
+          )}
+        </>
+      )}
+
+      {sub === 'ideas' && (
+        <>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input className="lrpg-input" placeholder="Новая идея" value={ideaTitle} onChange={e => setIdeaTitle(e.target.value)} />
+            <button className="lrpg-btn lrpg-cta" onClick={() => addIdea()}>+</button>
+          </div>
+          {yt.ideas.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Идей нет. Добавь вручную или через AI Desk.</div></Card>}
+          {yt.ideas.map(idea => (
+            <Card key={idea.id}>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>{idea.title}</div>
+              <div style={{ fontSize: 10, color: COLORS.textMuted }}>{idea.format} · {idea.source}</div>
+              <button className="lrpg-btn" onClick={() => ideaToPlan(idea)} style={{ marginTop: 6, background: COLORS.violetSoft, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>В план</button>
+            </Card>
+          ))}
+        </>
+      )}
+
+      {sub === 'plan' && (
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
+          {YT_STAGES.map(s => (
+            <div key={s.key} style={{ minWidth: 150, background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.textMuted, marginBottom: 6 }}>{s.label}</div>
+              {yt.contentItems.filter(i => i.status === s.key).map(item => (
+                <div key={item.id} style={{ background: COLORS.bgCard, borderRadius: 8, padding: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700 }}>{item.title}</div>
+                  {s.key !== 'PUBLISHED' && <button className="lrpg-btn" onClick={() => advanceItem(item)} style={{ marginTop: 4, fontSize: 10, background: COLORS.violetSoft, borderRadius: 8, padding: '4px 8px' }}>Дальше</button>}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {sub === 'analytics' && (
+        <Card>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Только реальные данные канала</div>
+          {!ch && <div style={{ fontSize: 12, color: COLORS.textMuted }}>Нет канала.</div>}
+          {ch && (
+            <>
+              <div style={{ fontSize: 13 }}>{ch.name}: {fmtNum(ch.subs)} подп. · {fmtNum(ch.views)} просм. · {fmtNum(ch.videos)} видео</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6 }}>CTR, удержание и доход не показываем — API их сейчас не отдаёт. Не выдумываем.</div>
+              <button className="lrpg-btn lrpg-cta" style={{ marginTop: 8 }} onClick={() => askAI('YOUTUBE_ANALYTICS', `Подписчики ${ch.subs}, просмотры ${ch.views}, видео ${ch.videos}. Что проверить? Без выдуманных цифр.`)}>Объяснить аналитику</button>
+            </>
+          )}
+          {aiText && <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 8 }}>{aiText}</div>}
+        </Card>
+      )}
+
+      {sub === 'goals' && (
+        <>
+          <button className="lrpg-btn lrpg-cta" onClick={addGoal}>Новая цель по подписчикам</button>
+          {yt.goals.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Целей нет. Это план, не обещание алгоритма.</div></Card>}
+          {yt.goals.map(g => (
+            <Card key={g.id}>
+              <div style={{ fontWeight: 700 }}>{g.title}</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{g.current || 0} / {g.target} · {g.metric}</div>
+            </Card>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 
 function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest }) {
   const [showAdd, setShowAdd] = useState(false);
