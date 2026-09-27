@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.10.2';
+const APP_VERSION = '14.10.4';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2461,7 +2461,7 @@ function pickEnterOrder() {
   return withDelay;
 }
 
-function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, setCharacterTitle, talkToNpc, sendCouncilChat }) {
+function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, setCharacterTitle, talkToNpc, sendCouncilChat, appendCouncilRoom }) {
   const council = normalizeCouncil(state.council);
   const [view, setView] = useState('hall');
   const [topic, setTopic] = useState('');
@@ -2469,6 +2469,8 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [joining, setJoining] = useState([]);
+  const [typingWho, setTypingWho] = useState(null);
+  const [meeting, setMeeting] = useState(null);
   const due = councilDue(state.council);
   const pending = council.pending;
   const npcId = view.startsWith('npc:') ? view.slice(4) : null;
@@ -2476,27 +2478,47 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   const dm = npc ? (council.chats[npc.id] || []) : [];
   const room = council.room || [];
 
+  async function playLines(lines) {
+    for (const line of lines || []) {
+      setTypingWho(line.who);
+      await new Promise(r => setTimeout(r, 650 + Math.random() * 900));
+      setJoining(prev => [...prev, line]);
+      if (appendCouncilRoom) appendCouncilRoom([line]);
+      setTypingWho(null);
+      await new Promise(r => setTimeout(r, 280));
+    }
+  }
+
   async function startRoom() {
-    setView('room'); setErr(null); setJoining([]);
+    const theme = topic.trim() || 'Встреча штаба';
+    setView('room'); setErr(null); setJoining([]); setTypingWho(null);
+    setMeeting({ title: theme, at: Date.now() });
+    setBusy(true);
     const order = pickEnterOrder();
+    const aiP = sendCouncilChat(theme, null, 'open').catch(e => { setErr(e.message || String(e)); return []; });
     let acc = [];
     for (const step of order) {
-      await new Promise(r => setTimeout(r, step.t));
-      const line = step.n.enter[Math.floor(Math.random() * step.n.enter.length)];
-      acc = [...acc, { id: 'join-' + step.n.id + Date.now(), who: step.n.id, text: line, kind: 'join', ts: Date.now() }];
+      setTypingWho(step.n.id);
+      await new Promise(r => setTimeout(r, Math.min(step.t, 1600)));
+      const line = { id: 'join-' + step.n.id + Date.now(), who: step.n.id, text: step.n.enter[Math.floor(Math.random() * step.n.enter.length)], kind: 'join', ts: Date.now() };
+      acc = [...acc, line];
       setJoining(acc);
+      setTypingWho(null);
+      await new Promise(r => setTimeout(r, 220));
     }
-    setBusy(true);
-    try { await sendCouncilChat(topic, acc, 'open'); setTopic(''); }
-    catch (e) { setErr(e.message || String(e)); }
+    const lines = await aiP;
+    await playLines(lines);
+    setTopic('');
     setBusy(false);
   }
 
   async function sendRoom() {
     if (!draft.trim() || busy) return;
     const text = draft.trim(); setDraft(''); setBusy(true); setErr(null);
-    try { await sendCouncilChat(text, null, 'talk'); }
-    catch (e) { setErr(e.message || String(e)); }
+    try {
+      const lines = await sendCouncilChat(text, null, 'talk');
+      await playLines(lines);
+    } catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
   }
 
@@ -2518,9 +2540,17 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   if (view === 'room') {
     const shown = [...joining.filter(j => !room.some(r => r.kind === 'join' && r.who === j.who)), ...room];
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: '70vh' }}>
-        <button className="lrpg-btn" onClick={() => setView('hall')} style={{ alignSelf: 'flex-start', background: 'none', color: COLORS.textMuted, fontSize: 12 }}>← Зал</button>
-        <div style={{ fontSize: 14, fontWeight: 800 }}>Совет</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: 'calc(100dvh - 148px)', minHeight: 420 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
+          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', color: COLORS.text, fontSize: 13 }}>← Зал</button>
+          <div style={{ fontSize: 14, fontWeight: 800 }}>Совет</div>
+          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 12, color: COLORS.textMuted }}>Выйти</button>
+        </div>
+        {meeting && (
+          <div style={{ fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>
+            🕒 {new Date(meeting.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · {meeting.title}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, minHeight: 52, marginBottom: 4 }}>
           {COUNCIL_NPCS.filter(n => shown.some(m => m.who === n.id)).map((n, i) => (
             <div key={n.id} style={{
@@ -2537,7 +2567,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
             </div>
           ))}
         </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 8 }}>
           {shown.map(m => {
             const n = COUNCIL_NPCS.find(x => x.id === m.who);
             const mine = m.who === 'you';
@@ -2554,10 +2584,14 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
               </div>
             );
           })}
-          {busy && <div style={{ fontSize: 11, color: COLORS.textMuted }}>печатают…</div>}
+          {typingWho && (
+            <div style={{ fontSize: 12, color: COLORS.teal, animation: 'lrpg-npc-bubble .3s ease-out' }}>
+              {(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).emoji} {(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).name} печатает…
+            </div>
+          )}
         </div>
         {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <input className="lrpg-input" placeholder="Скажи совету что угодно" value={draft} onChange={e => setDraft(e.target.value)} />
           <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={sendRoom}>➤</button>
         </div>
@@ -2567,10 +2601,14 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
 
   if (npc) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: '70vh' }}>
-        <button className="lrpg-btn" onClick={() => setView('hall')} style={{ alignSelf: 'flex-start', background: 'none', color: COLORS.textMuted, fontSize: 12 }}>← Зал</button>
-        <div style={{ fontSize: 15, fontWeight: 800 }}>{npc.emoji} {npc.name}</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted }}>{npc.role} · связь {(council.bonds[npc.id] || {}).affinity ?? 40}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: 'calc(100dvh - 148px)', minHeight: 420 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 13 }}>← Зал</button>
+          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 12, color: COLORS.textMuted }}>Выйти</button>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{npc.emoji} {npc.name}</div>
+        <div style={{ fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>{npc.role} · связь {(council.bonds[npc.id] || {}).affinity ?? 40}</div>
+        <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {dm.length === 0 && <div style={{ fontSize: 12, color: COLORS.textMuted }}>{npc.greet[0]}</div>}
         {dm.map(m => (
           <div key={m.ts} style={{ alignSelf: m.who === 'you' ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
@@ -2578,8 +2616,9 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
           </div>
         ))}
         {busy && <div style={{ fontSize: 11, color: COLORS.textMuted }}>{npc.name} печатает…</div>}
+        </div>
         {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <input className="lrpg-input" placeholder={'Написать ' + npc.name} value={draft} onChange={e => setDraft(e.target.value)} />
           <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={sendDm}>➤</button>
         </div>
@@ -3835,9 +3874,20 @@ function addYouTubeQuest(ch, metric, delta) {
     } catch (e) {
       lines = [{ id: 'r-fb', who: 'kaylen', text: 'Слушаю. Повторять не буду — говори суть.', kind: 'talk', ts: Date.now() }];
     }
+    if (incoming.length) {
+      setState(prev => {
+        const c = normalizeCouncil(prev.council);
+        return { ...prev, council: { ...c, room: [...(c.room || []), ...incoming].slice(-80) } };
+      });
+    }
+    return lines;
+  }
+
+  function appendCouncilRoom(lines) {
+    if (!lines || !lines.length) return;
     setState(prev => {
       const c = normalizeCouncil(prev.council);
-      return { ...prev, council: { ...c, room: [...(c.room || []), ...incoming, ...lines].slice(-80) } };
+      return { ...prev, council: { ...c, room: [...(c.room || []), ...lines].slice(-80) } };
     });
   }
 
@@ -4402,7 +4452,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'council' && (
-                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} setCharacterTitle={setCharacterTitle} talkToNpc={talkToNpc} sendCouncilChat={sendCouncilChat} />
+                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} setCharacterTitle={setCharacterTitle} talkToNpc={talkToNpc} sendCouncilChat={sendCouncilChat} appendCouncilRoom={appendCouncilRoom} />
               )}
               {subTab.profile === 'mentor' && <MentorTab state={state} />}
               {subTab.profile === 'events' && (
