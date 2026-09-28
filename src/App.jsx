@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.12.4';
+const APP_VERSION = '14.12.5';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1916,7 +1916,7 @@ function ensureDailyContent(s) {
       const xp = Math.round(lo + (hi - lo) * 0.3);
       quests.push({
         id: uid(), title: t.title, type: 'Bonus', difficulty: 'Normal',
-        xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp), stat: t.stat, status: 'active',
+        xp, coins: economistPayout('Bonus', 'Normal', xp), stat: t.stat, status: 'active',
         deadline: today + 'T23:59', order: order++, createdAt: Date.now(),
         source: 'pool', genDate: today,
       });
@@ -1958,7 +1958,7 @@ function ensureDailyContent(s) {
       const [lo, hi] = TYPE_XP_RANGE.Recovery;
       const xp = Math.round(lo + (hi - lo) * 0.5);
       quests.push({
-        id: uid(), title, type: 'Recovery', difficulty: 'Easy', xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp),
+        id: uid(), title, type: 'Recovery', difficulty: 'Easy', xp, coins: economistPayout('Recovery', 'Easy', xp),
         stat: 'discipline', status: 'active', deadline: null, order: order++, createdAt: Date.now(),
       });
     });
@@ -3176,11 +3176,12 @@ export default function LifeRPG() {
       if (!Array.isArray(s.nutrition.entries)) s.nutrition.entries = [];
       s.youtube = { ...defs.youtube, ...(s.youtube || {}) };
       if (!Array.isArray(s.youtube.channels)) s.youtube.channels = [];
-      const result = ensureDailyContent(s);
+      let result;
+      try { result = ensureDailyContent(s); } catch (e) { console.error(e); result = { state: s, welcomeBackDays: 0 }; }
       setState(result.state);
       setWelcomeBackDays(result.welcomeBackDays);
       setLoaded(true);
-    })();
+    })().catch(e => { console.error(e); setState(defaultState()); setLoaded(true); });
   }, []);
 
   useEffect(() => {
@@ -3244,7 +3245,7 @@ export default function LifeRPG() {
             const xp = Math.round(lo + (hi - lo) * 0.5);
             return {
               id: uid(), title: spec.title, type: spec.type, difficulty: 'Normal',
-              xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp), stat: spec.stat, secondaryStat: spec.secondaryStat,
+              xp, coins: economistPayout(spec.type || 'Weekly', 'Normal', xp), stat: spec.stat, secondaryStat: spec.secondaryStat,
               status: 'active', deadline: spec.type === 'Daily' ? today + 'T23:59' : null,
               order: order++, createdAt: Date.now(), source: 'ai', genDate: today,
             };
@@ -4194,7 +4195,7 @@ function addYouTubeQuest(ch, metric, delta) {
     const xp = Math.round(lo + (hi - lo) * DIFF_MULT[difficulty]);
     const q = {
       id: uid(), title: `${ch.name}: +${fmtNum(delta)} ${m.short} (до ${fmtNum(target)})`, type, difficulty,
-      xp, coins: economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp), stat: 'creator', secondaryStat: 'discipline', status: 'active',
+      xp, coins: economistPayout(typeof type==='string'?type:'Daily', typeof difficulty==='string'?difficulty:'Normal', xp), stat: 'creator', secondaryStat: 'discipline', status: 'active',
       deadline: null, order: prev.nextOrder, createdAt: Date.now(),
       ytLink: { channelRef: ch.id, metric, target },
     };
@@ -4471,7 +4472,7 @@ function addYouTubeQuest(ch, metric, delta) {
         const difficulty = DIFF_MULT[s.difficulty] !== undefined ? s.difficulty : 'Normal';
         const mult = DIFF_MULT[difficulty];
         const xp = Math.round(lo + (hi - lo) * mult);
-        const coins = economistPayout(spec && spec.type || 'Weekly', spec && spec.difficulty || 'Normal', xp);
+        const coins = economistPayout(typeof type==='string'?type:'Daily', typeof difficulty==='string'?difficulty:'Normal', xp);
         const stat = STATS_DEF.some(st => st.key === s.stat) ? s.stat : 'discipline';
         const deadline = new Date(Date.now() + Math.max(1, s.dueInDays || 7) * 86400000).toISOString().slice(0, 16);
         const q = {
