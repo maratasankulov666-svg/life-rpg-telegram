@@ -45,11 +45,16 @@ export default async function handler(req, res) {
       body,
     }).then(r => r.json());
     if (!tok.refresh_token && !tok.access_token) {
-      return res.status(400).send('Google не вернул токен: ' + JSON.stringify(tok));
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(400).send('<p>Google не вернул токен.</p><pre>' + JSON.stringify(tok) + '</pre>');
     }
-    const back = `${base}/?yt_refresh=${encodeURIComponent(tok.refresh_token || '')}&yt_access=${encodeURIComponent(tok.access_token || '')}`;
-    res.writeHead(302, { Location: back });
-    return res.end();
+    const payload = JSON.stringify({
+      refresh: tok.refresh_token || '',
+      access: tok.access_token || '',
+      at: Date.now(),
+    });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send('<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:-apple-system;background:#0B0F14;color:#E8EEF8;padding:24px"><p>Канал подключен. Возвращаю в игру…</p><script>try{localStorage.setItem("lrpg_yt_oauth",' + JSON.stringify(payload) + ');}catch(e){}location.replace("/");</script><p><a href="/" style="color:#00E5FF">Открыть игру</a></p></body></html>');
   } catch (e) {
     return res.status(500).send(String(e.message || e));
   }
