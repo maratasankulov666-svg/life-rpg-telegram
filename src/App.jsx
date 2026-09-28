@@ -126,7 +126,7 @@ import {
   Swords, Search, BarChart3, Youtube, User, Globe, RefreshCw, Eye,
 } from 'lucide-react';
 import {
-  LineChart, Line, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, AreaChart, Area, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.20';
+const APP_VERSION = '14.21';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -841,6 +841,56 @@ const YT_METRICS = [
   { key: 'views', label: 'Просмотры', short: 'просмотров' },
   { key: 'videos', label: 'Видео', short: 'видео' },
 ];
+
+function getYouTubeDateRange(period) {
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  end.setDate(end.getDate() - 1);
+  const daysMap = { '48h': 2, '7d': 7, '28d': 28, '90d': 90, '365d': 365 };
+  if (period === 'all') return { start: '2006-01-01', end: end.toISOString().slice(0, 10), days: null, label: 'Всё время' };
+  const days = daysMap[period] || 28;
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10), days, label: period };
+}
+function calculateGrowth(cur, prev) {
+  if (cur == null || prev == null || Number(prev) === 0) return null;
+  return ((Number(cur) - Number(prev)) / Math.abs(Number(prev))) * 100;
+}
+function formatMetric(n, { exact } = {}) {
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  const x = Number(n);
+  if (exact) return Math.round(x).toLocaleString('ru-RU');
+  if (Math.abs(x) >= 1e6) return (x / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (Math.abs(x) >= 1e4) return (x / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+  return Math.round(x).toLocaleString('ru-RU');
+}
+function formatDurationSec(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h) return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+  return `${m}:${String(r).padStart(2, '0')}`;
+}
+function classifyYouTubeContent(v = {}) {
+  const liveFlag = v.liveBroadcastContent && v.liveBroadcastContent !== 'none';
+  const liveMeta = v.liveStreamingDetails && (v.liveStreamingDetails.actualStartTime || v.liveStreamingDetails.scheduledStartTime);
+  if (liveFlag || liveMeta) {
+    if (v.liveBroadcastContent === 'live') return { contentType: 'LIVE', confidence: 'high' };
+    if (v.liveStreamingDetails?.actualEndTime) return { contentType: 'VIDEO', confidence: 'high', wasLive: true };
+    return { contentType: 'LIVE', confidence: 'medium' };
+  }
+  const blob = `${v.title || ''} ${v.description || ''}`;
+  const tagShort = /#shorts?\b/i.test(blob);
+  const sec = Number(v.seconds || 0);
+  if (sec > 0 && sec <= 60) return { contentType: 'SHORT', confidence: tagShort ? 'high' : 'medium' };
+  if (tagShort && sec > 0 && sec <= 180) return { contentType: 'SHORT', confidence: 'medium' };
+  if (sec > 60) return { contentType: 'VIDEO', confidence: 'high' };
+  return { contentType: 'VIDEO', confidence: 'low' };
+}
+function ytPct(n) { return n == null ? '—' : `${n > 0 ? '+' : ''}${n.toFixed(1)}%`; }
+
 function fmtNum(n) {
   if (n == null) return '—';
   if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.0', '') + 'M';
@@ -8171,7 +8221,7 @@ const YT_TRAFFIC_RU = {
   SUBSCRIBER: 'Подписчики', RELATED_VIDEO: 'Похожие видео', END_SCREEN: 'Конечная заставка',
   NO_LINK_OTHER: 'Без ссылки', YT_SEARCH: 'Поиск YouTube', YT_OTHER_PAGE: 'Другие страницы',
   EXT_URL: 'Внешние ссылки', SHORTS: 'Shorts', NOTIFICATION: 'Уведомления', PLAYLIST: 'Плейлист',
-  ADVERTISING: 'Реклама', HASHTAGS: 'Хэштеги',
+  ADVERTISING: 'Реклама', HASHTAGS: 'Хэштеги', BROWSE: 'Главная / подборки',
 };
 const YT_COUNTRY_RU = {
   IN: 'Индия', US: 'США', JP: 'Япония', BR: 'Бразилия', GB: 'Британия', RU: 'Россия',
@@ -8181,119 +8231,34 @@ const YT_COUNTRY_RU = {
 function ytAgeRu(s) { return String(s || '').replace('age', '').replace('-', '–'); }
 function ytGenderRu(s) { return s === 'female' ? 'женщины' : s === 'male' ? 'мужчины' : (s || ''); }
 
-function YouTubeStudioCards({ studio }) {
-  if (!studio) {
-    return <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Нет данных студии. Нажми «Обновить статистику».</div></Card>;
-  }
-  const s = studio.summary || {};
-  const pill = { display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 90, background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: '10px 10px' };
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <div style={pill}><Eye size={14} color={COLORS.violet} /><span style={{ fontSize: 10, color: COLORS.textMuted }}>Просмотры</span><b>{fmtNum(s.views)}</b></div>
-        <div style={pill}><Clock size={14} color={COLORS.gold} /><span style={{ fontSize: 10, color: COLORS.textMuted }}>Минуты</span><b>{fmtNum(s.estimatedMinutesWatched)}</b></div>
-        <div style={pill}><TrendingUpIcon size={14} color={COLORS.teal} /><span style={{ fontSize: 10, color: COLORS.textMuted }}>Ср. время</span><b>{s.averageViewDuration ?? '—'}с</b></div>
-      </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <div style={pill}><Users size={14} color={COLORS.teal} /><span style={{ fontSize: 10, color: COLORS.textMuted }}>Новые</span><b style={{ color: COLORS.teal }}>+{fmtNum(s.subscribersGained)}</b></div>
-        <div style={pill}><Users size={14} color={COLORS.crimson} /><span style={{ fontSize: 10, color: COLORS.textMuted }}>Ушли</span><b style={{ color: COLORS.crimson }}>−{fmtNum(s.subscribersLost)}</b></div>
-      </div>
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Users size={14} /> Аудитория</div>
-        {(studio.audience || []).slice(0, 6).map((a, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', borderBottom: `1px solid ${COLORS.border}` }}>
-            <span>{ytAgeRu(a.ageGroup)} · {ytGenderRu(a.gender)}</span>
-            <b>{Math.round(a.viewerPercentage || 0)}%</b>
-          </div>
-        ))}
-      </Card>
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Globe size={14} /> Страны</div>
-        {(studio.geo || []).slice(0, 6).map((a, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0' }}>
-            <span>{YT_COUNTRY_RU[a.country] || a.country}</span>
-            <b>{fmtNum(a.views)}</b>
-          </div>
-        ))}
-      </Card>
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Compass size={14} /> Откуда пришли</div>
-        {(studio.traffic || []).slice(0, 6).map((a, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0' }}>
-            <span>{YT_TRAFFIC_RU[a.insightTrafficSourceType] || a.insightTrafficSourceType}</span>
-            <b>{fmtNum(a.views)}</b>
-          </div>
-        ))}
-      </Card>
-      {[{ key: 'shorts', title: 'Shorts', list: studio.shorts || (studio.topVideos || []).filter(v => v.kind === 'short') },
-        { key: 'longs', title: 'Long', list: studio.longs || (studio.topVideos || []).filter(v => v.kind !== 'short') }].map(sec => (
-        <Card key={sec.key}>
-          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Youtube size={14} /> {sec.title}</div>
-          {sec.list.slice(0, 6).map((a, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: `1px solid ${COLORS.border}`, alignItems: 'center' }}>
-              {a.thumb ? <img src={a.thumb} alt="" style={{ width: 72, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 72, height: 40, borderRadius: 6, background: COLORS.bgCardAlt, flexShrink: 0 }} />}
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title || a.video}</div>
-                <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{fmtNum(a.views)} просм. · {a.averageViewDuration || a.seconds || '—'} сек</div>
-              </div>
-            </div>
-          ))}
-          {sec.list.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Нет роликов за период</div>}
-        </Card>
-      ))}
-      {(studio.retention || []).length > 0 && (
-        <Card>
-          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={14} /> Удержание</div>
-          {(studio.retention || []).filter((_, i) => i % 5 === 0).slice(0, 8).map((a, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ width: 42, fontSize: 11, color: COLORS.textMuted }}>{Math.round((a.at || 0) * 100)}%</span>
-              <div style={{ flex: 1, height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.06)' }}>
-                <div style={{ width: `${Math.min(100, Math.round((a.watch || 0) * 100))}%`, height: '100%', borderRadius: 99, background: COLORS.violet }} />
-              </div>
-              <span style={{ fontSize: 11, width: 36, textAlign: 'right' }}>{Math.round((a.watch || 0) * 100)}%</span>
-            </div>
-          ))}
-        </Card>
-      )}
-    </div>
-  );
-}
-
-function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest, patchYoutube, onCreatorAction }) {
+function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest, patchYoutube }) {
   const yt = normalizeYoutube(youtube);
-  const [sub, setSub] = useState('overview');
+  const [nav, setNav] = useState('channels');
   const [busy, setBusy] = useState(null);
   const [aiText, setAiText] = useState('');
   const [ideaTitle, setIdeaTitle] = useState('');
   const [studioErr, setStudioErr] = useState('');
-  const [studioPage, setStudioPage] = useState(null);
-  const [coachMsgs, setCoachMsgs] = useState([]);
-  const [coachInput, setCoachInput] = useState('');
-  const tabs = [
-    { key: 'overview', label: 'Обзор' },
-    { key: 'channels', label: 'Каналы' },
-    { key: 'desk', label: 'AI Desk' },
-    { key: 'plan', label: 'План' },
-    { key: 'ideas', label: 'Идеи' },
-    { key: 'goals', label: 'Цели' },
-  ];
-  const ch = yt.channels.find(c => c.id === yt.activeChannelId) || yt.channels[0];
-  const pipeline = YT_STAGES.map(s => ({ ...s, n: yt.contentItems.filter(i => i.status === s.key).length }));
-  const todayHint = yt.contentItems.find(i => i.status !== 'PUBLISHED') || yt.ideas.find(i => i.status !== 'archived');
-
   const [studioRange, setStudioRange] = useState('28d');
   const [studioCh, setStudioCh] = useState(null);
+  const [metric, setMetric] = useState('views');
+  const [videoFilter, setVideoFilter] = useState('ALL');
+  const [openVideo, setOpenVideo] = useState(null);
+  const [showAllAud, setShowAllAud] = useState(false);
+  const [coachMsgs, setCoachMsgs] = useState([]);
+  const [coachInput, setCoachInput] = useState('');
+  const ch = studioCh || yt.channels.find(c => c.id === yt.activeChannelId) || yt.channels[0];
+  const st = yt.studio;
 
   async function refreshStudio(targetCh, range) {
-    if (!yt.oauth?.refresh) { setStudioErr('Сначала Войти в Google во вкладке Обзор.'); return; }
-    const cid = (targetCh && (targetCh.channelId || targetCh.id)) || studioCh?.channelId || ch?.channelId;
+    if (!yt.oauth?.refresh) { setStudioErr('Сначала Войти в Google.'); return; }
+    const cid = (targetCh && targetCh.channelId) || studioCh?.channelId || ch?.channelId;
     const rng = range || studioRange || '28d';
     setBusy('studio'); setStudioErr('');
     try {
       const r = await fetch('/api/youtube-studio?refresh=' + encodeURIComponent(yt.oauth.refresh) + (cid ? '&channelId=' + encodeURIComponent(cid) : '') + '&range=' + encodeURIComponent(rng));
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Ошибка студии');
-      patchYoutube(y => ({ ...y, studio: j }));
+      patchYoutube(y => ({ ...y, studio: { ...j, lastAnalyticsUpdate: Date.now() } }));
       if (j.channels) {
         j.channels.forEach(c => {
           const exists = (yt.channels || []).some(x => x.channelId === c.channelId);
@@ -8304,274 +8269,238 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
     setBusy(null);
   }
 
-  async function sendCoach(text) {
-    const msg = (text || coachInput || '').trim();
-    if (!msg) return;
-    setCoachInput('');
-    setCoachMsgs(m => [...m, { role: 'user', text: msg }]);
-    setBusy('coach');
-    try {
-      await askAI('YOUTUBE_ANALYTICS', 'Объясни простым языком по цифрам студии. Вопрос игрока: ' + msg);
-    } catch (e) {}
-    setBusy(null);
-  }
-
-
   async function askAI(task, userMsg) {
     setBusy(task); setAiText('');
     try {
-      const ctx = (yt.channels || []).length
-        ? (yt.channels || []).map(c => {
-            const vids = (c.recentVideos || []).slice(0, 8).map(v => `${v.title || 'ролик'} (${v.views ?? '?'} просм., лайк ${v.likes ?? '—'})`).join('; ');
-            return `Канал «${c.name}» ${c.handle || ''} подп. ${c.subs ?? 'н/д'}, просмотры ${c.views ?? 'н/д'}, видео ${c.videos ?? 'н/д'}, ниша ${c.niche || 'не указана'}. Последние ролики: ${vids || 'списка нет — только счётчики'}.`;
-          }).join('\n')
-        : 'Каналов нет.';
-      const st = yt.studio;
-      const studioCtx = st ? (`\nСтудия 28д: просмотры ${st.summary?.views}, минуты ${st.summary?.estimatedMinutesWatched}, ср.время ${st.summary?.averageViewDuration}с, +подп ${st.summary?.subscribersGained}. Страны: ${(st.geo||[]).map(g=>g.country+':'+g.views).join(', ')}. Трафик: ${(st.traffic||[]).map(g=>(g.insightTrafficSourceType||'')+':'+g.views).join(', ')}. Топ видео: ${(st.topVideos||[]).slice(0,5).map(v=>v.video+' '+v.views).join('; ')}. Удержание: ${(st.retention||[]).filter((_,i)=>i%10===0).slice(0,6).map(r=>Math.round((r.at||0)*100)+'%='+Math.round((r.watch||0)*100)).join(', ')}`) : '';
+      const ctx = (yt.channels || []).map(c => `Канал «${c.name}» подп. ${c.subs ?? 'н/д'}, просмотры ${c.views ?? 'н/д'}`).join('\n') || 'Каналов нет.';
+      const studioCtx = st ? (`\nAnalytics ${st.range}: views ${st.summary?.views}, min ${st.summary?.estimatedMinutesWatched}, +sub ${st.summary?.subscribersGained}`) : '';
       const text = await callClaudeAPIWithRetry(
-        'Ты YouTube-наставник в Life RPG. Смотри ВСЕ каналы игрока. Не выдумывай CTR и удержание, если их нет в тексте. Предлагай идеи под реальные темы роликов. Пиши по-русски коротко.',
-        [{ role: 'user', content: ctx + studioCtx + '\nАктивный канал: ' + ((ch && ch.name) || '—') + '\n' + userMsg }],
+        'Ты YouTube-наставник. Не выдумывай CTR и цифры, которых нет. Пиши по-русски коротко.',
+        [{ role: 'user', content: ctx + studioCtx + '\n' + userMsg }],
         2,
         { taskType: task }
       );
       setAiText(text);
       setCoachMsgs(m => [...m, { role: 'ai', text }]);
     } catch (e) {
-      setAiText('AI временно недоступен. Резервный режим: выбери одну идею и напиши hook из 1 предложения.');
-      setCoachMsgs(m => [...m, { role: 'ai', text: 'Сейчас не ответил. Попробуй ещё раз.' }]);
+      setAiText('AI временно недоступен.');
     }
     setBusy(null);
   }
 
-  function addIdea(src = 'manual', title) {
-    const t = (title || ideaTitle).trim();
-    if (!t) return;
-    patchYoutube(y => ({
-      ...y,
-      ideas: [...y.ideas, { id: uid(), channelId: ch?.id || null, title: t, hook: '', concept: '', format: 'Long', difficulty: 'Normal', status: 'new', createdAt: Date.now(), source: src }],
-    }));
-    setIdeaTitle('');
-    onCreatorAction && onCreatorAction('idea', t);
-  }
+  const periods = [
+    { k: '48h', l: '48 ч' }, { k: '7d', l: '7 дней' }, { k: '28d', l: '28 дней' },
+    { k: '90d', l: '90 дней' }, { k: '365d', l: '365 дней' }, { k: 'all', l: 'Всё время' },
+  ];
+  const gViews = calculateGrowth(st?.summary?.views, st?.prevSummary?.views);
+  const gWatch = calculateGrowth(st?.summary?.estimatedMinutesWatched, st?.prevSummary?.estimatedMinutesWatched);
+  const gSub = calculateGrowth(st?.summary?.subscribersGained, st?.prevSummary?.subscribersGained);
+  const gLikes = calculateGrowth(st?.summary?.likes, st?.prevSummary?.likes);
+  const series = (st?.series || []).map(d => ({
+    date: String(d.day || d.date || '').slice(5),
+    raw: d.day,
+    views: d.views,
+    watch: d.estimatedMinutesWatched,
+    subs: d.subscribersGained,
+    likes: d.likes,
+  }));
+  const metricKey = { views: 'views', watch: 'watch', subs: 'subs', likes: 'likes' }[metric] || 'views';
+  const videos = (st?.topVideos || []).map(v => ({ ...v, ...classifyYouTubeContent(v) }));
+  const shownVideos = videos.filter(v => videoFilter === 'ALL' || v.contentType === videoFilter);
 
-  function ideaToPlan(idea) {
-    patchYoutube(y => ({
-      ...y,
-      ideas: y.ideas.map(i => i.id === idea.id ? { ...i, status: 'planned' } : i),
-      contentItems: [...y.contentItems, {
-        id: uid(), channelId: idea.channelId, ideaId: idea.id, title: idea.title, format: idea.format || 'Long',
-        status: 'SCRIPT', publishAt: null, notes: idea.hook || '', createdAt: Date.now(),
-      }],
-    }));
-    onCreatorAction && onCreatorAction('plan', idea.title);
-  }
-
-  function advanceItem(item) {
-    const idx = YT_STAGES.findIndex(s => s.key === item.status);
-    const next = YT_STAGES[Math.min(idx + 1, YT_STAGES.length - 1)].key;
-    patchYoutube(y => ({ ...y, contentItems: y.contentItems.map(i => i.id === item.id ? { ...i, status: next, updatedAt: Date.now() } : i) }));
-    onCreatorAction && onCreatorAction('stage', item.title);
-  }
-
-  function addGoal() {
-    if (!ch) return;
-    const target = Number(window.prompt('Цель по подписчикам', String((ch.subs || 0) + 1000))) || 0;
-    if (!target) return;
-    patchYoutube(y => ({
-      ...y,
-      goals: [...y.goals, { id: uid(), channelId: ch.id, title: `${target} подписчиков`, metric: 'subs', target, current: ch.subs || 0, status: 'active' }],
-    }));
-  }
+  const navItems = [
+    { k: 'channels', l: 'Каналы' },
+    { k: 'analytics', l: 'Аналитика' },
+    { k: 'videos', l: 'Видео' },
+    { k: 'audience', l: 'Аудитория' },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ fontSize: 16, fontWeight: 800 }}>YouTube HQ</div>
-      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
-        {tabs.map(t => (
-          <button key={t.key} className="lrpg-btn" onClick={() => setSub(t.key)} style={{
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>YouTube Studio</div>
+          <div style={{ fontSize: 11, color: COLORS.textMuted }}>{yt.channels.length} канал(ов) · {yt.oauth?.refresh ? 'Analytics доступна' : 'только Data API'}</div>
+        </div>
+        <button className="lrpg-btn" onClick={() => { window.location.href = '/api/youtube-oauth'; }} style={{ fontSize: 11, padding: '6px 10px', borderRadius: 999, background: COLORS.bgCardAlt }}>{yt.oauth?.refresh ? 'Google ✓' : 'Войти в Google'}</button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+        {navItems.map(n => (
+          <button key={n.k} className="lrpg-btn" onClick={() => setNav(n.k)} style={{
             flexShrink: 0, padding: '6px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: sub === t.key ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,0.04)',
-            color: sub === t.key ? '#fff' : COLORS.textMuted,
-          }}>{t.label}</button>
+            background: nav === n.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,0.04)',
+            color: nav === n.k ? '#fff' : COLORS.textMuted,
+          }}>{n.l}</button>
         ))}
       </div>
+      {studioErr && <div style={{ color: COLORS.crimson, fontSize: 11 }}>{studioErr}</div>}
 
-      {sub === 'overview' && (
+      {nav === 'channels' && (
         <>
-          <HudCard style={{ padding: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>Студия YouTube</div>
-            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>{yt.oauth?.refresh ? 'Google подключён. Можно тянуть удержание и аудиторию.' : 'Публичные цифры уже есть. Для удержания нажми Войти.'}</div>
-            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-              <button className="lrpg-btn lrpg-cta" onClick={() => { window.location.href = '/api/youtube-oauth'; }}>Войти в Google</button>
-              {yt.oauth?.refresh && (
-                <button className="lrpg-btn" style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }} onClick={async () => {
-                  setBusy('studio'); setStudioErr('');
-                  try {
-                    const r = await fetch('/api/youtube-studio?refresh=' + encodeURIComponent(yt.oauth.refresh) + (ch?.channelId ? '&channelId=' + encodeURIComponent(ch.channelId) : ''));
-                    const j = await r.json();
-                    if (!r.ok) throw new Error(j.error || 'Ошибка студии');
-                    patchYoutube(y => ({ ...y, studio: j }));
-                    if (j.channels) {
-                      j.channels.forEach(c => {
-                        const exists = (yt.channels || []).some(x => x.channelId === c.channelId);
-                        if (!exists) addYouTubeChannel({ name: c.name, handle: c.handle, channelId: c.channelId, thumb: c.thumb, subs: c.subs, views: c.views, videos: c.videos });
-                      });
-                    }
-                  } catch (e) { setStudioErr(String(e.message || e)); }
-                  setBusy(null);
-                }}>{busy === 'studio' ? 'Гружу…' : 'Обновить студию'}</button>
-              )}
-            </div>
-            {studioErr && <div style={{ color: COLORS.crimson, fontSize: 11, marginTop: 6 }}>{studioErr}</div>}
-          </HudCard>
-          <HudCard style={{ padding: 12 }}>
-            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Каналов {yt.channels.length} · в работе {yt.contentItems.filter(i => i.status !== 'PUBLISHED').length}</div>
-            <div style={{ fontSize: 13, fontWeight: 800, marginTop: 6 }}>Что делать сегодня</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>{todayHint ? `Продолжи: «${todayHint.title}»` : 'Добавь идею или канал — появится задача дня.'}</div>
-            <button className="lrpg-btn lrpg-cta" style={{ marginTop: 8 }} onClick={() => askAI('YOUTUBE_PLAN', 'Дай одну главную задачу на сегодня и почему.')}>Попросить AI помочь</button>
-          </HudCard>
-          {(yt.channels || []).map(c => (
-            <HudCard key={c.id} style={{ padding: 12, border: c.id === yt.activeChannelId ? `1px solid ${COLORS.violet}` : undefined }}>
-              <div style={{ fontSize: 13, fontWeight: 800 }}>{c.name} <span style={{ color: COLORS.textMuted, fontWeight: 500 }}>{c.handle || ''}</span></div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{c.subs ?? '—'} подп. · {c.views ?? '—'} просм. · {c.videos ?? '—'} видео</div>
-              {(c.recentVideos || []).slice(0, 4).map((v, i) => (
-                <div key={i} style={{ fontSize: 11, marginTop: 4 }}>{v.title} · {v.views ?? '—'} просм.</div>
-              ))}
-              {!(c.recentVideos || []).length && <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>Обнови канал — подтянутся последние ролики</div>}
-              <button className="lrpg-btn" style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }} onClick={() => patchYoutube(y => ({ ...y, activeChannelId: c.id }))}>Сделать активным</button>
-            </HudCard>
-          ))}
-          <HudCard style={{ padding: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>PIPELINE</div>
-            <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-              {pipeline.map(s => (
-                <div key={s.key} style={{ minWidth: 64, textAlign: 'center', padding: 6, borderRadius: 10, background: 'rgba(255,255,255,0.04)' }}>
-                  <div style={{ fontSize: 16, fontWeight: 800 }}>{s.n}</div>
-                  <div style={{ fontSize: 9, color: COLORS.textMuted }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-          </HudCard>
-          {yt.goals[0] && (
-            <HudCard style={{ padding: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 800 }}>Текущая цель</div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>{yt.goals[0].title}</div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{yt.goals[0].current || 0} / {yt.goals[0].target}</div>
-            </HudCard>
-          )}
-          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+          <YouTubeTab youtube={youtube} quests={quests} addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats} deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest}
+            studioBusyId={busy === 'studio' ? (studioCh?.channelId || ch?.channelId) : null}
+            onOpenStudio={(c) => { setStudioCh(c); setNav('analytics'); refreshStudio(c, studioRange); }}
+            onRefreshStudio={(c) => { setStudioCh(c); refreshStudio(c, studioRange); }} />
         </>
       )}
 
-      {sub === 'channels' && studioPage === 'stats' && (
+      {nav === 'analytics' && (
         <>
-          <button className="lrpg-btn" onClick={() => setStudioPage(null)} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>← К каналам</button>
-          <div style={{ fontSize: 14, fontWeight: 800 }}>{studioCh?.name || yt.studio?.channels?.find(c => c.channelId === yt.studio?.channelId)?.name || 'Канал'}</div>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>{studioCh?.name || ch?.name || 'Канал'}</div>
+          <div style={{ fontSize: 11, color: COLORS.textMuted }}>{studioCh?.handle || ch?.handle || ''} · {st?.fetchedAt ? `обновлено ${fmtTime(st.fetchedAt)}` : 'ещё не тянули Analytics'}</div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted }}>Аналитика YouTube обновляется с задержкой</div>
           <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-            {[{k:'48h',l:'48 ч'},{k:'7d',l:'Неделя'},{k:'28d',l:'Месяц'},{k:'90d',l:'3 мес'},{k:'365d',l:'Год'},{k:'all',l:'Всё время'}].map(p => (
-              <button key={p.k} className="lrpg-btn" onClick={() => { setStudioRange(p.k); refreshStudio(studioCh, p.k); }} style={{
+            {periods.map(p => (
+              <button key={p.k} className="lrpg-btn" onClick={() => { setStudioRange(p.k); refreshStudio(studioCh || ch, p.k); }} style={{
                 flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
                 background: studioRange === p.k ? COLORS.violet : COLORS.bgCardAlt, color: studioRange === p.k ? '#fff' : COLORS.textMuted,
               }}>{p.l}</button>
             ))}
           </div>
-          <YouTubeStudioCards studio={yt.studio} />
-          <button className="lrpg-btn" onClick={() => { setStudioPage('coach'); if (coachMsgs.length === 0) sendCoach('Разбери мою статистику за 28 дней простым языком: что хорошо, что слабо, что снимать дальше.'); }} style={{ background: COLORS.violetSoft, borderRadius: 12, padding: '10px 12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <MessageCircle size={14} /> Объяснить аналитику
-          </button>
-        </>
-      )}
-
-      {sub === 'channels' && studioPage === 'coach' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minHeight: 360 }}>
-          <button className="lrpg-btn" onClick={() => setStudioPage('stats')} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>← К статистике</button>
-          <div style={{ fontSize: 14, fontWeight: 800 }}>Чат по аналитике</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflowY: 'auto' }}>
-            {coachMsgs.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Спроси что угодно по цифрам канала.</div></Card>}
-            {coachMsgs.map((m, i) => (
-              <div key={i} style={{
-                alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                maxWidth: '92%',
-                background: m.role === 'user' ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,0.05)',
-                color: '#fff', borderRadius: 14, padding: '8px 12px', fontSize: 12, whiteSpace: 'pre-wrap',
-              }}>{m.text}</div>
-            ))}
-            {busy === 'coach' && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Думаю…</div>}
-          </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input className="lrpg-input" value={coachInput} onChange={e => setCoachInput(e.target.value)} placeholder="Почему мало удержание?" onKeyDown={e => { if (e.key === 'Enter') sendCoach(); }} />
-            <button className="lrpg-btn lrpg-cta" onClick={() => sendCoach()} style={{ padding: '8px 12px' }}><Send size={14} /></button>
-          </div>
-        </div>
-      )}
-
-      {sub === 'channels' && !studioPage && (
-        <>
-          <YouTubeTab youtube={youtube} quests={quests} addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats} deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest}
-            studioBusyId={busy === 'studio' ? (studioCh?.channelId || ch?.channelId) : null}
-            onOpenStudio={(c) => { setStudioCh(c); setStudioPage('stats'); if (!yt.studio || yt.studio.channelId !== c.channelId) refreshStudio(c, studioRange); }}
-            onRefreshStudio={(c) => { setStudioCh(c); refreshStudio(c, studioRange); }} />
-          {studioErr && <div style={{ color: COLORS.crimson, fontSize: 11 }}>{studioErr}</div>}
-        </>
-      )}
-
-      {sub === 'desk' && (
-        <>
-          <button className="lrpg-btn lrpg-cta" disabled={!!busy} onClick={() => askAI('CONTENT_IDEAS', 'Предложи 5 идей роликов: название, hook, формат, почему подходит. Без выдуманной аналитики.')}>{busy === 'CONTENT_IDEAS' ? 'Думаю…' : 'Придумать идеи'}</button>
-          <button className="lrpg-btn" onClick={() => askAI('CONTENT_PLAN', 'Собери план на 7 дней: дата, тема, формат, этап. Если данных мало — так и скажи.')} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>{busy === 'CONTENT_PLAN' ? 'Думаю…' : 'Контент-план на 7 дней'}</button>
-          <button className="lrpg-btn" onClick={() => askAI('YOUTUBE_ANALYTICS', 'По доступным цифрам (только реальные из контекста) скажи что проверить дальше. Не выдумывай CTR/удержание.')} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>{busy === 'YOUTUBE_ANALYTICS' ? 'Думаю…' : 'Разобрать ситуацию'}</button>
-          {aiText && (
+          {studioRange === '48h' && (
             <Card>
-              <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div>
-              <button className="lrpg-btn" style={{ marginTop: 8, background: COLORS.violetSoft, borderRadius: 8, padding: '6px 10px', fontSize: 11 }} onClick={() => addIdea('ai', (aiText.split('\n').find(l => l.trim()) || 'Идея AI').slice(0, 80))}>Добавить первую строку в идеи</button>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>48 часов</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>YouTube API не отдаёт почасовую историю. Не рисуем фейковый график.</div>
+              <div style={{ fontSize: 11, marginTop: 6 }}>Доступны суммарные метрики за 2 календарных дня отчёта.</div>
+            </Card>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {[{ t: 'Просмотры', v: st?.summary?.views, g: gViews }, { t: 'Минуты', v: st?.summary?.estimatedMinutesWatched, g: gWatch }, { t: 'Новые подп.', v: st?.summary?.subscribersGained, g: gSub }, { t: 'Лайки', v: st?.summary?.likes, g: gLikes }].map(k => (
+              <div key={k.t} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 16, padding: 10 }}>
+                <div style={{ fontSize: 10, color: COLORS.textMuted }}>{k.t}</div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>{formatMetric(k.v)}</div>
+                <div style={{ fontSize: 11, color: k.g == null ? COLORS.textMuted : k.g >= 0 ? COLORS.teal : COLORS.crimson }}>{k.g == null ? '— %' : ytPct(k.g)}</div>
+              </div>
+            ))}
+          </div>
+          <Card>
+            <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 8 }}>
+              {[{ k: 'views', l: 'Просмотры' }, { k: 'watch', l: 'Время' }, { k: 'subs', l: 'Подписки' }, { k: 'likes', l: 'Лайки' }].map(m => (
+                <button key={m.k} className="lrpg-btn" onClick={() => setMetric(m.k)} style={{ flexShrink: 0, padding: '4px 8px', borderRadius: 999, fontSize: 10, background: metric === m.k ? COLORS.violet : 'transparent', color: metric === m.k ? '#fff' : COLORS.textMuted }}>{m.l}</button>
+              ))}
+            </div>
+            {series.length === 0 ? (
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Нет дневных точек за этот период (или выбран 48 ч).</div>
+            ) : (
+              <div style={{ height: 160 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={series}>
+                    <defs>
+                      <linearGradient id="ytFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#8B85FF" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#8B85FF" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
+                    <XAxis dataKey="date" tick={{ fill: COLORS.textMuted, fontSize: 9 }} />
+                    <YAxis tick={{ fill: COLORS.textMuted, fontSize: 9 }} width={32} />
+                    <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} />
+                    <Area type="monotone" dataKey={metricKey} stroke="#8B85FF" fill="url(#ytFill)" strokeWidth={2} dot={false} connectNulls={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Realtime</div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>Недоступно через текущий API. Не показываем выдуманные минуты.</div>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Подписчики</div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>{formatMetric(ch?.subs, { exact: true })}</div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>всего сейчас · Data API</div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 8, fontSize: 12 }}>
+              <span>новые {formatMetric(st?.summary?.subscribersGained)}</span>
+              <span>ушли {formatMetric(st?.summary?.subscribersLost)}</span>
+            </div>
+          </Card>
+          <button className="lrpg-btn" onClick={() => refreshStudio(studioCh || ch, studioRange)} style={{ background: COLORS.bgCardAlt, borderRadius: 12, padding: '8px 12px' }}>{busy === 'studio' ? 'Обновляю…' : 'Обновить Analytics'}</button>
+        </>
+      )}
+
+      {nav === 'videos' && (
+        <>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+            {[{ k: 'ALL', l: 'Все' }, { k: 'SHORT', l: 'Shorts' }, { k: 'VIDEO', l: 'Видео' }, { k: 'LIVE', l: 'Стримы' }].map(f => (
+              <button key={f.k} className="lrpg-btn" onClick={() => setVideoFilter(f.k)} style={{ flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, background: videoFilter === f.k ? COLORS.violet : COLORS.bgCardAlt, color: videoFilter === f.k ? '#fff' : COLORS.textMuted }}>{f.l}</button>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, fontSize: 10 }}>
+            <Card><div>Shorts</div><b>{(st?.shorts || []).length}</b></Card>
+            <Card><div>Видео</div><b>{(st?.longs || []).length}</b></Card>
+            <Card><div>Live</div><b>{(st?.lives || []).length}</b></Card>
+          </div>
+          {shownVideos.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Нет роликов в этом фильтре. Обнови Analytics.</div></Card>}
+          {shownVideos.map((v, i) => (
+            <Card key={v.video || i} onClick={() => setOpenVideo(v)} style={{ cursor: 'pointer' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {v.thumb ? <img src={v.thumb} alt="" style={{ width: 96, height: 54, borderRadius: 8, objectFit: 'cover' }} /> : <div style={{ width: 96, height: 54, borderRadius: 8, background: COLORS.bgCardAlt }} />}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.title || v.video}</div>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>{v.contentType} · {formatDurationSec(v.seconds || v.averageViewDuration)} · {v.confidence || ''}</div>
+                  <div style={{ fontSize: 11 }}>{formatMetric(v.views)} просм.</div>
+                </div>
+              </div>
+            </Card>
+          ))}
+          {openVideo && (
+            <Card>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{openVideo.title || openVideo.video}</div>
+              {openVideo.thumb && <img src={openVideo.thumb} alt="" style={{ width: '100%', borderRadius: 10, marginTop: 8 }} />}
+              <div style={{ fontSize: 12, marginTop: 8 }}>{openVideo.contentType} · {formatDurationSec(openVideo.seconds)}</div>
+              <div style={{ fontSize: 12 }}>Просмотры за период: {formatMetric(openVideo.views, { exact: true })}</div>
+              <div style={{ fontSize: 12 }}>Всего: {formatMetric(openVideo.viewsAll, { exact: true })}</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Лайки {formatMetric(openVideo.likesAll)} · комм. {formatMetric(openVideo.commentsAll)}</div>
+              <button className="lrpg-btn" onClick={() => setOpenVideo(null)} style={{ marginTop: 8 }}>Закрыть</button>
             </Card>
           )}
         </>
       )}
 
-      {sub === 'ideas' && (
+      {nav === 'audience' && (
         <>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input className="lrpg-input" placeholder="Новая идея" value={ideaTitle} onChange={e => setIdeaTitle(e.target.value)} />
-            <button className="lrpg-btn lrpg-cta" onClick={() => addIdea()}>+</button>
-          </div>
-          {yt.ideas.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Идей нет. Добавь вручную или через AI Desk.</div></Card>}
-          {yt.ideas.map(idea => (
-            <Card key={idea.id}>
-              <div style={{ fontWeight: 700, fontSize: 13 }}>{idea.title}</div>
-              <div style={{ fontSize: 10, color: COLORS.textMuted }}>{idea.format} · {idea.source}</div>
-              <button className="lrpg-btn" onClick={() => ideaToPlan(idea)} style={{ marginTop: 6, background: COLORS.violetSoft, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>В план</button>
-            </Card>
-          ))}
-        </>
-      )}
-
-      {sub === 'plan' && (
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
-          {YT_STAGES.map(s => (
-            <div key={s.key} style={{ minWidth: 150, background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.textMuted, marginBottom: 6 }}>{s.label}</div>
-              {yt.contentItems.filter(i => i.status === s.key).map(item => (
-                <div key={item.id} style={{ background: COLORS.bgCard, borderRadius: 8, padding: 8, marginBottom: 6 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{item.title}</div>
-                  {s.key !== 'PUBLISHED' && <button className="lrpg-btn" onClick={() => advanceItem(item)} style={{ marginTop: 4, fontSize: 10, background: COLORS.violetSoft, borderRadius: 8, padding: '4px 8px' }}>Дальше</button>}
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Аудитория</div>
+            {(st?.audience || []).slice(0, showAllAud ? 20 : 6).map((a, i) => (
+              <div key={i} style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span>{ytAgeRu(a.ageGroup)} · {ytGenderRu(a.gender)}</span>
+                  <b>{Math.round(a.viewerPercentage || 0)}%</b>
                 </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {sub === 'goals' && (
-        <>
-          <button className="lrpg-btn lrpg-cta" onClick={addGoal}>Новая цель по подписчикам</button>
-          {yt.goals.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Целей нет. Это план, не обещание алгоритма.</div></Card>}
-          {yt.goals.map(g => (
-            <Card key={g.id}>
-              <div style={{ fontWeight: 700 }}>{g.title}</div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{g.current || 0} / {g.target} · {g.metric}</div>
-            </Card>
-          ))}
+                <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.06)' }}>
+                  <div style={{ width: `${Math.min(100, Math.round(a.viewerPercentage || 0))}%`, height: '100%', borderRadius: 99, background: COLORS.violet }} />
+                </div>
+              </div>
+            ))}
+            <button className="lrpg-btn" onClick={() => setShowAllAud(v => !v)} style={{ fontSize: 11, background: 'transparent' }}>{showAllAud ? 'Свернуть' : 'Показать все'}</button>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Страны · просмотры</div>
+            {(st?.geo || []).slice(0, 6).map((a, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
+                <span>{YT_COUNTRY_RU[a.country] || a.country}</span>
+                <b>{formatMetric(a.views)}</b>
+              </div>
+            ))}
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Источники трафика</div>
+            {(() => {
+              const list = st?.traffic || [];
+              const sum = list.reduce((a, x) => a + Number(x.views || 0), 0) || 1;
+              return list.slice(0, 6).map((a, i) => (
+                <div key={i} style={{ marginBottom: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span>{YT_TRAFFIC_RU[a.insightTrafficSourceType] || a.insightTrafficSourceType}</span>
+                    <b>{Math.round(Number(a.views || 0) / sum * 100)}%</b>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.06)' }}>
+                    <div style={{ width: `${Math.min(100, Math.round(Number(a.views || 0) / sum * 100))}%`, height: '100%', borderRadius: 99, background: '#00E5FF' }} />
+                  </div>
+                </div>
+              ));
+            })()}
+          </Card>
         </>
       )}
     </div>
