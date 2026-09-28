@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.21';
+const APP_VERSION = '14.22';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -8243,6 +8243,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
   const [metric, setMetric] = useState('views');
   const [videoFilter, setVideoFilter] = useState('ALL');
   const [openVideo, setOpenVideo] = useState(null);
+  const [videoDetail, setVideoDetail] = useState(null);
   const [showAllAud, setShowAllAud] = useState(false);
   const [coachMsgs, setCoachMsgs] = useState([]);
   const [coachInput, setCoachInput] = useState('');
@@ -8266,6 +8267,20 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
         });
       }
     } catch (e) { setStudioErr(String(e.message || e)); }
+    setBusy(null);
+  }
+
+  async function loadVideoStats(v) {
+    setOpenVideo(v); setVideoDetail(null);
+    if (!yt.oauth?.refresh || !v?.video) return;
+    setBusy('video');
+    try {
+      const cid = studioCh?.channelId || ch?.channelId || st?.channelId;
+      const r = await fetch('/api/youtube-studio?refresh=' + encodeURIComponent(yt.oauth.refresh) + '&video=' + encodeURIComponent(v.video) + (cid ? '&channelId=' + encodeURIComponent(cid) : '') + '&range=' + encodeURIComponent(studioRange));
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'нет отчёта');
+      setVideoDetail(j);
+    } catch (e) { setVideoDetail({ error: String(e.message || e) }); }
     setBusy(null);
   }
 
@@ -8313,6 +8328,9 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
     { k: 'analytics', l: 'Аналитика' },
     { k: 'videos', l: 'Видео' },
     { k: 'audience', l: 'Аудитория' },
+    { k: 'desk', l: 'AI Desk' },
+    { k: 'plan', l: 'План' },
+    { k: 'ideas', l: 'Идеи' },
   ];
 
   return (
@@ -8365,14 +8383,18 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
             </Card>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {[{ t: 'Просмотры', v: st?.summary?.views, g: gViews }, { t: 'Минуты', v: st?.summary?.estimatedMinutesWatched, g: gWatch }, { t: 'Новые подп.', v: st?.summary?.subscribersGained, g: gSub }, { t: 'Лайки', v: st?.summary?.likes, g: gLikes }].map(k => (
+            {[{ t: 'Просмотры', v: st?.summary?.views, g: gViews }, { t: 'Минуты', v: st?.summary?.estimatedMinutesWatched, g: gWatch }, { t: 'Новые подп.', v: st?.summary?.subscribersGained, g: gSub }, { t: 'Удержание', v: st?.summary?.averageViewPercentage, g: null, pct: true }].map(k => (
               <div key={k.t} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 16, padding: 10 }}>
                 <div style={{ fontSize: 10, color: COLORS.textMuted }}>{k.t}</div>
-                <div style={{ fontSize: 18, fontWeight: 800 }}>{formatMetric(k.v)}</div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>{k.pct ? (k.v == null ? '—' : Number(k.v).toFixed(1) + '%') : formatMetric(k.v)}</div>
                 <div style={{ fontSize: 11, color: k.g == null ? COLORS.textMuted : k.g >= 0 ? COLORS.teal : COLORS.crimson }}>{k.g == null ? '— %' : ytPct(k.g)}</div>
               </div>
             ))}
           </div>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>CTR превью</div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>{st?.ctrNote || 'YouTube Analytics API не отдаёт CTR превью (есть только в Studio на сайте). Не выдумываем.'}</div>
+          </Card>
           <Card>
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 8 }}>
               {[{ k: 'views', l: 'Просмотры' }, { k: 'watch', l: 'Время' }, { k: 'subs', l: 'Подписки' }, { k: 'likes', l: 'Лайки' }].map(m => (
@@ -8432,7 +8454,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
           </div>
           {shownVideos.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Нет роликов в этом фильтре. Обнови Analytics.</div></Card>}
           {shownVideos.map((v, i) => (
-            <Card key={v.video || i} onClick={() => setOpenVideo(v)} style={{ cursor: 'pointer' }}>
+            <Card key={v.video || i} onClick={() => loadVideoStats(v)} style={{ cursor: 'pointer' }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 {v.thumb ? <img src={v.thumb} alt="" style={{ width: 96, height: 54, borderRadius: 8, objectFit: 'cover' }} /> : <div style={{ width: 96, height: 54, borderRadius: 8, background: COLORS.bgCardAlt }} />}
                 <div style={{ minWidth: 0 }}>
@@ -8448,10 +8470,34 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
               <div style={{ fontWeight: 800, fontSize: 13 }}>{openVideo.title || openVideo.video}</div>
               {openVideo.thumb && <img src={openVideo.thumb} alt="" style={{ width: '100%', borderRadius: 10, marginTop: 8 }} />}
               <div style={{ fontSize: 12, marginTop: 8 }}>{openVideo.contentType} · {formatDurationSec(openVideo.seconds)}</div>
-              <div style={{ fontSize: 12 }}>Просмотры за период: {formatMetric(openVideo.views, { exact: true })}</div>
-              <div style={{ fontSize: 12 }}>Всего: {formatMetric(openVideo.viewsAll, { exact: true })}</div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Лайки {formatMetric(openVideo.likesAll)} · комм. {formatMetric(openVideo.commentsAll)}</div>
-              <button className="lrpg-btn" onClick={() => setOpenVideo(null)} style={{ marginTop: 8 }}>Закрыть</button>
+              {busy === 'video' && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Гружу отчёт ролика…</div>}
+              {videoDetail?.error && <div style={{ fontSize: 11, color: COLORS.crimson }}>{videoDetail.error}</div>}
+              {videoDetail?.videoReport && (
+                <div style={{ fontSize: 12, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div>Просмотры за период: {formatMetric(videoDetail.videoReport.views, { exact: true })}</div>
+                  <div>Минуты: {formatMetric(videoDetail.videoReport.estimatedMinutesWatched)}</div>
+                  <div>Ср. время: {videoDetail.videoReport.averageViewDuration != null ? Math.round(videoDetail.videoReport.averageViewDuration) + 'с' : '—'}</div>
+                  <div>Удержание: {videoDetail.videoReport.averageViewPercentage != null ? Number(videoDetail.videoReport.averageViewPercentage).toFixed(1) + '%' : '—'}</div>
+                  <div>+подп. с ролика: {formatMetric(videoDetail.videoReport.subscribersGained)}</div>
+                  <div>Лайки {formatMetric(videoDetail.videoReport.likes)} · комм. {formatMetric(videoDetail.videoReport.comments)}</div>
+                </div>
+              )}
+              {(videoDetail?.videoRetention || []).length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Кривая удержания</div>
+                  {(videoDetail.videoRetention || []).filter((_, i) => i % 5 === 0).slice(0, 10).map((a, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                      <span style={{ width: 32, fontSize: 10 }}>{Math.round((a.at || 0) * 100)}%</span>
+                      <div style={{ flex: 1, height: 5, borderRadius: 99, background: 'rgba(255,255,255,0.06)' }}>
+                        <div style={{ width: `${Math.min(100, Math.round((a.watch || 0) * 100))}%`, height: '100%', borderRadius: 99, background: COLORS.violet }} />
+                      </div>
+                      <span style={{ fontSize: 10 }}>{Math.round((a.watch || 0) * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 8 }}>CTR превью по этому ролику API не отдаёт.</div>
+              <button className="lrpg-btn" onClick={() => { setOpenVideo(null); setVideoDetail(null); }} style={{ marginTop: 8 }}>Закрыть</button>
             </Card>
           )}
         </>
@@ -8501,6 +8547,62 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
               ));
             })()}
           </Card>
+        </>
+      )}
+
+      {nav === 'desk' && (
+        <>
+          <button className="lrpg-btn lrpg-cta" disabled={!!busy} onClick={() => askAI('CONTENT_IDEAS', 'Предложи 5 идей под мои каналы и последние ролики. Без выдуманных CTR.')}>Идеи от ИИ</button>
+          <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('CONTENT_PLAN', 'Собери контент-план на 7 дней: формат, хук, зачем.')} style={{ background: COLORS.bgCardAlt, borderRadius: 12, padding: '10px 12px' }}>План на неделю</button>
+          <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('YOUTUBE_ANALYTICS', 'Разбери цифры студии простым языком: что растёт, что нет, что снимать.')} style={{ background: COLORS.bgCardAlt, borderRadius: 12, padding: '10px 12px' }}>Разобрать аналитику</button>
+          {busy && busy !== 'studio' && busy !== 'video' && <div style={{ fontSize: 11, color: COLORS.textMuted }}>ИИ думает…</div>}
+          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+        </>
+      )}
+
+      {nav === 'plan' && (
+        <>
+          <div style={{ fontSize: 13, fontWeight: 800 }}>Контент-план</div>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+            {YT_STAGES.map(s => (
+              <div key={s.key} style={{ flexShrink: 0, background: COLORS.bgCardAlt, borderRadius: 12, padding: '8px 10px', fontSize: 11 }}>
+                <div style={{ color: COLORS.textMuted }}>{s.label}</div>
+                <b>{(yt.contentItems || []).filter(i => i.status === s.key).length}</b>
+              </div>
+            ))}
+          </div>
+          <button className="lrpg-btn lrpg-cta" onClick={() => patchYoutube(y => ({ ...y, contentItems: [...(y.contentItems || []), { id: uid(), title: 'Новый ролик', status: 'IDEAS', createdAt: Date.now() }] }))}>+ этап</button>
+          {(yt.contentItems || []).slice().reverse().slice(0, 12).map(it => (
+            <Card key={it.id}>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>{it.title}</div>
+              <select className="lrpg-input" value={it.status} onChange={e => patchYoutube(y => ({ ...y, contentItems: y.contentItems.map(x => x.id === it.id ? { ...x, status: e.target.value } : x) }))}>
+                {YT_STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+              </select>
+            </Card>
+          ))}
+          <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('CONTENT_PLAN', 'Дополни текущий план этапов.')}>ИИ допишет план</button>
+          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+        </>
+      )}
+
+      {nav === 'ideas' && (
+        <>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input className="lrpg-input" value={ideaTitle} onChange={e => setIdeaTitle(e.target.value)} placeholder="Название идеи" />
+            <button className="lrpg-btn lrpg-cta" onClick={() => {
+              const title = (ideaTitle || '').trim(); if (!title) return;
+              patchYoutube(y => ({ ...y, ideas: [...(y.ideas || []), { id: uid(), title, status: 'new', createdAt: Date.now() }] }));
+              setIdeaTitle('');
+            }}>Добавить</button>
+          </div>
+          <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('CONTENT_IDEAS', 'Дай 5 идей и хуки.')}>ИИ предложит</button>
+          {(yt.ideas || []).slice().reverse().map(idea => (
+            <Card key={idea.id}>
+              <div style={{ fontWeight: 700 }}>{idea.title}</div>
+              <button className="lrpg-btn" onClick={() => patchYoutube(y => ({ ...y, ideas: y.ideas.filter(x => x.id !== idea.id) }))} style={{ fontSize: 11 }}>Удалить</button>
+            </Card>
+          ))}
+          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
         </>
       )}
     </div>
