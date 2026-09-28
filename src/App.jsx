@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.22.2';
+const APP_VERSION = '14.23.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2852,6 +2852,48 @@ function councilStateBrief(state) {
   };
 }
 
+
+function detectNpcHandoff(fromId, text) {
+  const s = String(text || '').toLowerCase();
+  const map = [
+    ['nori', /ютуб|youtube|ролик|канал|shorts|просмотр|удержан|монетиз/],
+    ['brum', /тренир|присед|отжим|подтяг|зал|кардио|разминк|растяжк|сон до/],
+    ['kasper', /деньг|долг|кэш|бюджет|трат|зарплат|кредит/],
+    ['mira', /цел[ьи]|дедлайн|срок\b|приоритет/],
+    ['vera', /наград|экономист|сколько монет/],
+    ['kaylen', /штаб|директор/],
+    ['tio', /здоров|болезн|восстанов/],
+  ];
+  for (let i = 0; i < map.length; i++) {
+    if (map[i][0] !== fromId && map[i][1].test(s)) return map[i][0];
+  }
+  return null;
+}
+function extractExerciseQuests(text) {
+  const s = String(text || '');
+  const found = [];
+  const rules = [
+    [/(\d+)\s*присед/i, n => n + ' приседаний'],
+    [/(\d+)\s*отжим/i, n => n + ' отжиманий'],
+    [/(\d+)\s*подтяг/i, n => n + ' подтягиваний'],
+    [/(\d+)\s*мин(?:ут[аы]?)?\s*бега/i, n => n + ' минут бега'],
+    [/(\d+)\s*мин(?:ут[аы]?)?\s*разминк/i, n => n + ' минут разминки'],
+    [/(\d+)\s*мин(?:ут[аы]?)?\s*растяж/i, n => n + ' минут растяжки'],
+    [/сон до\s*(\d{1,2})/i, n => 'Сон до ' + n + ':00'],
+  ];
+  rules.forEach(([re, fmt]) => {
+    const m = s.match(re);
+    if (m) found.push({ type: 'quest', title: fmt(m[1]) });
+  });
+  const seen = new Set();
+  return found.filter(a => {
+    const k = a.title.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 function parseCouncilJson(text) {
   const cleaned = String(text || '').replace(/```json|```/g, '').trim();
   const start = cleaned.indexOf('{');
@@ -2976,8 +3018,14 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   async function sendDm() {
     if (!draft.trim() || !npc || busy) return;
     const text = draft.trim(); setDraft(''); setBusy(true); setErr(null);
-    try { await talkToNpc(npc.id, text); }
-    catch (e) { setErr(e.message || String(e)); }
+    try {
+      const res = await talkToNpc(npc.id, text);
+      if (res && res.handoff) {
+        const dest = COUNCIL_NPCS.find(n => n.id === res.handoff);
+        setErr(dest ? ('Перейти к ' + dest.name + '? Жми карточку в зале — открою.') : null);
+        setTimeout(() => { setView('npc:' + res.handoff); setDraft(''); setErr(null); }, 700);
+      }
+    } catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
   }
 
@@ -4422,28 +4470,44 @@ function addYouTubeQuest(ch, metric, delta) {
 
   function applySpokenActions(prev, actions, speaker) {
     if (!actions || !actions.length) return prev;
+    const who = String(speaker || '');
+    const sid = /брум/i.test(who) ? 'brum' : /каспер/i.test(who) ? 'kasper' : /нори/i.test(who) ? 'nori' : /мира/i.test(who) ? 'mira' : /кайлен/i.test(who) ? 'kaylen' : who;
+    const statOf = { brum: 'physical', kasper: 'finance', nori: 'creativity', mira: 'discipline', vera: 'discipline', kaylen: 'discipline', tio: 'health' };
     let quests = prev.quests;
+    let habits = prev.habits || [];
     let nextOrder = prev.nextOrder;
     let chronicle = prev.chronicle;
     let applied = 0;
-    actions.slice(0, 3).forEach(a => {
+    actions.slice(0, 8).forEach(a => {
       const title = String(a.title || a.label || '').slice(0, 70);
       if (!title) return;
-      if (a.type === 'quest' || a.type === 'habit' && a.type === 'quest') {
+      const typ = a.type || 'quest';
+      if (typ === 'habit') {
+        const exists = habits.some(h => (h.title || '').toLowerCase() === title.toLowerCase());
+        if (exists) return;
+        habits = [...habits, {
+          id: uid(), title, stat: a.stat || statOf[sid] || 'discipline', secondaryStat: null, level: 1,
+          streakCurrent: 0, bestStreak: 0, lastDoneDate: null, createdAt: Date.now(),
+        }];
+        applied += 1;
+        chronicle = pushChronicle(chronicle, 'SYSTEM', `${who} завёл привычку: ${title}`);
+        return;
+      }
+      if (typ === 'quest' || typ === 'task') {
         const exists = quests.some(q => q.status === 'active' && q.title.toLowerCase() === title.toLowerCase());
         if (exists) return;
         quests = [...quests, {
           id: uid(), title, type: 'Daily', difficulty: 'Easy', xp: 25, coins: 8,
-          stat: speaker === 'brum' ? 'physical' : speaker === 'kasper' ? 'finance' : 'discipline',
+          stat: a.stat || statOf[sid] || 'discipline',
           status: 'active', deadline: null, order: nextOrder, createdAt: Date.now(),
         }];
         nextOrder += 1; applied += 1;
-        chronicle = pushChronicle(chronicle, 'QUEST_CREATED', `${speaker} поставил задачу: ${title}`);
+        chronicle = pushChronicle(chronicle, 'QUEST_CREATED', `${who} поставил задачу: ${title}`);
       }
     });
     if (!applied) return prev;
     gameFeedback('QUEST_COMPLETE', { xp: 5 });
-    return { ...prev, quests, nextOrder, chronicle };
+    return { ...prev, quests, habits, nextOrder, chronicle };
   }
 
   async function talkToNpc(npcId, text) {
@@ -4451,17 +4515,39 @@ function addYouTubeQuest(ch, metric, delta) {
     if (!npc) return;
     const hist = ((state.council && state.council.chats && state.council.chats[npcId]) || []).slice(-8).map(m => ({ who: m.who, text: m.text }));
     const ctx = ContextManager.build('CHAT', state, { npc, bond: (state.council && state.council.bonds || {})[npcId] });
-    const sys = 'Ты ' + npc.name + ' (' + npc.role + '). ' + npc.vibe + ' Область: ' + npc.domain + '. Мат: ' + npc.swear + '.\n'
-      + 'Слушай ИМЕННО последнюю фразу игрока. Не повторяй прошлые свои реплики. Не ври, что уже добавил задачу, если в JSON нет action.\n'
-      + 'Если просит план/добавить в задачи/квест — сделай конкретный план в тексте И верни action type quest.\n'
-      + 'Ответ ТОЛЬКО JSON: {"text":"одна живая реплика без списка тире","actions":[{"type":"quest","title":"короткий квест"}]} actions можно [].';
+    const domainHint = {
+      brum: 'Ты хозяин раздела Тренировки. Если игрок просит упражнения — каждое упражнение отдельный action (12 приседаний, 10 отжиманий, 8 подтягиваний, 10 минут бега). НЕ одну общую задачу «план тренировки». Привычки сна — type habit.',
+      kasper: 'Ты хозяин раздела Деньги. Можешь ставить задачи про учёт трат и долги. Не выдумывай баланс.',
+      nori: 'Ты хозяин YouTube. Можешь ставить задачи снять/смонтировать конкретный ролик.',
+      mira: 'Ты хозяйка целей. Дроби большие цели на маленькие задачи на сегодня.',
+      vera: 'Ты экономист наград. Следи чтобы задачи не были жирными за ерунду.',
+      kaylen: 'Ты директор. Режешь воду, ставишь приоритет.',
+      tio: 'Ты хранитель здоровья и восстановления.',
+    }[npc.id] || npc.domain;
+    const roster = COUNCIL_NPCS.map(n => n.name + ' (' + n.id + ') — ' + n.role + ': ' + n.domain).join('; ');
+    const sys = 'Ты ' + npc.name + ', ' + npc.role + ' с опытом больше 12 лет. ' + npc.vibe + ' Зона: ' + npc.domain + '. ' + domainHint + '\n'
+      + 'Коллеги: ' + roster + '\n'
+      + 'Говори только по своей зоне. Если вопрос чужой — своим характером отправь к коллеге и поставь handoff на его id. Не давай чужих советов.\n'
+      + 'Понимай с полуслова. Не повторяй старые фразы.\n'
+      + 'Задачи ставишь только в своей зоне, по одной action на действие.\n'
+      + 'ТОЛЬКО JSON: {"text":"живая реплика","handoff":null,"actions":[{"type":"quest|habit","title":"коротко"}]}';
     const raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, история: hist, сейчас_игрок_сказал: text, активные_квесты: (state.quests||[]).filter(q=>q.status==='active').map(q=>q.title).slice(0,6) }) }], 2, { taskType: 'CHAT', jsonMode: true });
     let data;
     try { data = parseCouncilJson(raw); } catch { data = { text: String(raw).slice(0, 400), actions: [] }; }
     let actions = Array.isArray(data.actions) ? data.actions : [];
-    const wantTask = /добав|задач|квест|план|запиш/i.test(text);
-    if (wantTask && !actions.length) {
-      actions = [{ type: 'quest', title: npc.id === 'brum' ? 'Тренировка по плану Брума' : text.slice(0, 50) }];
+    const handoff = data.handoff || detectNpcHandoff(npc.id, text);
+    if (handoff && handoff !== npc.id) {
+      actions = actions.filter(a => a.type !== 'quest' && a.type !== 'habit' && a.type !== 'task');
+    }
+    const wantTask = /добав|задач|квест|план|запиш|постав/i.test(text);
+    if (npc.id === 'brum' && !(handoff && handoff !== npc.id)) {
+      const lastNpc = [...hist].reverse().find(m => m.who === 'brum' || m.who === npc.name);
+      const extracted = extractExerciseQuests((lastNpc && lastNpc.text ? lastNpc.text : '') + ' ' + text + ' ' + String(data.text || ''));
+      if (extracted.length) actions = extracted;
+    }
+    if (wantTask && !actions.length && !(handoff && handoff !== npc.id)) {
+      const parts = String(text).split(/,| и |;/).map(s => s.trim()).filter(s => s.length > 3 && s.length < 60);
+      actions = (parts.length >= 2 ? parts : [npc.id === 'brum' ? 'Тренировка сегодня' : text.slice(0, 50)]).map(title => ({ type: 'quest', title }));
     }
     const reply = String(data.text || raw).slice(0, 500);
     setState(prev => {
@@ -4472,8 +4558,14 @@ function addYouTubeQuest(ch, metric, delta) {
       if (actions.length) chat.push({ who: npcId, text: '✓ в задачи: ' + actions.map(a => a.title || a.label).join(', '), ts: Date.now() + 2 });
       const bonds = { ...c.bonds };
       if (bonds[npcId]) bonds[npcId] = { ...bonds[npcId], lastSpoke: Date.now(), notes: [{ ts: Date.now(), text: text.slice(0, 80) }, ...(bonds[npcId].notes || [])].slice(0, 16) };
-      return { ...next, council: { ...c, chats: { ...c.chats, [npcId]: chat.slice(-40) }, bonds } };
+      const chats = { ...c.chats, [npcId]: chat.slice(-40) };
+      if (handoff && handoff !== npcId) {
+        const other = COUNCIL_NPCS.find(n => n.id === handoff);
+        chats[handoff] = [...(chats[handoff] || []), { who: 'system', text: npc.name + ' направил тебя к ' + ((other && other.name) || handoff) + '.', ts: Date.now() }].slice(-40);
+      }
+      return { ...next, council: { ...c, chats, bonds } };
     });
+    return { handoff: handoff && handoff !== npc.id ? handoff : null };
   }
 
   async function sendCouncilChat(text, joinLines, mode) {
