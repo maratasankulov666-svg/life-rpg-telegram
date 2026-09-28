@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.18.2';
+const APP_VERSION = '14.18.3';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -3209,6 +3209,7 @@ export default function LifeRPG() {
   }, []);
 
   useEffect(() => {
+    if (!loaded || !state) return;
     try {
       const u = new URL(window.location.href);
       let refresh = u.searchParams.get('yt_refresh');
@@ -3221,14 +3222,17 @@ export default function LifeRPG() {
           access = access || o.access;
         }
       } catch (e) {}
-      if (!refresh && !access) return;
-      setState(prev => prev ? ({ ...prev, youtube: { ...prev.youtube, oauth: { refresh, access, at: Date.now() } } }) : prev);
+      if (!refresh) return;
+      if (state.youtube?.oauth?.refresh === refresh) return;
+      setState(prev => ({ ...prev, youtube: { ...prev.youtube, oauth: { refresh, access, at: Date.now() } } }));
       try { localStorage.removeItem('lrpg_yt_oauth'); } catch (e) {}
       u.searchParams.delete('yt_refresh');
       u.searchParams.delete('yt_access');
-      window.history.replaceState({}, '', u.pathname + u.hash);
+      window.history.replaceState({}, '', u.pathname + (u.hash || ''));
+      setTab('profile');
+      setSubTab(prev => ({ ...prev, profile: 'youtube' }));
     } catch (e) {}
-  }, []);
+  }, [loaded, state]);
 
   useEffect(() => {
     if (!loaded || !state) return;
