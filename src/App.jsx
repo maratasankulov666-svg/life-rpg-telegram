@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.14';
+const APP_VERSION = '14.15';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -865,6 +865,14 @@ async function fetchYouTubeStats({ handle, channelId }) {
   return r.json();
 }
 
+function fmtSum(n) {
+  const x = Math.round(Number(n) || 0);
+  const sign = x < 0 ? '−' : '';
+  return sign + Math.abs(x).toLocaleString('ru-RU') + ' сум';
+}
+function financeSafeToSpend(finance, fm, monthlyOblig, reservedLeft) {
+  return (finance.cashBalance || 0) - (monthlyOblig || 0) - Math.max(0, reservedLeft || 0);
+}
 function monthKeyOf(dateStr) { return (dateStr || todayStr()).slice(0, 7); }
 
 const RU_MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -6749,6 +6757,8 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const [expandedSchedule, setExpandedSchedule] = useState(null);
   const [expandedHistory, setExpandedHistory] = useState(null);
   const [orderAmount, setOrderAmount] = useState('');
+  const [finNav, setFinNav] = useState('overview');
+  const [addMenu, setAddMenu] = useState(false);
 
   const today = todayStr();
   const todayStart = new Date(today + 'T00:00:00').getTime();
@@ -6783,11 +6793,182 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const isAdvanced = finance.mode === 'advanced';
   const txCategoryOptions = txType === 'income' ? INCOME_SOURCE_TYPES.map(t => ({ key: t.key, label: t.label })) : EXPENSE_CATEGORIES.filter(c => c.group !== 'fin');
 
+  const monthlyOblig = sortedDebts.reduce((s, d) => s + (Number(d.monthlyPayment) || 0), 0);
+  const reservedLeft = Math.max(0, plannedTotalForMonth - fm.expenses);
+  const safeSpend = financeSafeToSpend(finance, fm, monthlyOblig, reservedLeft);
+  const catRows = Object.entries(actualByCategory).map(([k, v]) => ({
+    key: k, label: (EXPENSE_CATEGORIES.find(c => c.key === k) || {}).label || k, v,
+  })).sort((a, b) => b.v - a.v);
+  const topCats = catRows.slice(0, 4);
+  const otherCats = catRows.slice(4).reduce((s, r) => s + r.v, 0);
+  const soon = sortedDebts.filter(d => d.remaining > 0).slice(0, 3);
+  const recentTx = thisMonthTx.slice(0, 3);
+  const tabs = [
+    { k: 'overview', l: 'Обзор' }, { k: 'expenses', l: 'Расходы' }, { k: 'debts', l: 'Долги' },
+    { k: 'budget', l: 'Бюджет' }, { k: 'capital', l: 'Капитал' }, { k: 'full', l: 'Ещё' },
+  ];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
+        {tabs.map(tb => (
+          <button key={tb.k} className="lrpg-btn" onClick={() => setFinNav(tb.k)} style={{
+            flexShrink: 0, padding: '8px 10px', borderRadius: 999, fontSize: 11,
+            background: finNav === tb.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,.05)', color: '#fff',
+          }}>{tb.l}</button>
+        ))}
+      </div>
+
+      {finNav === 'overview' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Card style={{ border: `1px solid ${COLORS.gold}55` }}>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Баланс</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.gold }}>{fmtSum(finance.cashBalance)}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginTop: 8, fontSize: 11 }}>
+              <div>Доходы<div style={{ color: COLORS.teal, fontWeight: 700 }}>+{fmtSum(fm.income)}</div></div>
+              <div>Расходы<div style={{ color: COLORS.crimson, fontWeight: 700 }}>−{fmtSum(fm.expenses)}</div></div>
+              <div>Платежи<div style={{ color: COLORS.orange, fontWeight: 700 }}>−{fmtSum(monthlyOblig)}</div></div>
+            </div>
+          </Card>
+          <Card style={{ border: `1px solid ${safeSpend >= 0 ? COLORS.teal : COLORS.crimson}66` }}>
+            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Можно потратить</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: safeSpend >= 0 ? COLORS.teal : COLORS.crimson }}>{fmtSum(safeSpend)}</div>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>после обязательных платежей и плана бюджета</div>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Расходы месяца</div>
+            {topCats.map(c => (
+              <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                <span>{c.label}</span><span>{fmtSum(c.v)}</span>
+              </div>
+            ))}
+            {otherCats > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span>Другое</span><span>{fmtSum(otherCats)}</span></div>}
+            <button className="lrpg-btn" onClick={() => setFinNav('expenses')} style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>Показать все</button>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Обязательства · {sortedDebts.filter(d => d.remaining > 0).length} шт · {fmtSum(monthlyOblig)} / мес</div>
+            {soon[0] && <div style={{ fontSize: 12, marginTop: 6 }}>Ближайший: {soon[0].name} · {fmtSum(soon[0].monthlyPayment || soon[0].remaining)}</div>}
+            <button className="lrpg-btn" onClick={() => setFinNav('debts')} style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>Все обязательства</button>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Бюджет</div>
+            <div style={{ fontSize: 12 }}>{fmtSum(fm.expenses)} / {fmtSum(plannedTotalForMonth || 0)}</div>
+            {plannedTotalForMonth > 0 && <Bar value={Math.min(100, fm.expenses / plannedTotalForMonth * 100)} max={100} color={fm.expenses > plannedTotalForMonth ? COLORS.crimson : COLORS.teal} />}
+            <button className="lrpg-btn" onClick={() => setFinNav('budget')} style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>План</button>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Капитал</div>
+            <div style={{ fontSize: 12 }}>Активы {fmtSum(totalAssets)}</div>
+            <div style={{ fontSize: 12 }}>Долги −{fmtSum(totalLiabilities)}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.gold }}>{fmtSum(netWorth)}</div>
+          </Card>
+          {isAdvanced && (
+            <Card>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>Состояние</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Нагрузка долга {health.debtZone.label} · {Math.round(health.debtLoad || 0)}%</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Норма сбережений {Math.round(health.savingsRate || 0)}%</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Подушка {health.emergencyMonths === Infinity ? '∞' : (health.emergencyMonths || 0).toFixed ? health.emergencyMonths.toFixed(1) : health.emergencyMonths} мес</div>
+            </Card>
+          )}
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>Недавно</div>
+            {recentTx.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Пока пусто</div>}
+            {recentTx.map(tx => (
+              <div key={tx.id || tx.ts} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span>{tx.title || tx.category}</span>
+                <span style={{ color: tx.type === 'income' ? COLORS.teal : COLORS.crimson }}>{tx.type === 'income' ? '+' : '−'}{fmtSum(tx.amount)}</span>
+              </div>
+            ))}
+          </Card>
+          <button className="lrpg-btn lrpg-cta" onClick={() => { setAddMenu(v => !v); }}>+ Добавить</button>
+          {addMenu && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <button className="lrpg-btn" onClick={() => { setTxType('expense'); setShowAddTx(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Расход</button>
+              <button className="lrpg-btn" onClick={() => { setTxType('income'); setShowAddTx(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Доход</button>
+              <button className="lrpg-btn" onClick={() => { setShowAddDebt(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Долг</button>
+              <button className="lrpg-btn" onClick={() => { setShowAddAsset(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Актив</button>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {['simple', 'advanced'].map(m => (
+              <button key={m} className="lrpg-btn" onClick={() => setFinanceMode(m)} style={{ fontSize: 10, padding: '6px 10px', borderRadius: 8, background: finance.mode === m ? COLORS.violet : COLORS.bgCardAlt, color: '#fff' }}>{m === 'simple' ? 'Просто' : 'Подробно'}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {finNav === 'expenses' && (
+        <Card>
+          <div style={{ fontWeight: 800 }}>Расходы · {fmtSum(fm.expenses)}</div>
+          {catRows.map(c => (
+            <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 6 }}>
+              <span>{c.label}</span><span>{fmtSum(c.v)}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 10, fontSize: 11, color: COLORS.textMuted }}>Последние</div>
+          {thisMonthTx.filter(x => x.type === 'expense').slice(0, 12).map(tx => (
+            <div key={tx.id || tx.ts} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
+              <span>{tx.title || tx.category}</span>
+              <span style={{ color: COLORS.crimson }}>−{fmtSum(tx.amount)}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {finNav === 'debts' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Card>
+            <div style={{ fontWeight: 800 }}>Долги · {fmtSum(totalLiabilities)}</div>
+            <div style={{ fontSize: 12 }}>В месяц {fmtSum(monthlyOblig)}</div>
+          </Card>
+          {sortedDebts.map(d => (
+            <Card key={d.id}>
+              <div style={{ fontWeight: 700 }}>{d.name}</div>
+              <div style={{ fontSize: 12 }}>Остаток {fmtSum(d.remaining)} · платёж {fmtSum(d.monthlyPayment)}</div>
+              <Bar value={d.original ? Math.max(0, 100 - d.remaining / d.original * 100) : 0} max={100} color={COLORS.gold} />
+              <button className="lrpg-btn lrpg-cta" style={{ marginTop: 6, padding: '6px 10px', fontSize: 11 }} onClick={() => payDebt(d.id, d.monthlyPayment || 0)}>Внести платёж</button>
+            </Card>
+          ))}
+          {sortedDebts.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Долгов нет</div></Card>}
+        </div>
+      )}
+
+      {finNav === 'budget' && (
+        <Card>
+          <div style={{ fontWeight: 800 }}>Бюджет {monthRuLabel(budgetMonthKey)}</div>
+          {EXPENSE_CATEGORIES.filter(c => c.group !== 'fin').slice(0, 10).map(c => {
+            const used = actualByCategory[c.key] || 0;
+            const lim = Number(budgetPlanForMonth[c.key] || 0);
+            return (
+              <div key={c.key} style={{ marginTop: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span>{c.label}</span><span>{fmtSum(used)}{lim ? ' / ' + fmtSum(lim) : ''}</span>
+                </div>
+                {lim > 0 && <Bar value={Math.min(100, used / lim * 100)} max={100} color={used > lim ? COLORS.crimson : COLORS.teal} />}
+              </div>
+            );
+          })}
+          <button className="lrpg-btn" onClick={() => setShowBudgetEdit(true)} style={{ marginTop: 10, background: COLORS.bgCardAlt, borderRadius: 8, padding: '8px 10px' }}>Править план</button>
+        </Card>
+      )}
+
+      {finNav === 'capital' && (
+        <Card>
+          <div style={{ fontWeight: 800 }}>Капитал {fmtSum(netWorth)}</div>
+          {assetBreakdown.map(a => (
+            <div key={a.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 6 }}>
+              <span>{a.icon} {a.label}</span><span>{fmtSum(a.value)}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 8, fontSize: 12 }}>Обязательства −{fmtSum(totalLiabilities)}</div>
+        </Card>
+      )}
+
+      {(finNav === 'full' || showAddTx || showAddDebt || showAddAsset || showBudgetEdit || showAddIncomeSource || showAddSaving) && (
+    <div style={{ display: finNav === 'full' || showAddTx || showAddDebt || showAddAsset || showBudgetEdit ? 'flex' : 'none', flexDirection: 'column', gap: 16 }}>
       <div>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Wallet size={15} color={COLORS.gold} /> Обзор Finance</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Wallet size={15} color={COLORS.gold} /> Полный раздел</span>
           <div style={{ display: 'flex', gap: 4 }}>
             {['simple', 'advanced'].map(m => (
               <button key={m} className="lrpg-btn" onClick={() => setFinanceMode(m)} style={{
@@ -7356,6 +7537,8 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
           })}
         </div>
       </div>
+    </div>
+      )}
     </div>
   );
 }
