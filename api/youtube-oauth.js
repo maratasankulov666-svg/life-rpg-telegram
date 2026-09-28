@@ -54,7 +54,7 @@ export default async function handler(req, res) {
       at: Date.now(),
     });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send('<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:-apple-system;background:#0B0F14;color:#E8EEF8;padding:24px"><p>Канал подключен. Возвращаю в игру…</p><script>try{localStorage.setItem("lrpg_yt_oauth",' + JSON.stringify(payload) + ');}catch(e){}location.replace("/");</script><p><a href="/" style="color:#00E5FF">Открыть игру</a></p></body></html>');
+    return res.status(200).send('<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="font-family:-apple-system;background:#0B0F14;color:#E8EEF8;padding:24px"><p>Канал подключен. Возвращаю в игру…</p><script>try{localStorage.setItem("lrpg_yt_oauth",' + JSON.stringify(payload) + ');}catch(e){}location.replace("/#youtube");</script><p><a href="/#youtube" style="color:#00E5FF">Открыть YouTube</a></p></body></html>');
   } catch (e) {
     return res.status(500).send(String(e.message || e));
   }
