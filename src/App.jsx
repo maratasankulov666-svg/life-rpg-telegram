@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.18.1';
+const APP_VERSION = '14.18.2';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -3211,10 +3211,19 @@ export default function LifeRPG() {
   useEffect(() => {
     try {
       const u = new URL(window.location.href);
-      const refresh = u.searchParams.get('yt_refresh');
-      const access = u.searchParams.get('yt_access');
+      let refresh = u.searchParams.get('yt_refresh');
+      let access = u.searchParams.get('yt_access');
+      try {
+        const raw = localStorage.getItem('lrpg_yt_oauth');
+        if (raw) {
+          const o = JSON.parse(raw);
+          refresh = refresh || o.refresh;
+          access = access || o.access;
+        }
+      } catch (e) {}
       if (!refresh && !access) return;
       setState(prev => prev ? ({ ...prev, youtube: { ...prev.youtube, oauth: { refresh, access, at: Date.now() } } }) : prev);
+      try { localStorage.removeItem('lrpg_yt_oauth'); } catch (e) {}
       u.searchParams.delete('yt_refresh');
       u.searchParams.delete('yt_access');
       window.history.replaceState({}, '', u.pathname + u.hash);
