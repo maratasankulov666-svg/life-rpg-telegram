@@ -16,11 +16,9 @@ export default async function handler(req, res) {
     const handle = (req.query.handle || '').replace(/^@/, '');
     const id = req.query.id || req.query.channelId;
     const wantVideos = req.query.videos === '1' || req.query.videos === 'true';
-
     let channelId = id;
     let snippet = null;
     let stats = null;
-
     if (!channelId && handle) {
       const s = await yt('/search', { part: 'snippet', q: handle, type: 'channel', maxResults: 1 }, key);
       const item = (s.items || [])[0];
@@ -28,13 +26,11 @@ export default async function handler(req, res) {
       channelId = item.snippet.channelId || item.id.channelId;
       snippet = item.snippet;
     }
-
     const ch = await yt('/channels', { part: 'snippet,statistics,contentDetails', id: channelId }, key);
     const c = (ch.items || [])[0];
     if (!c) return res.status(404).json({ error: 'NOT_FOUND' });
     snippet = c.snippet;
     stats = c.statistics;
-
     let recentVideos = [];
     if (wantVideos) {
       const uploads = c.contentDetails?.relatedPlaylists?.uploads;
@@ -42,24 +38,29 @@ export default async function handler(req, res) {
         const pl = await yt('/playlistItems', { part: 'snippet,contentDetails', playlistId: uploads, maxResults: 8 }, key);
         const ids = (pl.items || []).map(it => it.contentDetails.videoId).filter(Boolean).join(',');
         if (ids) {
-          const vd = await yt('/videos', { part: 'snippet,statistics', id: ids }, key);
-          recentVideos = (vd.items || []).map(v => ({
-            id: v.id,
-            title: v.snippet?.title,
-            publishedAt: v.snippet?.publishedAt,
-            views: Number(v.statistics?.viewCount || 0),
-            likes: Number(v.statistics?.likeCount || 0),
-            comments: Number(v.statistics?.commentCount || 0),
-          }));
+          const vd = await yt('/videos', { part: 'snippet,statistics,contentDetails,liveStreamingDetails', id: ids }, key);
+          recentVideos = (vd.items || []).map(v => {
+            const dur = String(v.contentDetails?.duration || '');
+            const m = dur.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            const seconds = m ? (Number(m[1]||0)*3600)+(Number(m[2]||0)*60)+Number(m[3]||0) : 0;
+            return {
+              id: v.id, title: v.snippet?.title,
+              thumb: v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url || null,
+              publishedAt: v.snippet?.publishedAt,
+              views: Number(v.statistics?.viewCount || 0),
+              likes: Number(v.statistics?.likeCount || 0),
+              comments: Number(v.statistics?.commentCount || 0),
+              seconds,
+              liveBroadcastContent: v.snippet?.liveBroadcastContent || 'none',
+              liveStreamingDetails: v.liveStreamingDetails || null,
+            };
+          });
         }
       }
     }
-
     res.setHeader('Cache-Control', 's-maxage=300');
     return res.json({
-      name: snippet.title,
-      handle: snippet.customUrl || handle || '',
-      channelId,
+      name: snippet.title, handle: snippet.customUrl || handle || '', channelId,
       thumb: snippet.thumbnails?.default?.url || null,
       subs: Number(stats.subscriberCount || 0),
       views: Number(stats.viewCount || 0),
