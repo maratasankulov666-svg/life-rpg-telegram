@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.22.1';
+const APP_VERSION = '14.22.2';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2855,10 +2855,53 @@ function councilStateBrief(state) {
 function parseCouncilJson(text) {
   const cleaned = String(text || '').replace(/```json|```/g, '').trim();
   const start = cleaned.indexOf('{');
+  if (start === -1) throw new Error('no JSON');
   const end = cleaned.lastIndexOf('}');
-  if (start === -1 || end === -1) throw new Error('no JSON');
-  return JSON.parse(cleaned.slice(start, end + 1));
+  const slice = end > start ? cleaned.slice(start, end + 1) : cleaned.slice(start);
+  try { return JSON.parse(slice); } catch (e) {}
+  const dir = slice.match(/"director"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  const lines = [];
+  const re = /"id"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+  let m;
+  while ((m = re.exec(slice))) lines.push({ id: m[1], text: m[2].replace(/\\n/g, ' ').replace(/\\"/g, '"') });
+  if (!dir && !lines.length) throw new Error('no JSON');
+  return { director: dir ? dir[1].replace(/\\"/g, '"') : '', lines, actions: [], memory: '' };
 }
+
+function CouncilRecoView({ pending }) {
+  if (!pending) return null;
+  let data = pending;
+  const raw = String(pending.director || '');
+  if (raw.trim().startsWith('{') && !(pending.lines || []).length) {
+    try { data = { ...pending, ...parseCouncilJson(raw) }; } catch (e) {}
+  }
+  const npcBy = Object.fromEntries(COUNCIL_NPCS.map(n => [n.id, n]));
+  const lines = (data.lines || []).filter(l => l && (l.text || l.id));
+  const directorText = String(data.director || '').trim().startsWith('{') ? '' : String(data.director || '').trim();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {directorText ? (
+        <div style={{ background: 'rgba(255,200,80,0.08)', borderRadius: 14, padding: '10px 12px' }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold, marginBottom: 4 }}>Кайлен</div>
+          <div style={{ fontSize: 13, lineHeight: 1.45 }}>{directorText}</div>
+        </div>
+      ) : null}
+      {lines.map((l, i) => {
+        const n = npcBy[l.id] || { emoji: '•', name: l.id, role: '' };
+        return (
+          <div key={i} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: '10px 12px' }}>
+            <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 4 }}>{n.emoji} {n.name} · {n.role}</div>
+            <div style={{ fontSize: 13, lineHeight: 1.45 }}>{String(l.text || '').replace(/\\n/g, ' ')}</div>
+          </div>
+        );
+      })}
+      {(data.actions || []).map((a, i) => (
+        <div key={'a'+i} style={{ fontSize: 12, color: COLORS.textMuted }}>• {a.label || a.title || a.type}</div>
+      ))}
+    </div>
+  );
+}
+
 
 function pickEnterOrder() {
   const withDelay = COUNCIL_NPCS.map(n => ({ n, t: 300 + Math.random() * 900 + (Math.random() < n.late ? 1400 + Math.random() * 1800 : 0) }));
@@ -3066,9 +3109,8 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
       {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
       {pending && (
         <HudCard style={{ padding: 12, border: `1px solid ${COLORS.gold}55` }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold }}>Рекомендации штаба</div>
-          <div style={{ fontSize: 12, marginTop: 6, whiteSpace: 'pre-wrap' }}>{pending.director}</div>
-          {(pending.actions || []).map((a, i) => <div key={i} style={{ fontSize: 11, color: COLORS.textMuted }}>• {a.type}: {a.label || a.title}</div>)}
+          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold, marginBottom: 8 }}>Рекомендации штаба</div>
+          <CouncilRecoView pending={pending} />
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button className="lrpg-btn lrpg-cta" onClick={acceptCouncil}>Принять</button>
             <button className="lrpg-btn" onClick={dismissCouncil} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Отклонить</button>
@@ -4355,7 +4397,10 @@ function addYouTubeQuest(ch, metric, delta) {
     const raw = await callClaudeAPIWithRetry(COUNCIL_SYSTEM, [{ role: 'user', content: userMsg }], 2, { taskType: 'COUNCIL', jsonMode: true });
     let data;
     try { data = parseCouncilJson(raw); }
-    catch { data = { director: raw.slice(0, 400), lines: [], actions: [], memory: topic || slot }; }
+    catch {
+      try { data = parseCouncilJson(raw); }
+      catch { data = { director: 'Штаб ответил криво. Нажми ещё раз.', lines: [], actions: [], memory: topic || slot }; }
+    }
     const meeting = {
       ts: Date.now(), slot, topic: topic || null,
       director: String(data.director || '').slice(0, 500),
