@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.18';
+const APP_VERSION = '14.18.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -8180,14 +8180,16 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
         ? (yt.channels || []).map(c => {
             const vids = (c.recentVideos || []).slice(0, 8).map(v => `${v.title || 'ролик'} (${v.views ?? '?'} просм., лайк ${v.likes ?? '—'})`).join('; ');
             return `Канал «${c.name}» ${c.handle || ''} подп. ${c.subs ?? 'н/д'}, просмотры ${c.views ?? 'н/д'}, видео ${c.videos ?? 'н/д'}, ниша ${c.niche || 'не указана'}. Последние ролики: ${vids || 'списка нет — только счётчики'}.`;
-          }).join('
-')
+          }).join('\n')
         : 'Каналов нет.';
       const st = yt.studio;
       const studioCtx = st ? (`\nСтудия 28д: просмотры ${st.summary?.views}, минуты ${st.summary?.estimatedMinutesWatched}, ср.время ${st.summary?.averageViewDuration}с, +подп ${st.summary?.subscribersGained}. Страны: ${(st.geo||[]).map(g=>g.country+':'+g.views).join(', ')}. Трафик: ${(st.traffic||[]).map(g=>(g.insightTrafficSourceType||'')+':'+g.views).join(', ')}. Топ видео: ${(st.topVideos||[]).slice(0,5).map(v=>v.video+' '+v.views).join('; ')}. Удержание: ${(st.retention||[]).filter((_,i)=>i%10===0).slice(0,6).map(r=>Math.round((r.at||0)*100)+'%='+Math.round((r.watch||0)*100)).join(', ')}`) : '';
       const text = await callClaudeAPIWithRetry(
         'Ты YouTube-наставник в Life RPG. Смотри ВСЕ каналы игрока. Не выдумывай CTR и удержание, если их нет в тексте. Предлагай идеи под реальные темы роликов. Пиши по-русски коротко.',
-        [{ role: 'user', content: ctx + studioCtx + '\nАктивный канал: ' + ((ch && ch.name) || '—') + '\n' + userMsg }]
+        [{ role: 'user', content: ctx + studioCtx + '\nАктивный канал: ' + ((ch && ch.name) || '—') + '\n' + userMsg }],
+        2,
+        { taskType: task }
+      );
       setAiText(text);
     } catch (e) {
       setAiText('AI временно недоступен. Резервный режим: выбери одну идею и напиши hook из 1 предложения.');
