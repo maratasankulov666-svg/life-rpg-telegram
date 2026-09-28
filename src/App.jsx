@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.15.7';
+const APP_VERSION = '14.16.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -4541,6 +4541,44 @@ function addYouTubeQuest(ch, metric, delta) {
     setState(defaultState());
   }
 
+  function resetFinance() {
+    setState(prev => ({
+      ...prev,
+      finance: defaultState().finance,
+      garage: { ...prev.garage },
+    }));
+  }
+
+  function resetProgressKeepLife() {
+    setState(prev => {
+      const d = defaultState();
+      const next = {
+        ...prev,
+        character: { ...prev.character, level: 1, xp: 0, title: null },
+        stats: { ...d.stats },
+        coins: d.coins,
+        coinsEarnedAllTime: d.coins,
+        coinsSpentAllTime: 0,
+        coinTransactions: [],
+        cosmetics: d.cosmetics,
+        lastRefundAt: null,
+        lastPurchase: null,
+        lastWheel: null,
+        dailyCheckin: null,
+        quests: [],
+        unlockedAchievements: [],
+        unlockedSets: [],
+        unlockedLevels: [],
+        dismissedEvolutions: [],
+        recoveryMode: false,
+        chronicle: [],
+        economy: typeof emptyEconomy === 'function' ? emptyEconomy() : prev.economy,
+        council: { ...normalizeCouncil(prev.council), grants: { titles: [], gear: [], achievements: [], quests: [] }, pending: [] },
+      };
+      try { return ensureDailyContent(next).state; } catch (e) { return next; }
+    });
+  }
+
   function dismissEvolution(key) {
     setState(prev => ({ ...prev, dismissedEvolutions: [...prev.dismissedEvolutions, key] }));
   }
@@ -4967,7 +5005,7 @@ useEffect(() => {
               )}
               {subTab.profile === 'settings' && (
                 <SettingsTab
-                  character={state.character} setCharacterName={setCharacterName} resetAllData={resetAllData}
+                  character={state.character} setCharacterName={setCharacterName} resetAllData={resetAllData} resetProgressKeepLife={resetProgressKeepLife} resetFinance={resetFinance}
                   availableHoursPerWeek={state.availableHoursPerWeek} setAvailableHours={setAvailableHours}
                   storageStatus={storageStatus} storageError={storageError} lastSavedAt={lastSavedAt} localBackupOk={localBackupOk}
                   state={state} importSaveData={importSaveData} saveNow={saveNow}
@@ -8767,8 +8805,10 @@ function AICenterCard() {
   );
 }
 
-function SettingsTab({ character, setCharacterName, resetAllData, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, localBackupOk, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
+function SettingsTab({ character, setCharacterName, resetAllData, resetProgressKeepLife, resetFinance, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, localBackupOk, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const [confirmingSoft, setConfirmingSoft] = useState(false);
+  const [confirmingFin, setConfirmingFin] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
   const [manualSaveResult, setManualSaveResult] = useState(null); // 'ok' | 'fail' | null
 
@@ -8850,17 +8890,40 @@ function SettingsTab({ character, setCharacterName, resetAllData, availableHours
 
       <Card>
         <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: COLORS.crimson }}>Опасная зона</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Полный сброс прогресса — персонаж, статы, квесты, финансы, всё. Отменить нельзя.</div>
+        <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Два режима. Сейв после сброса не вернуть.</div>
+        {!confirmingSoft ? (
+          <button className="lrpg-btn" onClick={() => setConfirmingSoft(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.gold, border: `1px solid ${COLORS.gold}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%', marginBottom: 8 }}>
+            Сбросить прогресс
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <button className="lrpg-btn" onClick={() => { resetProgressKeepLife && resetProgressKeepLife(); setConfirmingSoft(false); }} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Сбросить уровень и награды</button>
+            <button className="lrpg-btn" onClick={() => setConfirmingSoft(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 10px' }}>Нет</button>
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 10 }}>Остаются: имя, фото, цели, привычки, события, YouTube, финансы, тело.</div>
+        {!confirmingFin ? (
+          <button className="lrpg-btn" onClick={() => setConfirmingFin(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%', marginBottom: 8 }}>
+            Сбросить финансы
+          </button>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <button className="lrpg-btn" onClick={() => { resetFinance && resetFinance(); setConfirmingFin(false); }} style={{ flex: 1, background: COLORS.teal, color: '#042018', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Обнулить деньги и долги</button>
+            <button className="lrpg-btn" onClick={() => setConfirmingFin(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 10px' }}>Нет</button>
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 10 }}>Только баланс, транзакции, долги, бюджет, активы. Уровень и цели не трогает.</div>
         {!confirmingReset ? (
-          <button className="lrpg-btn" onClick={() => setConfirmingReset(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.crimson, border: `1px solid ${COLORS.crimson}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <RotateCcw size={14} /> Сбросить прогресс
+          <button className="lrpg-btn" onClick={() => setConfirmingReset(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.crimson, border: `1px solid ${COLORS.crimson}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%' }}>
+            Сбросить всё
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="lrpg-btn" onClick={() => { resetAllData(); setConfirmingReset(false); }} style={{ flex: 1, background: COLORS.crimson, color: '#fff', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13 }}>Да, сбросить всё</button>
-            <button className="lrpg-btn" onClick={() => setConfirmingReset(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px', fontSize: 13, border: `1px solid ${COLORS.border}` }}>Отмена</button>
+            <button className="lrpg-btn" onClick={() => { resetAllData(); setConfirmingReset(false); }} style={{ flex: 1, background: COLORS.crimson, color: '#fff', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13 }}>Да, всё</button>
+            <button className="lrpg-btn" onClick={() => setConfirmingReset(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px' }}>Отмена</button>
           </div>
         )}
+        <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Полный вайп: и цели, и YouTube, и деньги.</div>
       </Card>
 
       <div style={{ textAlign: 'center', fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>Life RPG v{APP_VERSION}</div>
