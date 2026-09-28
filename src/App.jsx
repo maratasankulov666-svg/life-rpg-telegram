@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.15.6';
+const APP_VERSION = '14.15.7';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -4707,10 +4707,9 @@ useEffect(() => {
         }
         .lrpg-page {
           animation-name: lrpg-page;
-          animation-duration: .42s;
+          animation-duration: .36s;
           animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-          animation-delay: 40ms;
-          animation-fill-mode: both;
+          animation-fill-mode: none;
         }
         @keyframes lrpg-chest-shake { 0%,100% { transform: rotate(0) } 20% { transform: rotate(-12deg) scale(1.05) } 40% { transform: rotate(12deg) } 60% { transform: rotate(-8deg) } 80% { transform: rotate(8deg) } }
         @keyframes lrpg-chest-burst { 0% { transform: scale(.4); opacity:0 } 40% { opacity:1 } 100% { transform: scale(2.2); opacity:0 } }
@@ -4838,7 +4837,7 @@ useEffect(() => {
         </div>
       )}
 
-      <div key={tab + ':' + (subTab[tab] || '')} className="lrpg-page" style={{ willChange: 'transform, opacity' }}>
+      <div key={tab + ':' + (subTab[tab] || '')} className={tab === 'home' ? '' : 'lrpg-page'}>
       {tab === 'home' ? (
         <HomeTab
           state={state} editingName={editingName}
