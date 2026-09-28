@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.19';
+const APP_VERSION = '14.20';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -8225,15 +8225,22 @@ function YouTubeStudioCards({ studio }) {
           </div>
         ))}
       </Card>
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Youtube size={14} /> Топ ролики</div>
-        {(studio.topVideos || []).slice(0, 6).map((a, i) => (
-          <div key={i} style={{ fontSize: 12, padding: '6px 0', borderBottom: `1px solid ${COLORS.border}` }}>
-            <div style={{ fontWeight: 700 }}>{a.title || a.video}</div>
-            <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{fmtNum(a.views)} просм. · {a.averageViewDuration || '—'} сек</div>
-          </div>
-        ))}
-      </Card>
+      {[{ key: 'shorts', title: 'Shorts', list: studio.shorts || (studio.topVideos || []).filter(v => v.kind === 'short') },
+        { key: 'longs', title: 'Long', list: studio.longs || (studio.topVideos || []).filter(v => v.kind !== 'short') }].map(sec => (
+        <Card key={sec.key}>
+          <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Youtube size={14} /> {sec.title}</div>
+          {sec.list.slice(0, 6).map((a, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: `1px solid ${COLORS.border}`, alignItems: 'center' }}>
+              {a.thumb ? <img src={a.thumb} alt="" style={{ width: 72, height: 40, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }} /> : <div style={{ width: 72, height: 40, borderRadius: 6, background: COLORS.bgCardAlt, flexShrink: 0 }} />}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title || a.video}</div>
+                <div style={{ color: COLORS.textMuted, fontSize: 11 }}>{fmtNum(a.views)} просм. · {a.averageViewDuration || a.seconds || '—'} сек</div>
+              </div>
+            </div>
+          ))}
+          {sec.list.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Нет роликов за период</div>}
+        </Card>
+      ))}
       {(studio.retention || []).length > 0 && (
         <Card>
           <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={14} /> Удержание</div>
@@ -8274,11 +8281,16 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
   const pipeline = YT_STAGES.map(s => ({ ...s, n: yt.contentItems.filter(i => i.status === s.key).length }));
   const todayHint = yt.contentItems.find(i => i.status !== 'PUBLISHED') || yt.ideas.find(i => i.status !== 'archived');
 
-  async function refreshStudio() {
+  const [studioRange, setStudioRange] = useState('28d');
+  const [studioCh, setStudioCh] = useState(null);
+
+  async function refreshStudio(targetCh, range) {
     if (!yt.oauth?.refresh) { setStudioErr('Сначала Войти в Google во вкладке Обзор.'); return; }
+    const cid = (targetCh && (targetCh.channelId || targetCh.id)) || studioCh?.channelId || ch?.channelId;
+    const rng = range || studioRange || '28d';
     setBusy('studio'); setStudioErr('');
     try {
-      const r = await fetch('/api/youtube-studio?refresh=' + encodeURIComponent(yt.oauth.refresh) + (ch?.channelId ? '&channelId=' + encodeURIComponent(ch.channelId) : ''));
+      const r = await fetch('/api/youtube-studio?refresh=' + encodeURIComponent(yt.oauth.refresh) + (cid ? '&channelId=' + encodeURIComponent(cid) : '') + '&range=' + encodeURIComponent(rng));
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Ошибка студии');
       patchYoutube(y => ({ ...y, studio: j }));
@@ -8454,6 +8466,15 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
       {sub === 'channels' && studioPage === 'stats' && (
         <>
           <button className="lrpg-btn" onClick={() => setStudioPage(null)} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: '8px 12px', fontSize: 12 }}>← К каналам</button>
+          <div style={{ fontSize: 14, fontWeight: 800 }}>{studioCh?.name || yt.studio?.channels?.find(c => c.channelId === yt.studio?.channelId)?.name || 'Канал'}</div>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+            {[{k:'48h',l:'48 ч'},{k:'7d',l:'Неделя'},{k:'28d',l:'Месяц'},{k:'90d',l:'3 мес'},{k:'365d',l:'Год'},{k:'all',l:'Всё время'}].map(p => (
+              <button key={p.k} className="lrpg-btn" onClick={() => { setStudioRange(p.k); refreshStudio(studioCh, p.k); }} style={{
+                flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                background: studioRange === p.k ? COLORS.violet : COLORS.bgCardAlt, color: studioRange === p.k ? '#fff' : COLORS.textMuted,
+              }}>{p.l}</button>
+            ))}
+          </div>
           <YouTubeStudioCards studio={yt.studio} />
           <button className="lrpg-btn" onClick={() => { setStudioPage('coach'); if (coachMsgs.length === 0) sendCoach('Разбери мою статистику за 28 дней простым языком: что хорошо, что слабо, что снимать дальше.'); }} style={{ background: COLORS.violetSoft, borderRadius: 12, padding: '10px 12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             <MessageCircle size={14} /> Объяснить аналитику
@@ -8486,13 +8507,10 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
 
       {sub === 'channels' && !studioPage && (
         <>
-          <YouTubeTab youtube={youtube} quests={quests} addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats} deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest} />
-          <button className="lrpg-btn lrpg-cta" onClick={() => setStudioPage('stats')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <BarChart3 size={14} /> Подробная статистика
-          </button>
-          <button className="lrpg-btn" onClick={refreshStudio} style={{ background: COLORS.bgCardAlt, borderRadius: 12, padding: '10px 12px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <RefreshCw size={14} /> {busy === 'studio' ? 'Обновляю…' : 'Обновить статистику'}
-          </button>
+          <YouTubeTab youtube={youtube} quests={quests} addYouTubeChannel={addYouTubeChannel} updateYouTubeStats={updateYouTubeStats} deleteYouTubeChannel={deleteYouTubeChannel} addYouTubeQuest={addYouTubeQuest}
+            studioBusyId={busy === 'studio' ? (studioCh?.channelId || ch?.channelId) : null}
+            onOpenStudio={(c) => { setStudioCh(c); setStudioPage('stats'); if (!yt.studio || yt.studio.channelId !== c.channelId) refreshStudio(c, studioRange); }}
+            onRefreshStudio={(c) => { setStudioCh(c); refreshStudio(c, studioRange); }} />
           {studioErr && <div style={{ color: COLORS.crimson, fontSize: 11 }}>{studioErr}</div>}
         </>
       )}
@@ -8561,7 +8579,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
 }
 
 
-function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest }) {
+function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest, onOpenStudio, onRefreshStudio, studioBusyId }) {
   const [showAdd, setShowAdd] = useState(false);
   const [handle, setHandle] = useState('');
   const [name, setName] = useState('');
@@ -8683,12 +8701,15 @@ function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, de
               </div>
             )}
 
-            {ch.channelId && (
-              <button className="lrpg-btn" disabled={busy === ch.id} onClick={() => sync(ch)}
-                style={{ marginTop: 10, width: '100%', background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 12, opacity: busy === ch.id ? 0.6 : 1 }}>
-                {busy === ch.id ? 'Обновляю...' : 'Обновить статистику'}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+              <button className="lrpg-btn lrpg-cta" onClick={() => onOpenStudio && onOpenStudio(ch)} style={{ width: '100%', padding: '8px 0', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <BarChart3 size={14} /> Подробная статистика
               </button>
-            )}
+              <button className="lrpg-btn" disabled={busy === ch.id || studioBusyId === ch.channelId} onClick={() => { if (onRefreshStudio) onRefreshStudio(ch); else if (ch.channelId) sync(ch); }}
+                style={{ width: '100%', background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 12 }}>
+                {(busy === ch.id || studioBusyId === ch.channelId) ? 'Обновляю…' : 'Обновить статистику'}
+              </button>
+            </div>
 
             <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '10px 0 4px' }}>Внести цифры вручную:</div>
             <div style={{ display: 'flex', gap: 6 }}>
