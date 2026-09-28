@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.12.5';
+const APP_VERSION = '14.13';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -5449,6 +5449,51 @@ function CheckinModal({ energy, todayCheckin, setDailyCheckin, onClose }) {
 
 // ---- Home: GameShell (фикс. высота, без скролла) ----
 
+
+function sceneClock() {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMonth();
+  const season = (m === 11 || m <= 1) ? 'зима' : m <= 4 ? 'весна' : m <= 7 ? 'лето' : 'осень';
+  const phase = h < 6 ? 'ночь' : h < 8 ? 'рассвет' : h < 18 ? 'день' : h < 21 ? 'закат' : 'ночь';
+  return { season, phase, h };
+}
+function windowSkyStyle(season, phase) {
+  const skies = {
+    зима: {
+      день: 'linear-gradient(180deg, #c5d8ee 0%, #e8f1fa 55%, #b7c6d6 100%)',
+      ночь: 'linear-gradient(180deg, #0b1220 0%, #152238 70%, #1a2740 100%)',
+      рассвет: 'linear-gradient(180deg, #c9d4e6 0%, #f2e6d8 100%)',
+      закат: 'linear-gradient(180deg, #7a8aa3 0%, #c4a88a 100%)',
+    },
+    весна: {
+      день: 'linear-gradient(180deg, #8ec8ef 0%, #d7f0c9 100%)',
+      ночь: 'linear-gradient(180deg, #102033 0%, #1b3348 100%)',
+      рассвет: 'linear-gradient(180deg, #f3c9d4 0%, #d5eec0 100%)',
+      закат: 'linear-gradient(180deg, #f0b3a0 0%, #9ec98a 100%)',
+    },
+    лето: {
+      день: 'linear-gradient(180deg, #4aa3e8 0%, #c8ecff 55%, #ffe7a8 100%)',
+      ночь: 'linear-gradient(180deg, #071525 0%, #12304a 100%)',
+      рассвет: 'linear-gradient(180deg, #ffd7a0 0%, #8ecfff 100%)',
+      закат: 'linear-gradient(180deg, #ff7a3c 0%, #ffc56b 55%, #3a6ea8 100%)',
+    },
+    осень: {
+      день: 'linear-gradient(180deg, #87b4d6 0%, #f0d2a0 70%, #d9a066 100%)',
+      ночь: 'linear-gradient(180deg, #140e18 0%, #2a1c22 100%)',
+      рассвет: 'linear-gradient(180deg, #e8b48a 0%, #c9d6e8 100%)',
+      закат: 'linear-gradient(180deg, #c45a2a 0%, #e8a05a 60%, #3d2a28 100%)',
+    },
+  };
+  return skies[season][phase];
+}
+function roomLightStyle(phase) {
+  if (phase === 'день') return 'linear-gradient(115deg, rgba(255,236,190,0.28) 8%, rgba(255,255,255,0.06) 42%, rgba(20,16,12,0.10) 100%)';
+  if (phase === 'рассвет') return 'linear-gradient(115deg, rgba(255,200,170,0.22) 10%, rgba(12,16,28,0.16) 100%)';
+  if (phase === 'закат') return 'linear-gradient(115deg, rgba(255,140,70,0.26) 12%, rgba(40,18,30,0.22) 100%)';
+  return 'linear-gradient(180deg, rgba(8,12,28,0.28) 0%, rgba(8,12,28,0.08) 40%, rgba(4,6,16,0.32) 100%)';
+}
+
 function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight }) {
   const [modal, setModal] = useState(null);
   const currentWeight = latestWeight(state.body);
@@ -5468,44 +5513,24 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         backgroundPosition: 'center 62%',
         animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
       }} />
-      <div style={{
-        position: 'absolute',
-        left: '18%',
-        width: '64%',
-        top: '22%',
-        height: '36%',
-        pointerEvents: 'none',
-        overflow: 'hidden',
-        zIndex: 1,
-        borderRadius: 4,
-      }}>
-        <div style={{ position:'absolute', width:'80%', height:70, left:'-30%', top:'6%', borderRadius:'50%',
-          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.38) 0%, rgba(180,210,255,0.12) 50%, transparent 72%)',
-          animation:'lrpg-cloud-a 20s ease-in-out infinite alternate' }} />
-        <div style={{ position:'absolute', width:'55%', height:48, left:'40%', top:'2%', borderRadius:'50%',
-          background:'radial-gradient(ellipse at center, rgba(255,255,255,0.28) 0%, transparent 70%)',
-          animation:'lrpg-cloud-b 26s ease-in-out infinite alternate' }} />
-        <div style={{ position:'absolute', left:'28%', top:'18%', width:10, height:'62%',
-          background:'radial-gradient(ellipse at center, rgba(255,220,150,0.55) 0%, rgba(255,180,80,0.12) 40%, transparent 70%)',
-          filter:'blur(1px)',
-          animation:'lrpg-twinkle 2.8s ease-in-out infinite' }} />
-        <div style={{ position:'absolute', left:'27%', top:'12%', width:6, height:6, borderRadius:'50%',
-          background:'#ffe9a8', boxShadow:'0 0 10px 4px rgba(255,210,120,.75)',
-          animation:'lrpg-twinkle 1.8s ease-in-out infinite' }} />
-        {[
-          ['12%','48%'],['14%','62%'],['16%','54%'],['58%','50%'],['62%','58%'],['66%','46%'],['70%','64%'],['74%','52%'],
-          ['8%','70%'],['78%','70%'],['54%','66%'],['20%','68%']
-        ].map((p,i)=>(
-          <div key={i} style={{ position:'absolute', left:p[0], top:p[1], width:3, height:3, borderRadius:1,
-            background: i%3===0 ? '#ffe7a0' : '#fff6c8',
-            animation:`lrpg-twinkle ${1.6 + (i%4)*0.5}s ease-in-out infinite`, animationDelay:`${i*0.22}s` }} />
-        ))}
-        {(new Date().getHours() >= 19 || new Date().getHours() < 6) && (
-          <div style={{ position:'absolute', width:70, height:2, left:'10%', top:'10%',
-            background:'linear-gradient(90deg, transparent, #fff, transparent)',
-            animation:'lrpg-shoot 9s ease-out infinite', animationDelay:'5s' }} />
-        )}
-      </div>
+      {(() => {
+        const sc = sceneClock();
+        return (
+          <>
+            <div style={{
+              position: 'absolute', left: '18%', width: '64%', top: '22%', height: '36%',
+              pointerEvents: 'none', overflow: 'hidden', zIndex: 1, borderRadius: 4,
+              background: windowSkyStyle(sc.season, sc.phase),
+              mixBlendMode: sc.phase === 'ночь' ? 'soft-light' : 'overlay',
+              opacity: sc.phase === 'ночь' ? 0.55 : 0.72,
+            }} />
+            <div style={{
+              position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2,
+              background: roomLightStyle(sc.phase),
+            }} />
+          </>
+        );
+      })()}
       <GameSceneCenter body={state.body} currentWeight={currentWeight} />
 
       <div style={{
