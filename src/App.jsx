@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.22';
+const APP_VERSION = '14.22.1';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -8231,6 +8231,83 @@ const YT_COUNTRY_RU = {
 function ytAgeRu(s) { return String(s || '').replace('age', '').replace('-', '–'); }
 function ytGenderRu(s) { return s === 'female' ? 'женщины' : s === 'male' ? 'мужчины' : (s || ''); }
 
+
+function YouTubeAiPretty({ text }) {
+  if (!text) return null;
+  const raw = String(text).replace(/\r/g, '');
+  const lines = raw.split('\n');
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*\|/.test(line) && lines[i + 1] && /^\s*\|?\s*-/.test(lines[i + 1])) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) {
+        const cells = lines[i].split('|').map(s => s.trim()).filter(Boolean);
+        if (cells.length && !cells.every(c => /^[-:]+$/.test(c))) rows.push(cells);
+        i++;
+      }
+      const head = rows[0] || [];
+      const body = rows.slice(1);
+      blocks.push({ type: 'table', head, body });
+      continue;
+    }
+    if (/^\s*#{1,3}\s+/.test(line) || /^\s*\*\*[^*].+\*\*\s*$/.test(line)) {
+      blocks.push({ type: 'h', text: line.replace(/^\s*#{1,3}\s+/, '').replace(/\*\*/g, '').trim() });
+      i++; continue;
+    }
+    if (/^\s*[-•*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-•*]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-•*]\s+/, '').replace(/\*\*/g, '').trim());
+        i++;
+      }
+      blocks.push({ type: 'ul', items });
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    let ptxt = line;
+    i++;
+    while (i < lines.length && lines[i].trim() && !/^\s*[-•*#|]/.test(lines[i]) && !/^\s*\*\*[^*].+\*\*\s*$/.test(lines[i])) {
+      ptxt += ' ' + lines[i].trim();
+      i++;
+    }
+    blocks.push({ type: 'p', text: ptxt.replace(/\*\*/g, '').trim() });
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {blocks.map((b, idx) => {
+        if (b.type === 'h') return <div key={idx} style={{ fontSize: 13, fontWeight: 800, color: '#E8EEF8', marginTop: 4 }}>{b.text}</div>;
+        if (b.type === 'p') return <div key={idx} style={{ fontSize: 13, lineHeight: 1.45, color: COLORS.text }}>{b.text}</div>;
+        if (b.type === 'ul') return (
+          <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {b.items.map((it, j) => (
+              <div key={j} style={{ display: 'flex', gap: 8, fontSize: 13, lineHeight: 1.4 }}>
+                <span style={{ color: COLORS.violet, marginTop: 2 }}>●</span>
+                <span>{it}</span>
+              </div>
+            ))}
+          </div>
+        );
+        return (
+          <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {b.body.map((row, j) => (
+              <div key={j} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: '8px 10px' }}>
+                <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 4 }}>{row[0]}</div>
+                {row.slice(1).map((cell, k) => (
+                  <div key={k} style={{ fontSize: 12, color: COLORS.textMuted }}>
+                    <span style={{ color: COLORS.textMuted }}>{(b.head[k + 1] || '') + (b.head[k + 1] ? ': ' : '')}</span>{cell}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, deleteYouTubeChannel, addYouTubeQuest, patchYoutube }) {
   const yt = normalizeYoutube(youtube);
   const [nav, setNav] = useState('channels');
@@ -8290,7 +8367,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
       const ctx = (yt.channels || []).map(c => `Канал «${c.name}» подп. ${c.subs ?? 'н/д'}, просмотры ${c.views ?? 'н/д'}`).join('\n') || 'Каналов нет.';
       const studioCtx = st ? (`\nAnalytics ${st.range}: views ${st.summary?.views}, min ${st.summary?.estimatedMinutesWatched}, +sub ${st.summary?.subscribersGained}`) : '';
       const text = await callClaudeAPIWithRetry(
-        'Ты YouTube-наставник. Не выдумывай CTR и цифры, которых нет. Пиши по-русски коротко.',
+        'Ты YouTube-наставник Life RPG. Пиши по-русски коротко. Не используй markdown-таблицы с | и не пиши **звёздочки**. Заголовки начинай с ## . Списки с дефиса. Никакого CTR, если его нет в данных.',
         [{ role: 'user', content: ctx + studioCtx + '\n' + userMsg }],
         2,
         { taskType: task }
@@ -8556,7 +8633,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
           <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('CONTENT_PLAN', 'Собери контент-план на 7 дней: формат, хук, зачем.')} style={{ background: COLORS.bgCardAlt, borderRadius: 12, padding: '10px 12px' }}>План на неделю</button>
           <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('YOUTUBE_ANALYTICS', 'Разбери цифры студии простым языком: что растёт, что нет, что снимать.')} style={{ background: COLORS.bgCardAlt, borderRadius: 12, padding: '10px 12px' }}>Разобрать аналитику</button>
           {busy && busy !== 'studio' && busy !== 'video' && <div style={{ fontSize: 11, color: COLORS.textMuted }}>ИИ думает…</div>}
-          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+          {aiText && <Card><YouTubeAiPretty text={aiText} /></Card>}
         </>
       )}
 
@@ -8581,7 +8658,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
             </Card>
           ))}
           <button className="lrpg-btn" disabled={!!busy} onClick={() => askAI('CONTENT_PLAN', 'Дополни текущий план этапов.')}>ИИ допишет план</button>
-          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+          {aiText && <Card><YouTubeAiPretty text={aiText} /></Card>}
         </>
       )}
 
@@ -8602,7 +8679,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
               <button className="lrpg-btn" onClick={() => patchYoutube(y => ({ ...y, ideas: y.ideas.filter(x => x.id !== idea.id) }))} style={{ fontSize: 11 }}>Удалить</button>
             </Card>
           ))}
-          {aiText && <Card><div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{aiText}</div></Card>}
+          {aiText && <Card><YouTubeAiPretty text={aiText} /></Card>}
         </>
       )}
     </div>
