@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.16.1';
+const APP_VERSION = '14.18';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -3093,7 +3093,6 @@ function ProfileHub({
       <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, marginBottom: 4 }}>Моя жизнь</div>
         <ProfileRow icon={Wallet} label="Финансы" onClick={() => openProfile('finance')} />
-        <ProfileRow icon={Car} label="Гараж" onClick={() => openProfile('garage')} />
         <ProfileRow icon={Youtube} label="YouTube" onClick={() => openProfile('youtube')} />
         <ProfileRow icon={BookOpen} label="Учёба" onClick={() => { setTab('actions'); setSubTab(s => ({ ...s, actions: 'quests' })); }} />
         <ProfileRow icon={Briefcase} label="Работа" onClick={() => openProfile('finance')} />
@@ -3207,6 +3206,19 @@ export default function LifeRPG() {
       setWelcomeBackDays(result.welcomeBackDays);
       setLoaded(true);
     })().catch(e => { console.error(e); setState(defaultState()); setLoaded(true); });
+  }, []);
+
+  useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      const refresh = u.searchParams.get('yt_refresh');
+      const access = u.searchParams.get('yt_access');
+      if (!refresh && !access) return;
+      setState(prev => prev ? ({ ...prev, youtube: { ...prev.youtube, oauth: { refresh, access, at: Date.now() } } }) : prev);
+      u.searchParams.delete('yt_refresh');
+      u.searchParams.delete('yt_access');
+      window.history.replaceState({}, '', u.pathname + u.hash);
+    } catch (e) {}
   }, []);
 
   useEffect(() => {
@@ -4958,9 +4970,10 @@ useEffect(() => {
                   setTaxiTarget={setTaxiTarget} setTaxiCommission={setTaxiCommission} logOrder={logOrder} deleteOrder={deleteOrder}
                   addCustomAsset={addCustomAsset} deleteCustomAsset={deleteCustomAsset}
                   setBudgetPlanItem={setBudgetPlanItem} removeBudgetPlanItem={removeBudgetPlanItem} setDebtLoadThresholds={setDebtLoadThresholds}
+                  addGarageExpense={addGarageExpense} deleteGarageExpense={deleteGarageExpense}
                 />
               )}
-              {subTab.profile === 'garage' && (
+              {false && subTab.profile === 'garage' && (
                 <GarageTab
                   garage={state.garage} debts={state.finance.debts} taxiOrders={state.finance.taxi.orders}
                   setGaragePhoto={setGaragePhoto} setGarageName={setGarageName} setGarageCarDebtId={setGarageCarDebtId}
@@ -6800,7 +6813,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
   );
 }
 
-function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, setTaxiCommission, logOrder, deleteOrder, addCustomAsset, deleteCustomAsset, setBudgetPlanItem, removeBudgetPlanItem, setDebtLoadThresholds }) {
+function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, setTaxiCommission, logOrder, deleteOrder, addCustomAsset, deleteCustomAsset, setBudgetPlanItem, removeBudgetPlanItem, setDebtLoadThresholds, addGarageExpense, deleteGarageExpense }) {
   const [showAddTx, setShowAddTx] = useState(false);
   const [txType, setTxType] = useState('expense');
   const [showAddIncomeSource, setShowAddIncomeSource] = useState(false);
@@ -6816,6 +6829,9 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
   const [orderAmount, setOrderAmount] = useState('');
   const [finNav, setFinNav] = useState('overview');
   const [addMenu, setAddMenu] = useState(false);
+  const [carInc, setCarInc] = useState('');
+  const [carExpAmt, setCarExpAmt] = useState('');
+  const [carExpTitle, setCarExpTitle] = useState('');
 
   const today = todayStr();
   const todayStart = new Date(today + 'T00:00:00').getTime();
@@ -6891,6 +6907,32 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
             <div style={{ fontSize: 11, color: COLORS.textMuted }}>Можно потратить</div>
             <div style={{ fontSize: 20, fontWeight: 800, color: safeSpend >= 0 ? COLORS.teal : COLORS.crimson }}>{fmtSum(safeSpend)}</div>
             <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>после обязательных платежей и плана бюджета</div>
+          </Card>
+          <Card>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Машина · в общем балансе</div>
+            {(() => {
+              const now = new Date();
+              const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+              const expM = (garage.expenses || []).filter(e => e.ts >= monthStart).reduce((s, e) => s + e.amount, 0);
+              const incM = (finance.taxi.orders || []).filter(o => o.ts >= monthStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
+              return (
+                <div style={{ fontSize: 12, marginTop: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Доход с заказов</span><span style={{ color: COLORS.teal }}>+{fmtSum(incM)}</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Расходы на авто</span><span style={{ color: COLORS.crimson }}>−{fmtSum(expM)}</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>Итог месяца</span><span style={{ color: incM - expM >= 0 ? COLORS.teal : COLORS.crimson }}>{fmtSum(incM - expM)}</span></div>
+                </div>
+              );
+            })()}
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              <input className="lrpg-input" type="number" placeholder="Заказ, сум" value={carInc} onChange={e => setCarInc(e.target.value)} style={{ flex: 1 }} />
+              <button className="lrpg-btn lrpg-cta" style={{ padding: '8px 10px', fontSize: 11 }} onClick={() => { const a = Number(carInc); if (a > 0 && logOrder) { logOrder(a); setCarInc(''); } }}>В баланс</button>
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <input className="lrpg-input" placeholder="Бензин / мойка" value={carExpTitle} onChange={e => setCarExpTitle(e.target.value)} style={{ flex: 1.2 }} />
+              <input className="lrpg-input" type="number" placeholder="Сум" value={carExpAmt} onChange={e => setCarExpAmt(e.target.value)} style={{ flex: 0.8 }} />
+              <button className="lrpg-btn" style={{ padding: '8px 10px', fontSize: 11, background: COLORS.bgCardAlt }} onClick={() => { const a = Number(carExpAmt); if (a > 0 && addGarageExpense) { addGarageExpense(carExpTitle.trim() || 'Машина', a, 'fuel'); setCarExpAmt(''); setCarExpTitle(''); } }}>Списать</button>
+            </div>
+            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Пишется в доходы/расходы и в «можно потратить».</div>
           </Card>
           <Card>
             <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Расходы месяца</div>
@@ -8096,6 +8138,8 @@ function normalizeYoutube(yt) {
     ideas: y.ideas || [],
     contentItems: y.contentItems || [],
     settings: { defaultPlanningPeriod: 7, defaultPublishFrequency: 3, ...(y.settings || {}) },
+    oauth: y.oauth || null,
+    studio: y.studio || null,
   };
 }
 
@@ -8115,6 +8159,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
   const [busy, setBusy] = useState(null);
   const [aiText, setAiText] = useState('');
   const [ideaTitle, setIdeaTitle] = useState('');
+  const [studioErr, setStudioErr] = useState('');
   const tabs = [
     { key: 'overview', label: 'Обзор' },
     { key: 'channels', label: 'Каналы' },
@@ -8131,13 +8176,18 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
   async function askAI(task, userMsg) {
     setBusy(task); setAiText('');
     try {
-      const ctx = ch ? `Канал: ${ch.name}, подп. ${ch.subs ?? 'н/д'}, просмотры ${ch.views ?? 'н/д'}, видео ${ch.videos ?? 'н/д'}, ниша ${ch.niche || 'не указана'}.` : 'Каналов нет.';
+      const ctx = (yt.channels || []).length
+        ? (yt.channels || []).map(c => {
+            const vids = (c.recentVideos || []).slice(0, 8).map(v => `${v.title || 'ролик'} (${v.views ?? '?'} просм., лайк ${v.likes ?? '—'})`).join('; ');
+            return `Канал «${c.name}» ${c.handle || ''} подп. ${c.subs ?? 'н/д'}, просмотры ${c.views ?? 'н/д'}, видео ${c.videos ?? 'н/д'}, ниша ${c.niche || 'не указана'}. Последние ролики: ${vids || 'списка нет — только счётчики'}.`;
+          }).join('
+')
+        : 'Каналов нет.';
+      const st = yt.studio;
+      const studioCtx = st ? (`\nСтудия 28д: просмотры ${st.summary?.views}, минуты ${st.summary?.estimatedMinutesWatched}, ср.время ${st.summary?.averageViewDuration}с, +подп ${st.summary?.subscribersGained}. Страны: ${(st.geo||[]).map(g=>g.country+':'+g.views).join(', ')}. Трафик: ${(st.traffic||[]).map(g=>(g.insightTrafficSourceType||'')+':'+g.views).join(', ')}. Топ видео: ${(st.topVideos||[]).slice(0,5).map(v=>v.video+' '+v.views).join('; ')}. Удержание: ${(st.retention||[]).filter((_,i)=>i%10===0).slice(0,6).map(r=>Math.round((r.at||0)*100)+'%='+Math.round((r.watch||0)*100)).join(', ')}`) : '';
       const text = await callClaudeAPIWithRetry(
-        'Ты YouTube-наставник в Life RPG. Не выдумывай метрики, которых нет. Пиши по-русски коротко.',
-        [{ role: 'user', content: ctx + '\n' + userMsg }],
-        2,
-        { taskType: task }
-      );
+        'Ты YouTube-наставник в Life RPG. Смотри ВСЕ каналы игрока. Не выдумывай CTR и удержание, если их нет в тексте. Предлагай идеи под реальные темы роликов. Пиши по-русски коротко.',
+        [{ role: 'user', content: ctx + studioCtx + '\nАктивный канал: ' + ((ch && ch.name) || '—') + '\n' + userMsg }]
       setAiText(text);
     } catch (e) {
       setAiText('AI временно недоступен. Резервный режим: выбери одну идею и напиши hook из 1 предложения.');
@@ -8201,11 +8251,48 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
       {sub === 'overview' && (
         <>
           <HudCard style={{ padding: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 800 }}>Студия YouTube</div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>{yt.oauth?.refresh ? 'Google подключён. Можно тянуть удержание и аудиторию.' : 'Публичные цифры уже есть. Для удержания нажми Войти.'}</div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              <button className="lrpg-btn lrpg-cta" onClick={() => { window.location.href = '/api/youtube-oauth'; }}>Войти в Google</button>
+              {yt.oauth?.refresh && (
+                <button className="lrpg-btn" style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }} onClick={async () => {
+                  setBusy('studio'); setStudioErr('');
+                  try {
+                    const r = await fetch('/api/youtube-studio?refresh=' + encodeURIComponent(yt.oauth.refresh) + (ch?.channelId ? '&channelId=' + encodeURIComponent(ch.channelId) : ''));
+                    const j = await r.json();
+                    if (!r.ok) throw new Error(j.error || 'Ошибка студии');
+                    patchYoutube(y => ({ ...y, studio: j }));
+                    if (j.channels) {
+                      j.channels.forEach(c => {
+                        const exists = (yt.channels || []).some(x => x.channelId === c.channelId);
+                        if (!exists) addYouTubeChannel({ name: c.name, handle: c.handle, channelId: c.channelId, thumb: c.thumb, subs: c.subs, views: c.views, videos: c.videos });
+                      });
+                    }
+                  } catch (e) { setStudioErr(String(e.message || e)); }
+                  setBusy(null);
+                }}>{busy === 'studio' ? 'Гружу…' : 'Обновить студию'}</button>
+              )}
+            </div>
+            {studioErr && <div style={{ color: COLORS.crimson, fontSize: 11, marginTop: 6 }}>{studioErr}</div>}
+          </HudCard>
+          <HudCard style={{ padding: 12 }}>
             <div style={{ fontSize: 11, color: COLORS.textMuted }}>Каналов {yt.channels.length} · в работе {yt.contentItems.filter(i => i.status !== 'PUBLISHED').length}</div>
             <div style={{ fontSize: 13, fontWeight: 800, marginTop: 6 }}>Что делать сегодня</div>
             <div style={{ fontSize: 12, marginTop: 4 }}>{todayHint ? `Продолжи: «${todayHint.title}»` : 'Добавь идею или канал — появится задача дня.'}</div>
             <button className="lrpg-btn lrpg-cta" style={{ marginTop: 8 }} onClick={() => askAI('YOUTUBE_PLAN', 'Дай одну главную задачу на сегодня и почему.')}>Попросить AI помочь</button>
           </HudCard>
+          {(yt.channels || []).map(c => (
+            <HudCard key={c.id} style={{ padding: 12, border: c.id === yt.activeChannelId ? `1px solid ${COLORS.violet}` : undefined }}>
+              <div style={{ fontSize: 13, fontWeight: 800 }}>{c.name} <span style={{ color: COLORS.textMuted, fontWeight: 500 }}>{c.handle || ''}</span></div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{c.subs ?? '—'} подп. · {c.views ?? '—'} просм. · {c.videos ?? '—'} видео</div>
+              {(c.recentVideos || []).slice(0, 4).map((v, i) => (
+                <div key={i} style={{ fontSize: 11, marginTop: 4 }}>{v.title} · {v.views ?? '—'} просм.</div>
+              ))}
+              {!(c.recentVideos || []).length && <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>Обнови канал — подтянутся последние ролики</div>}
+              <button className="lrpg-btn" style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }} onClick={() => patchYoutube(y => ({ ...y, activeChannelId: c.id }))}>Сделать активным</button>
+            </HudCard>
+          ))}
           <HudCard style={{ padding: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>PIPELINE</div>
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
@@ -8281,7 +8368,24 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
 
       {sub === 'analytics' && (
         <Card>
-          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Только реальные данные канала</div>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Студия · 28 дней</div>
+          {yt.studio ? (
+            <div style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div>Просмотры {yt.studio.summary?.views ?? '—'} · минуты {yt.studio.summary?.estimatedMinutesWatched ?? '—'} · среднее время {yt.studio.summary?.averageViewDuration ?? '—'} сек</div>
+              <div>+подп. {yt.studio.summary?.subscribersGained ?? '—'} / −{yt.studio.summary?.subscribersLost ?? '—'}</div>
+              <div style={{ fontWeight: 700 }}>Аудитория</div>
+              {(yt.studio.audience || []).slice(0, 6).map((a, i) => <div key={i}>{a.ageGroup || ''} {a.gender || ''} · {Math.round(a.viewerPercentage || 0)}%</div>)}
+              <div style={{ fontWeight: 700 }}>Страны</div>
+              {(yt.studio.geo || []).slice(0, 5).map((a, i) => <div key={i}>{a.country} · {a.views}</div>)}
+              <div style={{ fontWeight: 700 }}>Откуда пришли</div>
+              {(yt.studio.traffic || []).slice(0, 5).map((a, i) => <div key={i}>{a.insightTrafficSourceType} · {a.views}</div>)}
+              <div style={{ fontWeight: 700 }}>Топ ролики</div>
+              {(yt.studio.topVideos || []).slice(0, 5).map((a, i) => <div key={i}>{a.video} · {a.views} просм. · {a.averageViewDuration} сек</div>)}
+              <div style={{ fontWeight: 700 }}>Удержание топ-ролика</div>
+              {(yt.studio.retention || []).filter((_, i) => i % 5 === 0).slice(0, 8).map((a, i) => <div key={i}>{Math.round((a.at || 0) * 100)}% ролика → {Math.round((a.watch || 0) * 100)}% смотрят</div>)}
+            </div>
+          ) : <div style={{ fontSize: 12, color: COLORS.textMuted }}>Сначала Обзор → Войти в Google → Обновить студию.</div>}
+          <div style={{ fontSize: 12, fontWeight: 700, margin: '10px 0 6px' }}>Публичные цифры</div>
           {!ch && <div style={{ fontSize: 12, color: COLORS.textMuted }}>Нет канала.</div>}
           {ch && (
             <>
