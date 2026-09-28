@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.15';
+const APP_VERSION = '14.15.6';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -4669,6 +4669,13 @@ useEffect(() => {
     setSubTab(s => ({ ...s, profile: section || 'hub' }));
   }
 
+  const TAB_HOME = { home: null, actions: 'all', goals: 'today', progress: 'stats', profile: 'hub' };
+  function goMainTab(key) {
+    setTab(key);
+    const root = TAB_HOME[key];
+    if (root != null) setSubTab(s => ({ ...s, [key]: root }));
+  }
+
   return (
     <div className="lrpg-root" style={{ background: `radial-gradient(ellipse at top, #171325 0%, ${COLORS.bg} 55%)`, minHeight: 640, color: COLORS.text, fontFamily: 'Inter, sans-serif', paddingBottom: 76, position: 'relative' }}>
       <style>{`
@@ -4694,6 +4701,17 @@ useEffect(() => {
         @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,.45) } 50% { box-shadow: 0 0 0 6px rgba(0,229,255,0) } }
         @keyframes lrpg-div { 0% { opacity:0; transform: scale(.94) } 100% { opacity:1; transform: scale(1) } }
         @keyframes lrpg-pop { 0% { transform: translateY(10px) scale(.92); opacity:0 } 100% { transform: translateY(0) scale(1); opacity:1 } }
+        @keyframes lrpg-page {
+          0% { opacity: 0; transform: translateY(14px) scale(0.985); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .lrpg-page {
+          animation-name: lrpg-page;
+          animation-duration: .42s;
+          animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+          animation-delay: 40ms;
+          animation-fill-mode: both;
+        }
         @keyframes lrpg-chest-shake { 0%,100% { transform: rotate(0) } 20% { transform: rotate(-12deg) scale(1.05) } 40% { transform: rotate(12deg) } 60% { transform: rotate(-8deg) } 80% { transform: rotate(8deg) } }
         @keyframes lrpg-chest-burst { 0% { transform: scale(.4); opacity:0 } 40% { opacity:1 } 100% { transform: scale(2.2); opacity:0 } }
         @keyframes lrpg-chest-glow { 0%,100% { filter: drop-shadow(0 0 6px #C084FC) } 50% { filter: drop-shadow(0 0 22px #00E5FF) } }
@@ -4820,6 +4838,7 @@ useEffect(() => {
         </div>
       )}
 
+      <div key={tab + ':' + (subTab[tab] || '')} className="lrpg-page" style={{ willChange: 'transform, opacity' }}>
       {tab === 'home' ? (
         <HomeTab
           state={state} editingName={editingName}
@@ -4979,6 +4998,7 @@ useEffect(() => {
         </div>
       </>
       )}
+      </div>
 
       <FeedbackLayer />
       <div style={{
@@ -4991,7 +5011,7 @@ useEffect(() => {
           const Icon = t.icon;
           const active = tab === t.key;
           return (
-            <button key={t.key} className="lrpg-btn" onClick={() => setTab(t.key)} style={{
+            <button key={t.key} className="lrpg-btn" onClick={() => goMainTab(t.key)} style={{
               flex: 1, background: 'none', display: 'flex', flexDirection: 'column',
               alignItems: 'center', gap: 4, color: active ? '#fff' : COLORS.textMuted, padding: '0',
             }}>
