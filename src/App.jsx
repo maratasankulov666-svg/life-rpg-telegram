@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.23.1';
+const APP_VERSION = '14.24';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1016,6 +1016,142 @@ const RPG_ITEM_POOL = [
   { id: 'ledger-seal', title: 'Печать учёта', rarity: 'Rare', category: 'badge', icon: '📒', cost: 300, currency: 'coins', collection: 'wealth' },
 ];
 
+
+const ROOM_SLOTS = [
+  { key: 'rug', label: 'Ковёр' },
+  { key: 'lamp', label: 'Свет' },
+  { key: 'poster', label: 'Постер' },
+  { key: 'plant', label: 'Растение' },
+  { key: 'neon', label: 'Неон' },
+  { key: 'desk', label: 'Стол' },
+];
+const ROOM_CATALOG = [
+  { id: 'rug_plain', slot: 'rug', name: 'Серый ковёр', cost: 80, rarity: 'Common', tint: 'rgba(48,56,72,0.78)' },
+  { id: 'rug_wine', slot: 'rug', name: 'Бордовый ковёр', cost: 220, rarity: 'Rare', tint: 'rgba(110,32,48,0.8)' },
+  { id: 'rug_gold', slot: 'rug', name: 'Ковёр эмбера', cost: 640, rarity: 'Epic', tint: 'rgba(168,96,32,0.78)' },
+  { id: 'lamp_warm', slot: 'lamp', name: 'Тёплая лампа', cost: 140, rarity: 'Common', glow: 'rgba(255,176,72,0.32)' },
+  { id: 'lamp_cyan', slot: 'lamp', name: 'Циан-лампа', cost: 360, rarity: 'Rare', glow: 'rgba(0,229,255,0.26)' },
+  { id: 'lamp_club', slot: 'lamp', name: 'Клубный свет', cost: 880, rarity: 'Epic', glow: 'rgba(168,80,255,0.3)' },
+  { id: 'poster_goal', slot: 'poster', name: 'Постер цели', cost: 90, rarity: 'Common', tag: 'ЦЕЛЬ', col: '#6C63FF' },
+  { id: 'poster_live', slot: 'poster', name: 'Постер LIVE', cost: 200, rarity: 'Rare', tag: 'LIVE', col: '#FF4D6D' },
+  { id: 'poster_boss', slot: 'poster', name: 'Босс-постер', cost: 540, rarity: 'Epic', tag: 'BOSS', col: '#F6C445' },
+  { id: 'plant_ficus', slot: 'plant', name: 'Фикус', cost: 70, rarity: 'Common', scale: 1 },
+  { id: 'plant_palm', slot: 'plant', name: 'Пальма', cost: 260, rarity: 'Rare', scale: 1.28 },
+  { id: 'plant_cactus', slot: 'plant', name: 'Неоновый кактус', cost: 720, rarity: 'Epic', scale: 1.1, neon: true },
+  { id: 'neon_life', slot: 'neon', name: 'Вывеска LIFE', cost: 480, rarity: 'Rare', text: 'LIFE', col: '#00E5FF' },
+  { id: 'neon_go', slot: 'neon', name: 'Вывеска GO', cost: 1200, rarity: 'Legendary', text: 'GO', col: '#F6C445' },
+  { id: 'desk_wood', slot: 'desk', name: 'Деревянный стол', cost: 150, rarity: 'Common', wood: '#6B4A2B' },
+  { id: 'desk_glass', slot: 'desk', name: 'Стеклянный стол', cost: 420, rarity: 'Rare', wood: 'rgba(180,210,230,0.35)' },
+];
+function roomItemById(id) { return ROOM_CATALOG.find(x => x.id === id) || null; }
+function emptyRoom() {
+  return { owned: [], equipped: { rug: null, lamp: null, poster: null, plant: null, neon: null, desk: null } };
+}
+function normalizeRoom(r) {
+  const d = emptyRoom();
+  if (!r || typeof r !== 'object') return d;
+  return { owned: Array.isArray(r.owned) ? r.owned : [], equipped: { ...d.equipped, ...(r.equipped || {}) } };
+}
+
+function RoomDecor({ room }) {
+  const eq = normalizeRoom(room).equipped;
+  const rug = roomItemById(eq.rug);
+  const lamp = roomItemById(eq.lamp);
+  const poster = roomItemById(eq.poster);
+  const plant = roomItemById(eq.plant);
+  const neon = roomItemById(eq.neon);
+  const desk = roomItemById(eq.desk);
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
+      {lamp && (
+        <div style={{
+          position: 'absolute', left: '-8%', top: '-6%', width: '70%', height: '55%',
+          background: `radial-gradient(ellipse at 20% 10%, ${lamp.glow} 0%, transparent 62%)`,
+        }} />
+      )}
+      {poster && (
+        <div style={{
+          position: 'absolute', right: '7%', top: '22%', width: 54, height: 72,
+          borderRadius: 6, background: 'rgba(12,16,24,0.72)', border: `2px solid ${poster.col || '#6C63FF'}`,
+          boxShadow: `0 0 16px ${poster.col || '#6C63FF'}55`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: poster.col, fontSize: 9, fontWeight: 900, letterSpacing: 0.6,
+        }}>{poster.tag}</div>
+      )}
+      {neon && (
+        <div style={{
+          position: 'absolute', left: '12%', top: '18%', fontSize: 18, fontWeight: 900,
+          color: neon.col, letterSpacing: 3,
+          textShadow: `0 0 8px ${neon.col}, 0 0 18px ${neon.col}`,
+        }}>{neon.text}</div>
+      )}
+      {desk && (
+        <div style={{
+          position: 'absolute', left: '8%', bottom: '18%', width: 78, height: 18,
+          borderRadius: 4, background: desk.wood, boxShadow: '0 6px 10px rgba(0,0,0,0.35)',
+        }} />
+      )}
+      {plant && (
+        <div style={{ position: 'absolute', right: '10%', bottom: '16%', transform: `scale(${plant.scale || 1})`, transformOrigin: 'bottom center' }}>
+          <div style={{
+            width: 0, height: 0, borderLeft: '10px solid transparent', borderRight: '10px solid transparent',
+            borderBottom: `28px solid ${plant.neon ? '#39FF88' : '#2F8F4E'}`,
+            filter: plant.neon ? 'drop-shadow(0 0 8px #39FF88)' : 'none', margin: '0 auto',
+          }} />
+          <div style={{ width: 16, height: 10, background: '#6B3F24', borderRadius: '0 0 4px 4px', margin: '0 auto' }} />
+        </div>
+      )}
+      {rug && (
+        <div style={{
+          position: 'absolute', left: '16%', right: '16%', bottom: '7%', height: '11%',
+          background: `radial-gradient(ellipse at center, ${rug.tint} 0%, ${rug.tint} 55%, transparent 78%)`,
+        }} />
+      )}
+    </div>
+  );
+}
+
+function RoomShopPanel({ room, coins, buyRoomItem, equipRoomSlot }) {
+  const r = normalizeRoom(room);
+  const [slot, setSlot] = useState('rug');
+  const list = ROOM_CATALOG.filter(i => i.slot === slot);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 800 }}>Комната</div>
+      <div style={{ fontSize: 11, color: COLORS.textMuted }}>Купил — сразу видно на Главной. Один предмет на слот.</div>
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+        {ROOM_SLOTS.map(s => (
+          <button key={s.key} className="lrpg-btn" onClick={() => setSlot(s.key)} style={{
+            flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+            background: slot === s.key ? COLORS.violet : COLORS.bgCardAlt,
+            color: slot === s.key ? '#fff' : COLORS.textMuted,
+          }}>{s.label}</button>
+        ))}
+      </div>
+      {list.map(it => {
+        const owned = r.owned.includes(it.id);
+        const on = r.equipped[it.slot] === it.id;
+        return (
+          <div key={it.id} className="lrpg-glass" style={{ padding: '10px 12px', borderRadius: 14, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{it.name}</div>
+              <div style={{ fontSize: 10, color: COLORS.textMuted }}>{it.rarity} · {it.cost}¢</div>
+            </div>
+            {!owned ? (
+              <button className="lrpg-btn lrpg-cta" disabled={coins < it.cost} onClick={() => buyRoomItem(it)} style={{ padding: '7px 12px', fontSize: 12, opacity: coins < it.cost ? 0.5 : 1 }}>Купить</button>
+            ) : (
+              <button className="lrpg-btn" onClick={() => equipRoomSlot(it.slot, on ? null : it.id)} style={{
+                padding: '7px 12px', fontSize: 12, borderRadius: 999,
+                background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#062018' : COLORS.text,
+              }}>{on ? 'Стоит' : 'Поставить'}</button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function emptyEconomy() {
   return {
     crystals: 0, tickets: 1,
@@ -1125,7 +1261,7 @@ function grantWheelPrize(prev, seg, dateKey) {
   return { ...s, economy: eco };
 }
 
-function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin }) {
+function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin, buyRoomItem, equipRoomSlot }) {
   useEffect(() => { if (ensureDailyShop) ensureDailyShop(); }, []);
   const [sub, setSub] = useState('shop');
   const [spinning, setSpinning] = useState(false);
@@ -1137,7 +1273,7 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
   const wheel = buildWheel(today);
   const freeLeft = eco.lastFreeSpinDate !== today;
   const tabs = [
-    { k: 'shop', l: 'Витрина' }, { k: 'wheel', l: 'Колесо' }, { k: 'chests', l: 'Сундуки' },
+    { k: 'shop', l: 'Витрина' }, { k: 'room', l: 'Комната' }, { k: 'wheel', l: 'Колесо' }, { k: 'chests', l: 'Сундуки' },
     { k: 'inv', l: 'Коллекция' },
   ];
   async function doSpin() {
@@ -1179,6 +1315,9 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
           <button key={tb.k} className="lrpg-btn" onClick={() => setSub(tb.k)} style={{ flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, background: sub === tb.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,.05)', color: '#fff' }}>{tb.l}</button>
         ))}
       </div>
+      {sub === 'room' && (
+        <RoomShopPanel room={state.room} coins={state.coins || 0} buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot} />
+      )}
       {sub === 'shop' && (
         <>
           <div style={{ fontSize: 11, color: COLORS.textMuted }}>Витрина на {today}. Завтра другой набор.</div>
@@ -1890,6 +2029,7 @@ function defaultState() {
     coinsSpentAllTime: 0,
     coinTransactions: [], // {id,type:'earn'|'spend'|'refund'|'adjustment',amount,source,sourceId,title,timestamp}
     cosmetics: { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } },
+    room: { owned: [], equipped: { rug: null, lamp: null, poster: null, plant: null, neon: null, desk: null } },
     lastRefundAt: null, // раздел 14 ТЗ — ограничение: один refund за период
     lastPurchase: null, // {id,rewardId,title,cost,ts,isCustom} — для Refund
     dailyCheckin: null,
@@ -3901,6 +4041,27 @@ export default function LifeRPG() {
   }
 
   // Раздел 15 ТЗ: покупка косметики — тот же Ledger, никогда не трогает Stats/XP/Level.
+  function buyRoomItem(item) {
+    setState(prev => {
+      const room = normalizeRoom(prev.room);
+      if (!item || room.owned.includes(item.id) || (prev.coins || 0) < item.cost) return prev;
+      const ledger = applyCoinLedger(prev, 'spend', item.cost, 'room_shop', item.name, item.id);
+      const equipped = { ...room.equipped, [item.slot]: item.id };
+      return {
+        ...prev, ...ledger,
+        room: { owned: [...room.owned, item.id], equipped },
+        chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `Комната: ${item.name} (−${item.cost}¢)`),
+      };
+    });
+  }
+  function equipRoomSlot(slot, id) {
+    setState(prev => {
+      const room = normalizeRoom(prev.room);
+      if (id && !room.owned.includes(id)) return prev;
+      return { ...prev, room: { ...room, equipped: { ...room.equipped, [slot]: id || null } } };
+    });
+  }
+
   function buyCosmetic(item) {
     setState(prev => {
       if (prev.cosmetics.unlocked.includes(item.id) || prev.coins < item.cost) return prev;
@@ -5190,7 +5351,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'inventory' && (
-                <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} councilGear={(state.council && state.council.grants && state.council.grants.gear) || []} />
+                <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} councilGear={(state.council && state.council.grants && state.council.grants.gear) || []} room={state.room} equipRoomSlot={equipRoomSlot} />
               )}
               {subTab.profile === 'shop' && (
                 <ShopTab
@@ -5199,6 +5360,7 @@ useEffect(() => {
                   coinTransactions={state.coinTransactions} cosmetics={state.cosmetics}
                   lastPurchase={state.lastPurchase} lastRefundAt={state.lastRefundAt}
                   buyReward={buyReward} buyCosmetic={buyCosmetic} equipCosmetic={equipCosmetic}
+                  buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot}
                   refundLastPurchase={refundLastPurchase}
                   showAddReward={showAddReward} setShowAddReward={setShowAddReward}
                   addReward={addReward} deleteReward={deleteReward} setRewardEnabled={setRewardEnabled}
@@ -5764,6 +5926,7 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         backgroundPosition: 'center 62%',
         animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
       }} />
+      <RoomDecor room={state.room} />
       <GameSceneCenter body={state.body} currentWeight={currentWeight} />
 
       <div style={{
@@ -6439,12 +6602,12 @@ function StatsTab({ stats, energy, todayCheckin, setDailyCheckin, chronicle, rec
   );
 }
 
-function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled, spinFortune, lastWheel, state, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin, ensureDailyShop }) {
+function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled, spinFortune, lastWheel, state, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin, ensureDailyShop, buyRoomItem, equipRoomSlot }) {
   const [title, setTitle] = useState('');
   const [cost, setCost] = useState(100);
   const [category, setCategory] = useState('reallife');
   const [icon, setIcon] = useState('🎁');
-  const [shopTab, setShopTab] = useState('reallife');
+  const [shopTab, setShopTab] = useState('room');
   const [showWallet, setShowWallet] = useState(false);
 
   const weekAgo = Date.now() - 7 * 86400000;
@@ -6459,12 +6622,12 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
   const avgDaily = coinsEarnedAllTime > 0 ? Math.round(weekEarned / 7) : 0;
   const canRefund = lastPurchase && lastPurchase.isCustom && (!lastRefundAt || Date.now() - lastRefundAt >= 86400000);
 
-  const shopTabs = [['reallife', '🎁 Реальные'], ['cosmetic', '✨ Косметика'], ['collection', '🏺 Коллекции']];
+  const shopTabs = [['room', '🛋 Комната'], ['reallife', '🎁 Реальные'], ['cosmetic', '✨ Косметика'], ['collection', '🏺 Коллекции']];
   const customInCategory = rewards.filter(r => r.category === shopTab);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <EconomyPanel state={state || { coins, economy: { crystals:0, tickets:0, inventory:[], shopItems:[], dailyLogin:{} } }} buyShopItem={buyShopItem} rerollShopSlot={rerollShopSlot} spinDailyWheel={spinDailyWheel} openChest={openChest} claimDailyLogin={claimDailyLogin} ensureDailyShop={ensureDailyShop} />
+      <EconomyPanel state={state || { coins, economy: { crystals:0, tickets:0, inventory:[], shopItems:[], dailyLogin:{} } }} buyShopItem={buyShopItem} rerollShopSlot={rerollShopSlot} spinDailyWheel={spinDailyWheel} openChest={openChest} claimDailyLogin={claimDailyLogin} ensureDailyShop={ensureDailyShop} buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot} />
       <Card>
         <div style={{ fontSize: 13, fontWeight: 800 }}>🎰 Старое колесо · 35¢</div>
         <div style={{ fontSize: 11, color: COLORS.textMuted, margin: '4px 0 8px' }}>Вера разрешила. Матожидание ниже цены — это не ферма.</div>
@@ -9919,13 +10082,32 @@ function CalendarTab({ playLog, firstOpenedAt }) {
   );
 }
 
-function InventoryTab({ stats, unlockedSets, councilGear = [] }) {
+function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSlot }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {councilGear.length > 0 && (
         <Card>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Шмот от штаба</div>
           {councilGear.map(g => <div key={g.id} style={{ fontSize: 12, padding: '4px 0' }}>{g.label} · {g.slot} · {g.rarity || 'Common'}</div>)}
+        </Card>
+      )}
+      {normalizeRoom(room).owned.length > 0 && (
+        <Card>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Комната</div>
+          {normalizeRoom(room).owned.map(id => {
+            const it = roomItemById(id);
+            if (!it) return null;
+            const on = normalizeRoom(room).equipped[it.slot] === it.id;
+            return (
+              <div key={id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${COLORS.border}` }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{it.name}</div>
+                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>{ROOM_SLOTS.find(s => s.key === it.slot)?.label}</div>
+                </div>
+                <button className="lrpg-btn" onClick={() => equipRoomSlot && equipRoomSlot(it.slot, on ? null : it.id)} style={{ fontSize: 11, padding: '5px 10px', borderRadius: 999, background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#062018' : COLORS.text }}>{on ? 'Стоит' : 'Поставить'}</button>
+              </div>
+            );
+          })}
         </Card>
       )}
       <Card>
