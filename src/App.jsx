@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.24';
+const APP_VERSION = '14.27';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1045,68 +1045,59 @@ const ROOM_CATALOG = [
 ];
 function roomItemById(id) { return ROOM_CATALOG.find(x => x.id === id) || null; }
 function emptyRoom() {
-  return { owned: [], equipped: { rug: null, lamp: null, poster: null, plant: null, neon: null, desk: null } };
+  return { owned: [], equipped: { rug: null, lamp: null, poster: null, plant: null, neon: null, desk: null }, placePulse: null };
 }
 function normalizeRoom(r) {
   const d = emptyRoom();
   if (!r || typeof r !== 'object') return d;
-  return { owned: Array.isArray(r.owned) ? r.owned : [], equipped: { ...d.equipped, ...(r.equipped || {}) } };
+  return { owned: Array.isArray(r.owned) ? r.owned : [], equipped: { ...d.equipped, ...(r.equipped || {}) }, placePulse: r.placePulse || null };
 }
 
 function RoomDecor({ room }) {
-  const eq = normalizeRoom(room).equipped;
-  const rug = roomItemById(eq.rug);
-  const lamp = roomItemById(eq.lamp);
-  const poster = roomItemById(eq.poster);
-  const plant = roomItemById(eq.plant);
-  const neon = roomItemById(eq.neon);
-  const desk = roomItemById(eq.desk);
+  const r = normalizeRoom(room);
+  const eq = r.equipped;
+  const pulse = r.placePulse || {};
+  const pieces = [
+    { slot: 'lamp', it: roomItemById(eq.lamp) },
+    { slot: 'poster', it: roomItemById(eq.poster) },
+    { slot: 'neon', it: roomItemById(eq.neon) },
+    { slot: 'desk', it: roomItemById(eq.desk) },
+    { slot: 'plant', it: roomItemById(eq.plant) },
+    { slot: 'rug', it: roomItemById(eq.rug) },
+  ];
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
-      {lamp && (
-        <div style={{
-          position: 'absolute', left: '-8%', top: '-6%', width: '70%', height: '55%',
-          background: `radial-gradient(ellipse at 20% 10%, ${lamp.glow} 0%, transparent 62%)`,
-        }} />
-      )}
-      {poster && (
-        <div style={{
-          position: 'absolute', right: '7%', top: '22%', width: 54, height: 72,
-          borderRadius: 6, background: 'rgba(12,16,24,0.72)', border: `2px solid ${poster.col || '#6C63FF'}`,
-          boxShadow: `0 0 16px ${poster.col || '#6C63FF'}55`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: poster.col, fontSize: 9, fontWeight: 900, letterSpacing: 0.6,
-        }}>{poster.tag}</div>
-      )}
-      {neon && (
-        <div style={{
-          position: 'absolute', left: '12%', top: '18%', fontSize: 18, fontWeight: 900,
-          color: neon.col, letterSpacing: 3,
-          textShadow: `0 0 8px ${neon.col}, 0 0 18px ${neon.col}`,
-        }}>{neon.text}</div>
-      )}
-      {desk && (
-        <div style={{
-          position: 'absolute', left: '8%', bottom: '18%', width: 78, height: 18,
-          borderRadius: 4, background: desk.wood, boxShadow: '0 6px 10px rgba(0,0,0,0.35)',
-        }} />
-      )}
-      {plant && (
-        <div style={{ position: 'absolute', right: '10%', bottom: '16%', transform: `scale(${plant.scale || 1})`, transformOrigin: 'bottom center' }}>
-          <div style={{
-            width: 0, height: 0, borderLeft: '10px solid transparent', borderRight: '10px solid transparent',
-            borderBottom: `28px solid ${plant.neon ? '#39FF88' : '#2F8F4E'}`,
-            filter: plant.neon ? 'drop-shadow(0 0 8px #39FF88)' : 'none', margin: '0 auto',
-          }} />
-          <div style={{ width: 16, height: 10, background: '#6B3F24', borderRadius: '0 0 4px 4px', margin: '0 auto' }} />
-        </div>
-      )}
-      {rug && (
-        <div style={{
-          position: 'absolute', left: '16%', right: '16%', bottom: '7%', height: '11%',
-          background: `radial-gradient(ellipse at center, ${rug.tint} 0%, ${rug.tint} 55%, transparent 78%)`,
-        }} />
-      )}
+      {pieces.map(({ slot, it }) => {
+        if (!it) return null;
+        const just = pulse.slot === slot && pulse.id === it.id;
+        const pop = just ? 'lrpg-room-pop .55s cubic-bezier(.2,1.4,.3,1) both' : 'none';
+        if (slot === 'lamp') return (
+          <div key={it.id} style={{ position: 'absolute', left: '-8%', top: '-6%', width: '70%', height: '55%', background: `radial-gradient(ellipse at 20% 10%, ${it.glow} 0%, transparent 62%)`, animation: just ? 'lrpg-room-glow .8s ease-out both' : 'none' }} />
+        );
+        if (slot === 'poster') return (
+          <div key={it.id} style={{ position: 'absolute', right: '7%', top: '22%', width: 54, height: 72, borderRadius: 6, background: 'rgba(12,16,24,0.72)', border: `2px solid ${it.col || '#6C63FF'}`, boxShadow: `0 0 16px ${it.col || '#6C63FF'}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: it.col, fontSize: 9, fontWeight: 900, letterSpacing: 0.6, animation: pop }}>{it.tag}</div>
+        );
+        if (slot === 'neon') return (
+          <div key={it.id} style={{ position: 'absolute', left: '12%', top: '18%', fontSize: 18, fontWeight: 900, color: it.col, letterSpacing: 3, textShadow: `0 0 8px ${it.col}, 0 0 18px ${it.col}`, animation: pop }}>{it.text}</div>
+        );
+        if (slot === 'desk') return (
+          <div key={it.id} style={{ position: 'absolute', left: '8%', bottom: '18%', width: 78, height: 18, borderRadius: 4, background: it.wood, boxShadow: '0 6px 10px rgba(0,0,0,0.35)', animation: pop }} />
+        );
+        if (slot === 'plant') return (
+          <div key={it.id} style={{ position: 'absolute', right: '10%', bottom: '16%', transformOrigin: 'bottom center', animation: pop }}>
+            <div style={{ transform: `scale(${it.scale || 1})`, transformOrigin: 'bottom center' }}>
+              <div style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderRight: '10px solid transparent', borderBottom: `28px solid ${it.neon ? '#39FF88' : '#2F8F4E'}`, filter: it.neon ? 'drop-shadow(0 0 8px #39FF88)' : 'none', margin: '0 auto' }} />
+              <div style={{ width: 16, height: 10, background: '#6B3F24', borderRadius: '0 0 4px 4px', margin: '0 auto' }} />
+            </div>
+          </div>
+        );
+        return (
+          <div key={it.id} style={{ position: 'absolute', left: '16%', right: '16%', bottom: '7%', height: '11%' }}>
+            {just && <div style={{ position: 'absolute', inset: '-20%', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,255,255,.35), transparent 70%)', animation: 'lrpg-room-dust .6s ease-out both' }} />}
+            <div style={{ position: 'absolute', inset: 0, background: `radial-gradient(ellipse at center, ${it.tint} 0%, ${it.tint} 55%, transparent 78%)`, animation: pop }} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -4049,7 +4040,7 @@ export default function LifeRPG() {
       const equipped = { ...room.equipped, [item.slot]: item.id };
       return {
         ...prev, ...ledger,
-        room: { owned: [...room.owned, item.id], equipped },
+        room: { owned: [...room.owned, item.id], equipped, placePulse: { slot: item.slot, id: item.id, ts: Date.now() } },
         chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `Комната: ${item.name} (−${item.cost}¢)`),
       };
     });
@@ -4058,7 +4049,7 @@ export default function LifeRPG() {
     setState(prev => {
       const room = normalizeRoom(prev.room);
       if (id && !room.owned.includes(id)) return prev;
-      return { ...prev, room: { ...room, equipped: { ...room.equipped, [slot]: id || null } } };
+      return { ...prev, room: { ...room, equipped: { ...room.equipped, [slot]: id || null }, placePulse: id ? { slot, id, ts: Date.now() } : null } };
     });
   }
 
@@ -5107,6 +5098,10 @@ useEffect(() => {
         .lrpg-btn:active { transform: scale(0.96); filter: brightness(1.12); }
         @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
         @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        @keyframes lrpg-cloud-drift-0 { from { transform: translateX(0); } to { transform: translateX(140%); } }
+        @keyframes lrpg-cloud-drift-1 { from { transform: translateX(0); } to { transform: translateX(-160%); } }
+        @keyframes lrpg-cloud-drift-2 { from { transform: translateX(0); } to { transform: translateX(120%); } }
+        @keyframes lrpg-plane-fly { from { transform: translateX(0) scale(.42); } to { transform: translateX(160vw) scale(.42); } }
         @keyframes lrpg-npc-in { 0% { transform: translateY(18px) scale(.86); opacity: 0; } 70% { transform: translateY(-3px) scale(1.04); opacity: 1; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
         @keyframes lrpg-dot { 0%,80%,100% { transform: translateY(0); opacity:.35 } 40% { transform: translateY(-4px); opacity:1 } }
         @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,.45) } 50% { box-shadow: 0 0 0 6px rgba(0,229,255,0) } }
@@ -5748,7 +5743,7 @@ function GameSceneCenter({ body, currentWeight }) {
     <div style={{
       position: 'absolute', left: '10%', right: '10%', top: '16%', bottom: '0%',
       display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      pointerEvents: 'none',
+      pointerEvents: 'none', zIndex: 35,
     }}>
       <div style={{ height: '70%', width: '100%', position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
         <div style={{
@@ -5907,6 +5902,205 @@ function CheckinModal({ energy, todayCheckin, setDailyCheckin, onClose }) {
 // ---- Home: GameShell (фикс. высота, без скролла) ----
 
 
+
+const BACKGROUND_ASSETS = {
+  room: '/assets/backgrounds/room_foreground.webp',
+  glass: '/assets/backgrounds/glass_overlay.webp',
+  mask: '/assets/backgrounds/window_mask.webp',
+  clouds: [
+    '/assets/backgrounds/cloud_01.webp',
+    '/assets/backgrounds/cloud_02.webp',
+    '/assets/backgrounds/cloud_03.webp',
+    '/assets/backgrounds/cloud_04.webp',
+  ],
+  plane: '/assets/backgrounds/plane_01.webp',
+  worlds: {
+    autumn: {
+      day: '/assets/backgrounds/autumn/window_world_day.webp',
+      sunset: '/assets/backgrounds/autumn/window_world_sunset.webp',
+      night: '/assets/backgrounds/autumn/window_world_night.webp',
+    },
+    spring: {
+      day: '/assets/backgrounds/autumn/window_world_day.webp',
+      sunset: '/assets/backgrounds/autumn/window_world_sunset.webp',
+      night: '/assets/backgrounds/autumn/window_world_night.webp',
+    },
+    summer: {
+      day: '/assets/backgrounds/autumn/window_world_day.webp',
+      sunset: '/assets/backgrounds/autumn/window_world_sunset.webp',
+      night: '/assets/backgrounds/autumn/window_world_night.webp',
+    },
+    winter: {
+      day: '/assets/backgrounds/autumn/window_world_day.webp',
+      sunset: '/assets/backgrounds/autumn/window_world_sunset.webp',
+      night: '/assets/backgrounds/autumn/window_world_night.webp',
+    },
+  },
+};
+const backgroundConfig = {
+  clouds: { enabled: true, items: [
+    { src: 0, dur: 130, opacity: 0.55, scale: 0.42, top: '6%', start: '-28%' },
+    { src: 1, dur: 190, opacity: 0.4, scale: 0.62, top: '14%', start: '22%' },
+    { src: 2, dur: 240, opacity: 0.48, scale: 0.34, top: '3%', start: '55%' },
+    { src: 3, dur: 210, opacity: 0.32, scale: 0.7, top: '10%', start: '-5%' },
+  ]},
+  plane: { enabled: true, delayMin: 40000, delayMax: 170000, flightMin: 9000, flightMax: 15000, scale: 0.55, opacity: 0.62 },
+  glass: { opacity: 0.28 },
+  weather: { intensity: 0.4 },
+};
+
+function sceneClock() {
+  const h = new Date().getHours();
+  const m = new Date().getMonth();
+  const season = (m === 11 || m <= 1) ? 'winter' : m <= 4 ? 'spring' : m <= 7 ? 'summer' : 'autumn';
+  const timeOfDay = h < 6 ? 'night' : h < 8 ? 'dawn' : h < 18 ? 'day' : h < 21 ? 'sunset' : 'night';
+  let weather = 'clear';
+  try { weather = localStorage.getItem('liferpg_weather') || 'clear'; } catch (e) {}
+  return { season, timeOfDay, weather };
+}
+
+function worldSrc(season, timeOfDay) {
+  const pack = BACKGROUND_ASSETS.worlds[season] || BACKGROUND_ASSETS.worlds.autumn;
+  if (timeOfDay === 'night' || timeOfDay === 'dawn') return pack.night || pack.day;
+  if (timeOfDay === 'sunset') return pack.sunset || pack.day;
+  return pack.day;
+}
+
+function WindowWorld({ season, timeOfDay }) {
+  const src = worldSrc(season, timeOfDay);
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 10, overflow: 'hidden' }}>
+      <img alt="" src={src} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 38%', display: 'block' }} />
+    </div>
+  );
+}
+
+function CloudLayer({ reduced }) {
+  if (!backgroundConfig.clouds.enabled) return null;
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 15, overflow: 'hidden', pointerEvents: 'none' }}>
+      {backgroundConfig.clouds.items.map((c, i) => (
+        <img key={i} alt="" src={BACKGROUND_ASSETS.clouds[c.src]} style={{
+          position: 'absolute', top: c.top, left: c.start, height: 'auto', width: `${Math.round(52 * c.scale)}%`,
+          opacity: c.opacity, filter: 'blur(0.25px)',
+          animation: reduced ? 'none' : `lrpg-cloud-drift-${i % 3} ${c.dur}s linear infinite`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+function AmbientPlane({ reduced }) {
+  const [on, setOn] = useState(false);
+  const [dur, setDur] = useState(12);
+  useEffect(() => {
+    if (reduced || !backgroundConfig.plane.enabled) return undefined;
+    let alive = true;
+    const loop = () => {
+      const wait = backgroundConfig.plane.delayMin + Math.random() * (backgroundConfig.plane.delayMax - backgroundConfig.plane.delayMin);
+      return setTimeout(() => {
+        if (!alive) return;
+        setDur(backgroundConfig.plane.flightMin/1000 + Math.random() * ((backgroundConfig.plane.flightMax - backgroundConfig.plane.flightMin)/1000));
+        setOn(true);
+        setTimeout(() => { setOn(false); if (alive) timer = loop(); }, (backgroundConfig.plane.flightMax + 400));
+      }, wait);
+    };
+    let timer = loop();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [reduced]);
+  if (!on) return null;
+  return (
+    <img alt="" src={BACKGROUND_ASSETS.plane} style={{
+      position: 'absolute', top: '20%', left: '-16%', zIndex: 16, width: 46, height: 'auto',
+      opacity: backgroundConfig.plane.opacity, transform: `scale(${backgroundConfig.plane.scale})`,
+      filter: 'blur(0.3px)', animation: `lrpg-plane-fly ${dur}s linear both`, pointerEvents: 'none',
+    }} />
+  );
+}
+
+function WeatherCanvas({ weather, reduced }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (reduced || !ref.current) return undefined;
+    if (weather !== 'rain' && weather !== 'storm' && weather !== 'snow') return undefined;
+    const c = ref.current;
+    const ctx = c.getContext('2d');
+    let w = c.width = c.offsetWidth || 300;
+    let h = c.height = c.offsetHeight || 400;
+    const n = weather === 'snow' ? 42 : weather === 'storm' ? 70 : 55;
+    const drops = Array.from({ length: n }, () => ({
+      x: Math.random() * w, y: Math.random() * h,
+      v: weather === 'snow' ? 0.4 + Math.random() * 0.7 : 4 + Math.random() * 6,
+      l: weather === 'snow' ? 2 : 8 + Math.random() * 8,
+    }));
+    let id = 0;
+    const tick = () => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = weather === 'snow' ? 'rgba(255,255,255,.7)' : 'rgba(180,200,220,.45)';
+      ctx.lineWidth = weather === 'snow' ? 1.4 : 1;
+      drops.forEach(d => {
+        if (weather === 'snow') {
+          ctx.beginPath(); ctx.arc(d.x, d.y, d.l * 0.35, 0, 6.28); ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fill();
+          d.x += Math.sin(d.y * 0.02) * 0.3;
+        } else {
+          ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - 1, d.y + d.l); ctx.stroke();
+        }
+        d.y += d.v;
+        if (d.y > h) { d.y = -8; d.x = Math.random() * w; }
+      });
+      id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    const hide = () => { if (document.hidden) cancelAnimationFrame(id); else id = requestAnimationFrame(tick); };
+    document.addEventListener('visibilitychange', hide);
+    return () => { cancelAnimationFrame(id); document.removeEventListener('visibilitychange', hide); };
+  }, [weather, reduced]);
+  if (reduced || weather === 'clear' || weather === 'cloudy') return null;
+  const fog = weather === 'fog' ? 'rgba(190,200,210,.22)' : weather === 'storm' ? 'rgba(20,28,40,.2)' : 'transparent';
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 18, pointerEvents: 'none' }}>
+      {fog !== 'transparent' && <div style={{ position: 'absolute', inset: 0, background: fog }} />}
+      <canvas ref={ref} style={{ width: '100%', height: '100%', display: 'block' }} />
+    </div>
+  );
+}
+
+function LivingBackground() {
+  const clock = sceneClock();
+  const reduced = !!(typeof FEEDBACK_PREFS !== 'undefined' && FEEDBACK_PREFS.batterySaver);
+  const debug = typeof localStorage !== 'undefined' && localStorage.getItem('liferpg_bg_debug') === '1';
+  const mask = `url(${BACKGROUND_ASSETS.mask})`;
+  return (
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 8,
+        WebkitMaskImage: mask, maskImage: mask,
+        WebkitMaskSize: 'cover', maskSize: 'cover',
+        WebkitMaskPosition: 'center 62%', maskPosition: 'center 62%',
+        WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+      }}>
+        <WindowWorld season={clock.season} timeOfDay={clock.timeOfDay} />
+        <CloudLayer reduced={reduced} />
+        <AmbientPlane reduced={reduced} />
+        <WeatherCanvas weather={clock.weather} reduced={reduced} />
+      </div>
+      <img alt="" src={BACKGROUND_ASSETS.room} style={{
+        position: 'absolute', inset: 0, zIndex: 30, width: '100%', height: '100%',
+        objectFit: 'cover', objectPosition: 'center 62%', display: 'block',
+      }} />
+      <img alt="" src={BACKGROUND_ASSETS.glass} style={{
+        position: 'absolute', inset: 0, zIndex: 40, width: '100%', height: '100%',
+        objectFit: 'cover', objectPosition: 'center 62%', opacity: backgroundConfig.glass.opacity, pointerEvents: 'none',
+      }} />
+      {debug && (
+        <div style={{ position: 'absolute', left: 8, bottom: 70, zIndex: 80, fontSize: 10, color: '#9ff', background: '#0008', padding: 6 }}>
+          BG {clock.season}/{clock.timeOfDay}/{clock.weather} mask-on
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight }) {
   const [modal, setModal] = useState(null);
   const currentWeight = latestWeight(state.body);
@@ -5919,13 +6113,7 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
     <div style={{
       position: 'fixed', left: 0, right: 0, top: 0, bottom: 62, zIndex: 5, overflow: 'hidden',
     }}>
-      <div style={{
-        position: 'absolute', inset: '-4%',
-        backgroundImage: `url(${roomBackgroundNow()})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center 62%',
-        animation: FEEDBACK_PREFS.batterySaver ? 'none' : 'lrpg-bg-drift 28s ease-in-out infinite',
-      }} />
+      <LivingBackground />
       <RoomDecor room={state.room} />
       <GameSceneCenter body={state.body} currentWeight={currentWeight} />
 
