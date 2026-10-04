@@ -142,7 +142,8 @@ import {
 // 14.31 Прогресс: экран как референс — статы, радар, история и живая карта мира.
 //       Земли растут от реальных характеристик (пустошь → столица), тап открывает стадию.
 // 14.32 Карточки стадий с мини-артом (пустошь/поселение/столица), карта чуть богаче.
-const APP_VERSION = '14.32';
+// 14.33 Светящиеся стадии, анимации дорог/узлов/окон, пороги 0/20/60.
+const APP_VERSION = '14.33';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2708,126 +2709,206 @@ function worldStageIndex(value) {
   return Math.min(TERRITORY_STAGES.length - 1, Math.floor((Number(value) || 0) / 20));
 }
 
-function StageThumb({ kind }) {
-  // Mini illustrated scenes for wasteland / settlement / capital
+function StageThumb({ kind, active }) {
+  const glow = active ? 1 : 0.55;
   if (kind === 'waste') {
     return (
-      <svg viewBox="0 0 120 64" width="100%" height="54" preserveAspectRatio="xMidYMid slice" style={{ display: 'block', borderRadius: 8 }}>
-        <defs>
-          <linearGradient id="wSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a1f18" /><stop offset="100%" stopColor="#0d0a08" /></linearGradient>
-        </defs>
-        <rect width="120" height="64" fill="url(#wSky)" />
-        <path d="M0 44 L18 36 L36 48 L54 34 L72 46 L90 38 L120 50 L120 64 L0 64 Z" fill="#1a1410" />
-        <path d="M0 50 L30 42 L55 52 L80 44 L120 54 L120 64 L0 64 Z" fill="#221a14" />
-        <circle cx="28" cy="40" r="5" fill="#FF8A4C" opacity="0.9" />
-        <circle cx="28" cy="40" r="9" fill="#FF8A4C" opacity="0.25" />
-        <path d="M26 42 L28 50 L30 42" stroke="#5c3a20" strokeWidth="1.2" />
-        <path d="M70 48 L72 38 L74 48" stroke="#4a3a28" strokeWidth="1" opacity="0.7" />
-        <path d="M95 46 L97 36 L99 46" stroke="#4a3a28" strokeWidth="1" opacity="0.5" />
-        <circle cx="88" cy="22" r="1.2" fill="#F6C445" opacity="0.6" />
-        <circle cx="100" cy="16" r="0.9" fill="#F6C445" opacity="0.4" />
-      </svg>
+      <div className="lrpg-stage-thumb" style={{ position: 'relative', height: 72, borderRadius: 10, overflow: 'hidden', opacity: glow }}>
+        <svg viewBox="0 0 160 72" width="100%" height="72" preserveAspectRatio="xMidYMid slice" style={{ display: 'block' }}>
+          <defs>
+            <linearGradient id="stWasteSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3a2418" />
+              <stop offset="55%" stopColor="#1a100c" />
+              <stop offset="100%" stopColor="#0a0705" />
+            </linearGradient>
+            <radialGradient id="stFire" cx="32%" cy="58%" r="28%">
+              <stop offset="0%" stopColor="#ffe08a" />
+              <stop offset="35%" stopColor="#ff8a4c" />
+              <stop offset="100%" stopColor="#ff8a4c" stopOpacity="0" />
+            </radialGradient>
+            <filter id="stFireBlur"><feGaussianBlur stdDeviation="2.5" /></filter>
+          </defs>
+          <rect width="160" height="72" fill="url(#stWasteSky)" />
+          <circle cx="120" cy="18" r="1.5" fill="#F6C445" opacity="0.7" className="lrpg-star" />
+          <circle cx="140" cy="12" r="1" fill="#F6C445" opacity="0.5" className="lrpg-star" />
+          <circle cx="95" cy="22" r="0.8" fill="#F6C445" opacity="0.45" />
+          <path d="M0 48 C20 40 40 52 60 44 C80 36 100 50 120 42 C140 34 150 48 160 44 L160 72 L0 72 Z" fill="#1c1410" />
+          <path d="M0 56 C25 50 50 60 75 52 C100 44 125 58 160 50 L160 72 L0 72 Z" fill="#2a1c14" />
+          <path d="M10 50 L22 38 L28 52 Z" fill="#3a2a1c" opacity="0.7" />
+          <path d="M70 48 L82 34 L90 50 Z" fill="#2e2218" opacity="0.6" />
+          <ellipse cx="48" cy="50" rx="22" ry="10" fill="url(#stFire)" className="lrpg-fire-glow" />
+          <circle cx="48" cy="48" r="6" fill="#ffb347" filter="url(#stFireBlur)" className="lrpg-fire-core" />
+          <circle cx="48" cy="48" r="3.2" fill="#fff3c4" className="lrpg-fire-core" />
+          <path d="M44 50 L48 60 L52 50" stroke="#5c3a20" strokeWidth="1.4" fill="none" />
+          <path d="M100 58 L103 44 L106 58" stroke="#4a3828" strokeWidth="1.2" opacity="0.75" />
+          <path d="M118 56 L120 46 L122 56" stroke="#4a3828" strokeWidth="1" opacity="0.55" />
+          <path d="M20 62 C35 58 50 64 65 60" stroke="#F6C445" strokeWidth="0.5" opacity="0.25" fill="none" />
+        </svg>
+      </div>
     );
   }
   if (kind === 'settlement') {
     return (
-      <svg viewBox="0 0 120 64" width="100%" height="54" preserveAspectRatio="xMidYMid slice" style={{ display: 'block', borderRadius: 8 }}>
-        <defs>
-          <linearGradient id="sSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1a2744" /><stop offset="100%" stopColor="#0a1018" /></linearGradient>
-        </defs>
-        <rect width="120" height="64" fill="url(#sSky)" />
-        <path d="M0 48 L120 48 L120 64 L0 64 Z" fill="#1a2030" />
-        <path d="M18 48 L18 34 L28 28 L38 34 L38 48 Z" fill="#2a3548" stroke="#F6C445" strokeWidth="0.6" opacity="0.95" />
-        <path d="M48 48 L48 30 L60 22 L72 30 L72 48 Z" fill="#2e3a50" stroke="#F6C445" strokeWidth="0.7" />
-        <path d="M82 48 L82 36 L90 30 L98 36 L98 48 Z" fill="#2a3548" stroke="#F6C445" strokeWidth="0.6" />
-        <rect x="54" y="38" width="5" height="10" fill="#F6C445" opacity="0.35" />
-        <circle cx="56.5" cy="34" r="1.5" fill="#F6C445" />
-        <circle cx="24" cy="40" r="1.2" fill="#F6C445" opacity="0.7" />
-        <circle cx="88" cy="42" r="1.2" fill="#F6C445" opacity="0.7" />
-        <path d="M8 48 L112 48" stroke="#F6C445" strokeWidth="0.8" opacity="0.35" />
-      </svg>
+      <div className="lrpg-stage-thumb" style={{ position: 'relative', height: 72, borderRadius: 10, overflow: 'hidden', opacity: glow }}>
+        <svg viewBox="0 0 160 72" width="100%" height="72" preserveAspectRatio="xMidYMid slice" style={{ display: 'block' }}>
+          <defs>
+            <linearGradient id="stSetSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#1e2a48" />
+              <stop offset="100%" stopColor="#0a101c" />
+            </linearGradient>
+            <linearGradient id="stWin" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ffe7a3" />
+              <stop offset="100%" stopColor="#F6C445" />
+            </linearGradient>
+            <filter id="stSetGlow"><feGaussianBlur stdDeviation="1.6" /></filter>
+          </defs>
+          <rect width="160" height="72" fill="url(#stSetSky)" />
+          <circle cx="130" cy="16" r="1.2" fill="#F6C445" opacity="0.6" className="lrpg-star" />
+          <circle cx="148" cy="10" r="0.9" fill="#F6C445" opacity="0.4" />
+          <path d="M0 50 L160 50 L160 72 L0 72 Z" fill="#152030" />
+          <path d="M0 50 L160 50" stroke="#F6C445" strokeWidth="0.8" opacity="0.35" />
+          {/* houses */}
+          <g filter="url(#stSetGlow)">
+            <path d="M18 50 L18 34 L30 26 L42 34 L42 50 Z" fill="#2a364c" stroke="#F6C445" strokeWidth="0.7" />
+            <path d="M55 50 L55 28 L72 18 L89 28 L89 50 Z" fill="#303c54" stroke="#F6C445" strokeWidth="0.9" />
+            <path d="M102 50 L102 36 L114 28 L126 36 L126 50 Z" fill="#2a364c" stroke="#F6C445" strokeWidth="0.7" />
+          </g>
+          <rect x="68" y="36" width="8" height="14" fill="url(#stWin)" opacity="0.85" className="lrpg-window" />
+          <rect x="26" y="38" width="5" height="8" fill="url(#stWin)" opacity="0.7" className="lrpg-window" />
+          <rect x="110" y="40" width="5" height="8" fill="url(#stWin)" opacity="0.7" className="lrpg-window" />
+          <circle cx="72" cy="24" r="2" fill="#F6C445" className="lrpg-pulse-dot" />
+          <path d="M10 50 Q40 46 72 50 Q110 54 150 50" stroke="#F6C445" strokeWidth="1" opacity="0.4" fill="none" className="lrpg-road-flow" />
+          <circle cx="40" cy="49" r="1.5" fill="#F6C445" opacity="0.8" className="lrpg-pulse-dot" />
+          <circle cx="120" cy="51" r="1.5" fill="#F6C445" opacity="0.8" className="lrpg-pulse-dot" />
+        </svg>
+      </div>
     );
   }
   // capital
   return (
-    <svg viewBox="0 0 120 64" width="100%" height="54" preserveAspectRatio="xMidYMid slice" style={{ display: 'block', borderRadius: 8 }}>
-      <defs>
-        <linearGradient id="cSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a2210" /><stop offset="100%" stopColor="#0e0c08" /></linearGradient>
-        <filter id="cGlow"><feGaussianBlur stdDeviation="1.8" /></filter>
-      </defs>
-      <rect width="120" height="64" fill="url(#cSky)" />
-      <path d="M0 50 L120 50 L120 64 L0 64 Z" fill="#1a160e" />
-      <path d="M36 50 L36 28 L48 18 L60 28 L60 50 Z" fill="#3a2c14" stroke="#F6C445" strokeWidth="0.9" />
-      <path d="M48 18 L48 10" stroke="#F6C445" strokeWidth="1.2" />
-      <circle cx="48" cy="8" r="2.2" fill="#F6C445" filter="url(#cGlow)" />
-      <path d="M22 50 L22 36 L30 30 L38 36 L38 50 Z" fill="#2e2410" stroke="#F6C445" strokeWidth="0.6" opacity="0.9" />
-      <path d="M62 50 L62 34 L72 26 L82 34 L82 50 Z" fill="#2e2410" stroke="#F6C445" strokeWidth="0.6" opacity="0.9" />
-      <path d="M88 50 L88 40 L96 34 L104 40 L104 50 Z" fill="#2a2010" stroke="#F6C445" strokeWidth="0.5" opacity="0.8" />
-      <rect x="45" y="38" width="6" height="12" fill="#F6C445" opacity="0.4" />
-      <circle cx="20" cy="18" r="1" fill="#F6C445" opacity="0.7" />
-      <circle cx="100" cy="14" r="1.2" fill="#F6C445" opacity="0.5" />
-      <circle cx="70" cy="12" r="0.8" fill="#F6C445" opacity="0.5" />
-    </svg>
+    <div className="lrpg-stage-thumb" style={{ position: 'relative', height: 72, borderRadius: 10, overflow: 'hidden', opacity: glow }}>
+      <svg viewBox="0 0 160 72" width="100%" height="72" preserveAspectRatio="xMidYMid slice" style={{ display: 'block' }}>
+        <defs>
+          <linearGradient id="stCapSky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3a2a12" />
+            <stop offset="50%" stopColor="#1a140a" />
+            <stop offset="100%" stopColor="#0c0a06" />
+          </linearGradient>
+          <radialGradient id="stCapAura" cx="50%" cy="40%" r="45%">
+            <stop offset="0%" stopColor="#F6C445" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#F6C445" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="stCapGold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#ffe7a3" />
+            <stop offset="100%" stopColor="#F6C445" />
+          </linearGradient>
+          <filter id="stCapGlow"><feGaussianBlur stdDeviation="2.2" /></filter>
+        </defs>
+        <rect width="160" height="72" fill="url(#stCapSky)" />
+        <ellipse cx="80" cy="36" rx="50" ry="28" fill="url(#stCapAura)" className="lrpg-capital-aura" />
+        <circle cx="20" cy="14" r="1.1" fill="#F6C445" opacity="0.7" className="lrpg-star" />
+        <circle cx="145" cy="12" r="1.3" fill="#F6C445" opacity="0.55" className="lrpg-star" />
+        <circle cx="100" cy="10" r="0.8" fill="#F6C445" opacity="0.5" />
+        <path d="M0 54 L160 54 L160 72 L0 72 Z" fill="#1a140c" />
+        {/* side towers */}
+        <path d="M28 54 L28 36 L38 28 L48 36 L48 54 Z" fill="#2e2410" stroke="#F6C445" strokeWidth="0.7" />
+        <path d="M112 54 L112 36 L122 28 L132 36 L132 54 Z" fill="#2e2410" stroke="#F6C445" strokeWidth="0.7" />
+        {/* main keep */}
+        <g filter="url(#stCapGlow)">
+          <path d="M55 54 L55 30 L80 14 L105 30 L105 54 Z" fill="#3a2c14" stroke="#F6C445" strokeWidth="1.1" />
+          <path d="M80 14 L80 6" stroke="#F6C445" strokeWidth="1.6" />
+          <circle cx="80" cy="5" r="3" fill="#F6C445" className="lrpg-pulse-dot" />
+        </g>
+        <rect x="74" y="38" width="12" height="16" fill="url(#stCapGold)" opacity="0.85" className="lrpg-window" />
+        <rect x="34" y="42" width="5" height="8" fill="url(#stCapGold)" opacity="0.65" className="lrpg-window" />
+        <rect x="120" y="42" width="5" height="8" fill="url(#stCapGold)" opacity="0.65" className="lrpg-window" />
+        <path d="M48 54 Q80 48 112 54" stroke="#F6C445" strokeWidth="1.2" opacity="0.5" fill="none" className="lrpg-road-flow" />
+        <circle cx="80" cy="52" r="2" fill="#ffe7a3" className="lrpg-pulse-dot" />
+      </svg>
+    </div>
   );
 }
 
 function ProgressWorldMap({ stats, selected, onSelect }) {
   const byKey = Object.fromEntries(WORLD_NODES.map(n => [n.key, n]));
   return (
-    <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(246,196,69,0.35)', background: '#070b14' }}>
-      <svg viewBox="0 0 360 210" width="100%" height="210" role="img" aria-label="Карта мира">
+    <div className="lrpg-world-map" style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(246,196,69,0.4)', background: '#070b14', boxShadow: '0 0 24px rgba(246,196,69,0.12), inset 0 0 40px rgba(108,99,255,0.08)' }}>
+      <svg viewBox="0 0 360 210" width="100%" height="220" role="img" aria-label="Карта мира">
         <defs>
-          <radialGradient id="wmSky" cx="50%" cy="40%" r="70%">
-            <stop offset="0%" stopColor="#1a2744" />
+          <radialGradient id="wmSky" cx="50%" cy="35%" r="75%">
+            <stop offset="0%" stopColor="#1e2a48" />
+            <stop offset="55%" stopColor="#0e1424" />
             <stop offset="100%" stopColor="#070b14" />
           </radialGradient>
-          <filter id="wmGlow" x="-40%" y="-40%" width="180%" height="180%">
-            <feGaussianBlur stdDeviation="2.2" result="b" />
+          <filter id="wmGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="2.4" result="b" />
             <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
           </filter>
+          <filter id="wmSoft"><feGaussianBlur stdDeviation="3" /></filter>
+          <linearGradient id="wmRoad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#F6C445" stopOpacity="0.2" />
+            <stop offset="50%" stopColor="#ffe7a3" stopOpacity="1" />
+            <stop offset="100%" stopColor="#F6C445" stopOpacity="0.2" />
+          </linearGradient>
         </defs>
         <rect width="360" height="210" fill="url(#wmSky)" />
+        {/* soft aurora */}
+        <ellipse cx="180" cy="40" rx="120" ry="30" fill="#6C63FF" opacity="0.07" className="lrpg-map-aurora" />
         {/* ground */}
-        <path d="M0 150 C 40 132, 80 168, 130 150 C 180 132, 220 170, 280 146 C 320 132, 340 150, 360 142 L 360 210 L 0 210 Z" fill="#121018" />
+        <path d="M0 150 C 40 132, 80 168, 130 150 C 180 132, 220 170, 280 146 C 320 132, 340 150, 360 142 L 360 210 L 0 210 Z" fill="#10141e" />
+        <path d="M0 170 C 60 160, 120 180, 180 165 C 240 150, 300 175, 360 160 L 360 210 L 0 210 Z" fill="#0c1018" />
         {/* mountains near capital */}
-        <path d="M210 118 L 248 46 L 286 118 Z" fill="#1c2438" opacity="0.9" />
+        <path d="M210 118 L 248 46 L 286 118 Z" fill="#1c2438" opacity="0.95" />
         <path d="M228 118 L 252 70 L 274 118 Z" fill="#243044" />
+        <path d="M240 118 L 252 88 L 264 118 Z" fill="#2e3a50" opacity="0.8" />
         {/* forest near knowledge */}
         <path d="M40 78 L 70 40 L 96 86 Z" fill="#1a2830" />
         <path d="M48 86 L 68 58 L 84 88 Z" fill="#24383a" />
-        <path d="M72 90 L82 70 L92 90 Z" fill="#1e3030" opacity="0.8" />
+        <path d="M72 90 L82 70 L92 90 Z" fill="#1e3030" opacity="0.85" />
+        <path d="M58 92 L66 78 L74 92 Z" fill="#24383a" opacity="0.7" />
         {/* cracked wasteland */}
-        <path d="M30 160 L48 152 L42 168 Z" fill="#2a2018" opacity="0.6" />
-        <path d="M55 170 L70 162 L65 178 Z" fill="#2a2018" opacity="0.45" />
+        <path d="M30 160 L48 152 L42 168 Z" fill="#2a2018" opacity="0.65" />
+        <path d="M55 170 L70 162 L65 178 Z" fill="#2a2018" opacity="0.5" />
+        <path d="M20 175 L35 168 L30 185 Z" fill="#221810" opacity="0.4" />
         {/* campfire glow at physical */}
-        <circle cx="62" cy="148" r="10" fill="#FF8A4C" opacity="0.12" />
+        <circle cx="62" cy="148" r="14" fill="#FF8A4C" opacity="0.14" className="lrpg-map-fire" filter="url(#wmSoft)" />
+        <circle cx="62" cy="148" r="6" fill="#ffb347" opacity="0.35" className="lrpg-map-fire" />
         {/* capital glow */}
-        <circle cx="248" cy="70" r="16" fill="#F6C445" opacity="0.1" />
+        <circle cx="248" cy="70" r="22" fill="#F6C445" opacity="0.12" className="lrpg-map-capital-glow" filter="url(#wmSoft)" />
         {/* islands */}
-        <ellipse cx="304" cy="172" rx="14" ry="6" fill="#1a2438" opacity="0.7" />
-        <ellipse cx="318" cy="178" rx="8" ry="4" fill="#1a2438" opacity="0.5" />
+        <ellipse cx="304" cy="172" rx="16" ry="7" fill="#1a2438" opacity="0.8" />
+        <ellipse cx="318" cy="178" rx="9" ry="4.5" fill="#1a2438" opacity="0.55" />
+        <ellipse cx="292" cy="180" rx="7" ry="3.5" fill="#152030" opacity="0.5" />
         {WORLD_ROADS.map(([a, b]) => {
           const A = byKey[a], B = byKey[b];
           const lit = (stats[a] || 0) >= 20 || (stats[b] || 0) >= 20;
           return (
-            <line key={a + b} x1={A.x} y1={A.y} x2={B.x} y2={B.y}
-              stroke={lit ? '#F6C445' : '#3a4258'} strokeWidth={lit ? 1.6 : 1}
-              strokeDasharray={lit ? '0' : '3 3'} opacity={lit ? 0.95 : 0.55} filter={lit ? 'url(#wmGlow)' : undefined} />
+            <g key={a + b}>
+              <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
+                stroke={lit ? '#F6C445' : '#3a4258'} strokeWidth={lit ? 2.2 : 1.1}
+                strokeDasharray={lit ? '0' : '4 4'} opacity={lit ? 0.35 : 0.4} filter={lit ? 'url(#wmGlow)' : undefined} />
+              {lit && (
+                <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
+                  stroke="#ffe7a3" strokeWidth="1.2" opacity="0.9"
+                  strokeDasharray="6 14" className="lrpg-road-dash" filter="url(#wmGlow)" />
+              )}
+            </g>
           );
         })}
         {WORLD_NODES.map(n => {
           const val = stats[n.key] || 0;
           const stage = worldStageIndex(val);
           const active = selected === n.key;
-          const r = n.kind === 'capital' ? 8 : 5.5;
+          const r = n.kind === 'capital' ? 9 : 6;
           return (
-            <g key={n.key} onClick={() => onSelect(n.key)} style={{ cursor: 'pointer' }}>
-              {active && <circle cx={n.x} cy={n.y} r="14" fill="none" stroke="#F6C445" strokeWidth="1" opacity="0.8" />}
-              <circle cx={n.x} cy={n.y} r={r + 3} fill="#F6C445" opacity={val >= 20 ? 0.28 : 0.08} />
-              <circle cx={n.x} cy={n.y} r={r} fill={val >= 40 ? '#F6C445' : '#1a2030'} stroke="#F6C445" strokeWidth="1.4" />
-              {n.kind === 'capital' && <path d={`M${n.x - 4} ${n.y + 2} L${n.x} ${n.y - 6} L${n.x + 4} ${n.y + 2} Z`} fill="#1a1408" />}
-              <text x={n.x} y={n.y - 12} textAnchor="middle" fill="#F6E7B2" fontSize="8" fontWeight="700">{n.name}</text>
-              <text x={n.x} y={n.y + 16} textAnchor="middle" fill="#8B97AD" fontSize="7">{TERRITORY_STAGES[stage]}</text>
+            <g key={n.key} onClick={() => onSelect(n.key)} style={{ cursor: 'pointer' }} className={active ? 'lrpg-node-active' : 'lrpg-node'}>
+              {active && <circle cx={n.x} cy={n.y} r="18" fill="none" stroke="#F6C445" strokeWidth="1.2" opacity="0.85" className="lrpg-node-ring" />}
+              {active && <circle cx={n.x} cy={n.y} r="24" fill="none" stroke="#F6C445" strokeWidth="0.6" opacity="0.35" className="lrpg-node-ring-outer" />}
+              <circle cx={n.x} cy={n.y} r={r + 5} fill="#F6C445" opacity={val >= 20 ? 0.22 : 0.08} className="lrpg-node-halo" />
+              <circle cx={n.x} cy={n.y} r={r} fill={val >= 40 ? '#F6C445' : '#1a2030'} stroke="#F6C445" strokeWidth="1.6" filter={val >= 20 ? 'url(#wmGlow)' : undefined} />
+              {n.kind === 'capital' && <path d={`M${n.x - 4.5} ${n.y + 2.5} L${n.x} ${n.y - 7} L${n.x + 4.5} ${n.y + 2.5} Z`} fill="#1a1408" />}
+              <text x={n.x} y={n.y - 14} textAnchor="middle" fill="#F6E7B2" fontSize="8.5" fontWeight="700">{n.name}</text>
+              <text x={n.x} y={n.y + 18} textAnchor="middle" fill="#8B97AD" fontSize="7">{TERRITORY_STAGES[stage]}</text>
             </g>
           );
         })}
@@ -2860,8 +2941,8 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
   }));
   const stages = [
     { title: 'Пустошь', need: 0, kind: 'waste' },
-    { title: 'Поселение', need: 40, kind: 'settlement' },
-    { title: 'Столица', need: 80, kind: 'capital' },
+    { title: 'Поселение', need: 20, kind: 'settlement' },
+    { title: 'Столица', need: 60, kind: 'capital' },
   ];
 
   return (
@@ -2942,17 +3023,18 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
           {stages.map(st => {
             const open = selectedVal >= st.need;
             const current =
-              (st.need === 0 && selectedVal < 40) ||
-              (st.need === 40 && selectedVal >= 40 && selectedVal < 80) ||
-              (st.need === 80 && selectedVal >= 80);
+              (st.need === 0 && selectedVal < 20) ||
+              (st.need === 20 && selectedVal >= 20 && selectedVal < 60) ||
+              (st.need === 60 && selectedVal >= 60);
             return (
-              <div key={st.title} className="lrpg-glass lrpg-chamfer" style={{
-                borderRadius: 12, padding: 8, opacity: open ? 1 : 0.45,
-                border: current ? '1px solid rgba(246,196,69,0.75)' : '1px solid rgba(255,255,255,0.06)',
-                boxShadow: current ? '0 0 14px rgba(246,196,69,0.2)' : undefined,
+              <div key={st.title} className={"lrpg-glass lrpg-chamfer" + (current ? " lrpg-stage-current" : "")} style={{
+                borderRadius: 14, padding: 8, opacity: open ? 1 : 0.42,
+                border: current ? '1px solid rgba(246,196,69,0.85)' : '1px solid rgba(255,255,255,0.06)',
+                boxShadow: current ? '0 0 18px rgba(246,196,69,0.28)' : undefined,
+                transition: 'box-shadow .25s ease, border-color .25s ease, opacity .25s ease',
               }}>
-                <div style={{ height: 54, borderRadius: 8, marginBottom: 6, overflow: 'hidden', border: '1px solid rgba(246,196,69,0.2)' }}>
-                  <StageThumb kind={st.kind} />
+                <div style={{ borderRadius: 10, marginBottom: 6, overflow: 'hidden', border: current ? '1px solid rgba(246,196,69,0.45)' : '1px solid rgba(246,196,69,0.15)' }}>
+                  <StageThumb kind={st.kind} active={open} />
                 </div>
                 <div style={{ fontSize: 10, fontWeight: 800 }}>{st.title}</div>
                 <div style={{ fontSize: 9, color: current ? COLORS.gold : COLORS.textMuted }}>
@@ -5290,6 +5372,29 @@ useEffect(() => {
         .lrpg-btn:active { transform: scale(0.96); filter: brightness(1.12); }
         @keyframes lrpg-float-up { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: translateY(-18px) scale(1); } }
         @keyframes lrpg-breathe { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        @keyframes lrpg-pulse-dot { 0%,100% { opacity: 0.55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.35); } }
+        @keyframes lrpg-fire-pulse { 0%,100% { opacity: 0.75; } 50% { opacity: 1; } }
+        @keyframes lrpg-window-flicker { 0%,100% { opacity: 0.7; } 40% { opacity: 1; } 70% { opacity: 0.55; } }
+        @keyframes lrpg-road-dash { to { stroke-dashoffset: -40; } }
+        @keyframes lrpg-node-ring { 0% { opacity: 0.9; r: 16; } 100% { opacity: 0; r: 28; } }
+        @keyframes lrpg-star-twinkle { 0%,100% { opacity: 0.35; } 50% { opacity: 0.95; } }
+        @keyframes lrpg-aurora { 0%,100% { opacity: 0.05; } 50% { opacity: 0.12; } }
+        @keyframes lrpg-map-fire { 0%,100% { opacity: 0.2; } 50% { opacity: 0.45; } }
+        @keyframes lrpg-capital-glow { 0%,100% { opacity: 0.1; } 50% { opacity: 0.22; } }
+        .lrpg-pulse-dot { transform-origin: center; animation: lrpg-pulse-dot 1.8s ease-in-out infinite; }
+        .lrpg-fire-core { animation: lrpg-fire-pulse 1.2s ease-in-out infinite; }
+        .lrpg-fire-glow { animation: lrpg-fire-pulse 1.6s ease-in-out infinite; }
+        .lrpg-window { animation: lrpg-window-flicker 2.4s ease-in-out infinite; }
+        .lrpg-road-dash { animation: lrpg-road-dash 1.8s linear infinite; }
+        .lrpg-road-flow { stroke-dasharray: 4 8; animation: lrpg-road-dash 2.2s linear infinite; }
+        .lrpg-star { animation: lrpg-star-twinkle 2.8s ease-in-out infinite; }
+        .lrpg-map-aurora { animation: lrpg-aurora 4s ease-in-out infinite; }
+        .lrpg-map-fire { animation: lrpg-map-fire 1.5s ease-in-out infinite; }
+        .lrpg-map-capital-glow { animation: lrpg-capital-glow 2.2s ease-in-out infinite; }
+        .lrpg-capital-aura { animation: lrpg-capital-glow 2.5s ease-in-out infinite; }
+        .lrpg-node-ring { animation: lrpg-fire-pulse 1.6s ease-in-out infinite; }
+        .lrpg-node-halo { animation: lrpg-fire-pulse 2s ease-in-out infinite; }
+        .lrpg-stage-current { animation: lrpg-fire-pulse 2.4s ease-in-out infinite; }
         @keyframes lrpg-cloud-drift-0 { from { transform: translateX(0); } to { transform: translateX(140%); } }
         @keyframes lrpg-cloud-drift-1 { from { transform: translateX(0); } to { transform: translateX(-160%); } }
         @keyframes lrpg-cloud-drift-2 { from { transform: translateX(0); } to { transform: translateX(120%); } }
