@@ -138,7 +138,7 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.28';
+const APP_VERSION = '14.30';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2632,29 +2632,6 @@ function GoalsHub({ state, goals, showAddGoal, setShowAddGoal, addGoal, updateGo
 
       {sub === 'today' && (
         <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8 }}>
-              <span style={{ color: COLORS.textMuted }}>Прогресс дня</span>
-              <span style={{ fontWeight: 700 }}>{doneCount}/4</span>
-            </div>
-            <Bar value={doneCount} max={4} color={COLORS.violet} height={8} />
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {todayGoals.map(g => (
-                <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{
-                    width: 14, height: 14, borderRadius: 99, flexShrink: 0,
-                    background: g.done ? COLORS.teal : 'transparent',
-                    border: `1px solid ${g.done ? COLORS.teal : COLORS.textMuted}`,
-                  }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{g.label}</div>
-                    <div style={{ fontSize: 10, color: COLORS.textMuted }}>{g.done ? 'выполнено' : 'не выполнено'}</div>
-                  </div>
-                  <span style={{ fontSize: 11, color: COLORS.textMuted }}>{g.done ? '1/1' : '0/1'}</span>
-                </div>
-              ))}
-            </div>
-          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, fontWeight: 700 }}>Мои цели</span>
             <button className="lrpg-btn" onClick={() => { setSub('long'); setShowAddGoal(true); }} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700 }}>+ Добавить</button>
@@ -6111,7 +6088,7 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
 
   return (
     <div style={{
-      position: 'fixed', left: 0, right: 0, top: 0, bottom: 62, zIndex: 5, overflow: 'hidden',
+      position: 'fixed', left: 0, right: 0, top: 0, bottom: modal ? 0 : 62, zIndex: modal ? 70 : 5, overflow: 'hidden',
       backgroundImage: `url(${roomBackgroundNow()})`,
       backgroundSize: 'cover', backgroundPosition: 'center 78%', backgroundRepeat: 'no-repeat',
     }}>
@@ -6129,9 +6106,6 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
         <CoinsTimeBlock coins={state.coins} dayNumber={dayNumber} onOpenShop={() => { setTab('profile'); setSubTab(s => ({ ...s, profile: 'shop' })); }} />
       </div>
 
-      <div style={{ position: 'absolute', zIndex: 3, left: 8, top: 86 }}>
-        <DailyGoalsPanel state={state} setTab={setTab} setSubTab={setSubTab} />
-      </div>
       <div style={{ position: 'absolute', zIndex: 3, right: 8, top: 92, width: 128 }}>
         <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
       </div>
