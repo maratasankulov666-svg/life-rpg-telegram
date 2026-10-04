@@ -127,6 +127,7 @@ import {
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -138,7 +139,9 @@ import {
 // 14.3  Убрана левая панель с Home. Персонаж HQ + ночной цветокор + тень на полу.
 // 14.4  UI kit: неон-палитра, кнопки/табы/бары/нижняя навигация по референсу.
 // 14.5  Motion/SFX/Haptic: gameFeedback + canvas VFX. YouTube/AI не трогали.
-const APP_VERSION = '14.30';
+// 14.31 Прогресс: экран как референс — статы, радар, история и живая карта мира.
+//       Земли растут от реальных характеристик (пустошь → столица), тап открывает стадию.
+const APP_VERSION = '14.31';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -2672,82 +2675,216 @@ function GoalsHub({ state, goals, showAddGoal, setShowAddGoal, addGoal, updateGo
   );
 }
 
+const PROGRESS_STAT_META = [
+  { key: 'physical', label: 'Тело', color: '#FF6B9A', icon: Dumbbell },
+  { key: 'discipline', label: 'Дисциплина', color: '#7AA2FF', icon: ShieldCheck },
+  { key: 'knowledge', label: 'Знания', color: '#B388FF', icon: BookOpen },
+  { key: 'focus', label: 'Фокус', color: '#3DDCFF', icon: Crosshair },
+  { key: 'finance', label: 'Финансы', color: '#4ADE80', icon: Wallet },
+  { key: 'career', label: 'Карьера', color: '#8B7CFF', icon: Briefcase },
+  { key: 'creator', label: 'Творец', color: '#C084FC', icon: Sparkles },
+  { key: 'social', label: 'Общение', color: '#F472B6', icon: Users },
+  { key: 'mental', label: 'Разум', color: '#38BDF8', icon: Brain },
+];
+
+const WORLD_NODES = [
+  { key: 'physical', name: 'Пепельные пустоши', x: 62, y: 148, kind: 'waste' },
+  { key: 'knowledge', name: 'Серебряный лес', x: 86, y: 52, kind: 'forest' },
+  { key: 'mental', name: 'Святилище', x: 168, y: 92, kind: 'sanctum' },
+  { key: 'finance', name: 'Рудники', x: 132, y: 162, kind: 'mines' },
+  { key: 'career', name: 'Легендарная столица', x: 248, y: 70, kind: 'capital' },
+  { key: 'creator', name: 'Хребет искр', x: 286, y: 122, kind: 'ridge' },
+  { key: 'social', name: 'Острова', x: 304, y: 168, kind: 'isles' },
+];
+
+const WORLD_ROADS = [
+  ['knowledge', 'mental'], ['mental', 'career'], ['career', 'creator'],
+  ['creator', 'social'], ['physical', 'finance'], ['finance', 'mental'],
+  ['finance', 'creator'], ['knowledge', 'physical'],
+];
+
+function worldStageIndex(value) {
+  return Math.min(TERRITORY_STAGES.length - 1, Math.floor((Number(value) || 0) / 20));
+}
+
+function ProgressWorldMap({ stats, selected, onSelect }) {
+  const byKey = Object.fromEntries(WORLD_NODES.map(n => [n.key, n]));
+  return (
+    <div style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(246,196,69,0.35)', background: '#070b14' }}>
+      <svg viewBox="0 0 360 210" width="100%" height="210" role="img" aria-label="Карта мира">
+        <defs>
+          <radialGradient id="wmSky" cx="50%" cy="40%" r="70%">
+            <stop offset="0%" stopColor="#1a2744" />
+            <stop offset="100%" stopColor="#070b14" />
+          </radialGradient>
+          <filter id="wmGlow" x="-40%" y="-40%" width="180%" height="180%">
+            <feGaussianBlur stdDeviation="2.2" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <rect width="360" height="210" fill="url(#wmSky)" />
+        <path d="M0 150 C 40 132, 80 168, 130 150 C 180 132, 220 170, 280 146 C 320 132, 340 150, 360 142 L 360 210 L 0 210 Z" fill="#121018" />
+        <path d="M210 118 L 248 46 L 286 118 Z" fill="#1c2438" opacity="0.9" />
+        <path d="M228 118 L 252 70 L 274 118 Z" fill="#243044" />
+        <path d="M40 78 L 70 40 L 96 86 Z" fill="#1a2830" />
+        <path d="M48 86 L 68 58 L 84 88 Z" fill="#24383a" />
+        {WORLD_ROADS.map(([a, b]) => {
+          const A = byKey[a], B = byKey[b];
+          const lit = (stats[a] || 0) >= 20 || (stats[b] || 0) >= 20;
+          return (
+            <line key={a + b} x1={A.x} y1={A.y} x2={B.x} y2={B.y}
+              stroke={lit ? '#F6C445' : '#3a4258'} strokeWidth={lit ? 1.6 : 1}
+              strokeDasharray={lit ? '0' : '3 3'} opacity={lit ? 0.95 : 0.55} filter={lit ? 'url(#wmGlow)' : undefined} />
+          );
+        })}
+        {WORLD_NODES.map(n => {
+          const val = stats[n.key] || 0;
+          const stage = worldStageIndex(val);
+          const active = selected === n.key;
+          const r = n.kind === 'capital' ? 8 : 5.5;
+          return (
+            <g key={n.key} onClick={() => onSelect(n.key)} style={{ cursor: 'pointer' }}>
+              {active && <circle cx={n.x} cy={n.y} r="14" fill="none" stroke="#F6C445" strokeWidth="1" opacity="0.8" />}
+              <circle cx={n.x} cy={n.y} r={r + 3} fill="#F6C445" opacity={val >= 20 ? 0.28 : 0.08} />
+              <circle cx={n.x} cy={n.y} r={r} fill={val >= 40 ? '#F6C445' : '#1a2030'} stroke="#F6C445" strokeWidth="1.4" />
+              {n.kind === 'capital' && <path d={`M${n.x - 4} ${n.y + 2} L${n.x} ${n.y - 6} L${n.x + 4} ${n.y + 2} Z`} fill="#1a1408" />}
+              <text x={n.x} y={n.y - 12} textAnchor="middle" fill="#F6E7B2" fontSize="8" fontWeight="700">{n.name}</text>
+              <text x={n.x} y={n.y + 16} textAnchor="middle" fill="#8B97AD" fontSize="7">{TERRITORY_STAGES[stage]}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecoveryMode, sub, setSub }) {
   const xpNeed = xpNeeded(state.character.level);
   const daysPlayed = (state.playLog || []).length;
   const completedQuests = state.quests.filter(q => q.status === 'completed').length;
-  const habitsDone = state.habits.filter(h => h.lastDoneDate === todayStr()).length;
-  const skillRows = [
-    { label: 'Тренировки', value: state.stats.physical, icon: Dumbbell },
-    { label: 'Учёба', value: state.stats.knowledge, icon: BookOpen },
-    { label: 'Работа', value: state.stats.career, icon: Briefcase },
-    { label: 'Выносливость', value: state.stats.focus, icon: Zap },
-    { label: 'Уверенность', value: state.stats.social, icon: Sparkles },
+  const [selected, setSelected] = useState('career');
+  const stats = state.stats || {};
+  const node = WORLD_NODES.find(n => n.key === selected) || WORLD_NODES[0];
+  const selectedVal = stats[node.key] || 0;
+  const selectedStage = worldStageIndex(selectedVal);
+  const history = (state.statsHistory || []).slice(-14);
+  const historyData = (history.length ? history : [{ date: todayStr(), stats }]).map((h, i) => ({
+    day: String(i + 1),
+    Тело: h.stats.physical || 0,
+    Дисциплина: h.stats.discipline || 0,
+    Знания: h.stats.knowledge || 0,
+    Финансы: h.stats.finance || 0,
+    Карьера: h.stats.career || 0,
+  }));
+  const radarData = PROGRESS_STAT_META.filter(s => ['physical', 'discipline', 'knowledge', 'focus', 'finance', 'career', 'creator', 'mental'].includes(s.key)).map(s => ({
+    stat: s.label,
+    value: stats[s.key] || 0,
+  }));
+  const stages = [
+    { title: 'Пустошь', need: 0, art: 'трещины и костры' },
+    { title: 'Поселение', need: 40, art: 'дороги и огни' },
+    { title: 'Столица', need: 80, art: 'легендарный город' },
   ];
 
   return (
-    <div>
-      <ScreenHeader title="Прогресс" icon={Activity} />
-      <PillTabs
-        options={[{ key: 'stats', label: 'Характеристики' }, { key: 'skills', label: 'Навыки' }, { key: 'history', label: 'Статистика' }]}
-        active={sub} onChange={setSub}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <ScreenHeader title="Прогресс" icon={Activity} extra={<span style={{ fontSize: 11, color: COLORS.gold }}>Lv.{state.character.level}</span>} />
 
-      {sub === 'stats' && (
-        <div style={{ marginTop: 12 }}>
-          <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 12, marginBottom: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-              <span className="lrpg-display" style={{ color: COLORS.gold }}>Lv.{state.character.level}</span>
-              <span style={{ color: COLORS.textMuted }}>Опыт {state.character.xp}/{xpNeed}</span>
-            </div>
-            <div style={{ marginTop: 8 }}><Bar value={state.character.xp} max={xpNeed} color={COLORS.violet} height={8} /></div>
-          </div>
-          <StatsTab
-            stats={state.stats} energy={energy} todayCheckin={todayCheckin}
-            setDailyCheckin={setDailyCheckin} chronicle={state.chronicle}
-            recoveryMode={state.recoveryMode} toggleRecoveryMode={toggleRecoveryMode}
-            statsHistory={state.statsHistory}
-          />
-        </div>
-      )}
-
-      {sub === 'skills' && (
-        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {skillRows.map(s => {
+      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 8 }}>
+        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: 10 }}>
+          {PROGRESS_STAT_META.map(s => {
             const Icon = s.icon;
+            const active = selected === s.key || WORLD_NODES.some(n => n.key === s.key && n.key === selected);
             return (
-              <div key={s.label} className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <Icon size={14} color={COLORS.violet} />
-                  <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{s.label}</span>
-                  <span style={{ fontSize: 12, color: COLORS.textMuted }}>{s.value}/100</span>
-                </div>
-                <Bar value={s.value} max={100} color={COLORS.violet} height={6} />
+              <button key={s.key} className="lrpg-btn" onClick={() => WORLD_NODES.some(n => n.key === s.key) && setSelected(s.key)} style={{
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: active ? 'rgba(246,196,69,0.08)' : 'transparent',
+                borderRadius: 8, padding: '3px 2px', marginBottom: 3,
+              }}>
+                <Icon size={11} color={s.color} />
+                <span style={{ fontSize: 9, fontWeight: 700, width: 62, textAlign: 'left', color: COLORS.text }}>{s.label}</span>
+                <span style={{ flex: 1, height: 5, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                  <span style={{ display: 'block', width: `${Math.min(100, stats[s.key] || 0)}%`, height: '100%', background: s.color, borderRadius: 99 }} />
+                </span>
+                <span style={{ fontSize: 9, color: COLORS.textMuted, width: 32, textAlign: 'right' }}>{stats[s.key] || 0}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: '8px 4px 0', minHeight: 220 }}>
+          <div className="lrpg-display" style={{ textAlign: 'center', color: COLORS.gold, fontSize: 12, letterSpacing: 1 }}>СТАТИСТИКА</div>
+          <div style={{ height: 196 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart data={radarData} cx="50%" cy="52%" outerRadius="62%">
+                <PolarGrid stroke="rgba(246,196,69,0.25)" />
+                <PolarAngleAxis dataKey="stat" tick={{ fill: '#8B97AD', fontSize: 8 }} />
+                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                <Radar dataKey="value" stroke="#F6C445" fill="#F6C445" fillOpacity={0.28} />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+          <span className="lrpg-display" style={{ color: COLORS.gold, fontSize: 12 }}>ИСТОРИЯ</span>
+          <span style={{ fontSize: 10, color: COLORS.textMuted }}>{daysPlayed} дн · {completedQuests} заданий · энергия {energy}</span>
+        </div>
+        <div style={{ height: 132 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={historyData}>
+              <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="day" tick={{ fill: '#8B97AD', fontSize: 9 }} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} tick={{ fill: '#8B97AD', fontSize: 9 }} axisLine={false} tickLine={false} width={24} />
+              <Tooltip contentStyle={{ background: '#121826', border: '1px solid #243044', fontSize: 11 }} />
+              <Line type="monotone" dataKey="Тело" stroke="#FF6B9A" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Дисциплина" stroke="#7AA2FF" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Знания" stroke="#B388FF" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Финансы" stroke="#4ADE80" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Карьера" stroke="#F6C445" strokeWidth={1.6} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div>
+        <div className="lrpg-display" style={{ color: COLORS.gold, fontSize: 12, marginBottom: 8 }}>КАРТА МИРА</div>
+        <ProgressWorldMap stats={stats} selected={selected} onSelect={setSelected} />
+        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 10, marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontWeight: 800, fontSize: 13 }}>{node.name}</span>
+            <span style={{ color: COLORS.gold, fontSize: 11, fontWeight: 700 }}>{TERRITORY_STAGES[selectedStage]}</span>
+          </div>
+          <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '4px 0 6px' }}>
+            Растёт от «{PROGRESS_STAT_META.find(s => s.key === node.key)?.label}» · {selectedVal}/100
+          </div>
+          <Bar value={selectedVal} max={100} color={COLORS.gold} height={6} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
+          {stages.map(st => {
+            const open = selectedVal >= st.need;
+            const current = open && selectedVal < st.need + 40 || (st.need === 80 && selectedVal >= 80);
+            return (
+              <div key={st.title} className="lrpg-glass lrpg-chamfer" style={{
+                borderRadius: 12, padding: 8, opacity: open ? 1 : 0.45,
+                border: current ? '1px solid rgba(246,196,69,0.7)' : undefined,
+              }}>
+                <div style={{
+                  height: 54, borderRadius: 8, marginBottom: 6,
+                  background: st.need === 0
+                    ? 'linear-gradient(180deg, #2a211c, #12100e)'
+                    : st.need === 40
+                      ? 'linear-gradient(180deg, #243044, #121820)'
+                      : 'linear-gradient(180deg, #3a2c14, #14100a)',
+                  boxShadow: open ? 'inset 0 0 18px rgba(246,196,69,0.25)' : 'none',
+                }} />
+                <div style={{ fontSize: 10, fontWeight: 800 }}>{st.title}</div>
+                <div style={{ fontSize: 9, color: COLORS.textMuted }}>{open ? 'открыто' : `с ${st.need}`}</div>
               </div>
             );
           })}
         </div>
-      )}
-
-      {sub === 'history' && (
-        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Статистика</div>
-            {[
-              ['Дней в игре', daysPlayed],
-              ['Выполнено заданий', completedQuests],
-              ['Привычек сегодня', habitsDone],
-              ['XP сейчас', state.character.xp],
-              ['Монет', state.coins],
-            ].map(([l, v]) => (
-              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '4px 0', borderBottom: `1px solid ${COLORS.border}` }}>
-                <span style={{ color: COLORS.textMuted }}>{l}</span><span style={{ fontWeight: 700 }}>{v}</span>
-              </div>
-            ))}
-          </div>
-          <CalendarTab playLog={state.playLog} firstOpenedAt={state.firstOpenedAt} />
-        </div>
-      )}
+      </div>
     </div>
   );
 }
