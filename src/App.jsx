@@ -143,7 +143,8 @@ import {
 //       Земли растут от реальных характеристик (пустошь → столица), тап открывает стадию.
 // 14.32 Карточки стадий с мини-артом (пустошь/поселение/столица), карта чуть богаче.
 // 14.33 Светящиеся стадии, анимации дорог/узлов/окон, пороги 0/20/60.
-const APP_VERSION = '14.33';
+// 14.34 Умный порядок привычек (локально+ИИ), сильнее Mentor/Habit Engine.
+const APP_VERSION = '14.34';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1735,81 +1736,86 @@ function parseJsonLoose(text) {
 const MENTOR_NAME = 'Мастер Кайлен';
 const MENTOR_TITLE = 'Страж Дисциплины';
 
-const MENTOR_SYSTEM_PROMPT = `Тебя зовут ${MENTOR_NAME}, ${MENTOR_TITLE} — RPG-наставник в приложении Life RPG, которое геймифицирует реальную жизнь пользователя. `
-  + 'Ты держишься как серьёзный, опытный мастер-наставник в мире тёмного фэнтези — сдержанный, немногословный, с лёгким налётом архаичной речи, но НЕ ряженый шут и не комик. '
-  + 'Твоя роль — мудрый, тёплый, но требовательный наставник: поддерживаешь, но не льстишь и не потакаешь. '
-  + 'Отвечай по-русски, на "ты", коротко (2-5 предложений на обычное сообщение). '
-  + 'Опирайся на переданные в контексте реальные данные персонажа (уровень, статы, квесты, долги, энергия) — не выдумывай цифры, которых там нет. '
-  + 'Если пользователь просто здоровается или пишет нейтрально — ответь в характере наставника и мягко предложи, с чем можешь помочь сегодня. '
-  + 'Если видишь тревожные признаки (крайне низкая энергия, много пропусков подряд, растущие долги) — мягко обрати на это внимание. '
-  + 'Ты не заменяешь врача, финансового или психологического консультанта — при серьёзных темах советуй обратиться к специалисту.';
+const MENTOR_SYSTEM_PROMPT = `Тебя зовут ${MENTOR_NAME}, ${MENTOR_TITLE} — RPG-наставник Life RPG. `
+  + 'Ты серьёзный мастер: коротко, по-русски, на «ты», 2–6 предложений. '
+  + 'У тебя есть ПОЛНЫЙ контекст жизни игрока. Не выдумывай цифры — опирайся только на данные. '
+  + 'Твоя сила — приоритеты дня: что сделать сейчас, что отложить, что вредно в текущей энергии. '
+  + 'Если игрок просит план на день — строй хронологию (утро → день → вечер), не свалку. '
+  + 'Можешь предлагать конкретные правки привычек/квестов в конце ответа блоком JSON (необязательно): '
+  + '{"apply":[{"op":"reorder_habits","ids":["..."]},{"op":"add_habit","title":"...","stat":"focus"},{"op":"add_quest","title":"...","xp":30}]}. '
+  + 'Блок apply только если изменение реально нужно. Без markdown вокруг JSON. '
+  + 'Не потакай. Если энергия низкая — сначала восстановление, не геройство.\n\n';
 
-const GOAL_ENGINE_SYSTEM_PROMPT = 'Ты — Goal Engine в приложении Life RPG. Пользователь даёт крупную жизненную цель, '
-  + 'а ты разбиваешь её на 3-6 конкретных выполнимых квестов-шагов с учётом срока цели. '
-  + 'КРИТИЧЕСКИ ВАЖНО про логику сроков: шаги идут по возрастанию dueInDays, и тип должен соответствовать сроку — '
-  + 'если dueInDays до 14 дней, тип "Weekly"; если больше 14 дней, тип "Monthly"; последний шаг ближе к дедлайну цели '
-  + 'обычно "Goal". НЕЛЬЗЯ давать простому короткому действию (например "сделать 10 отжиманий", "выпить стакан воды") '
-  + 'срок в 1 месяц — это разовые квесты-шаги на пути к цели, а не повторяющиеся привычки. Если шаг по смыслу должен '
-  + 'повторяться каждый день (тренировка, чтение, диета) — сформулируй его как ОДНОРАЗОВОЕ действие вида "составить и '
-  + 'начать план тренировок 3 раза в неделю" или "пройти первую неделю по плану питания", а не как саму ежедневную '
-  + 'повторяющуюся активность — регулярные действия относятся к привычкам (Habits), а не к квестам цели. '
-  + 'Отвечай СТРОГО JSON-массивом, без пояснений, markdown или текста до/после. '
-  + 'Формат каждого элемента: {"title": string, "type": "Weekly"|"Monthly"|"Goal", "difficulty": "Easy"|"Normal"|"Hard", '
-  + '"stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], "dueInDays": number}. '
-  + 'dueInDays — через сколько дней от сегодня стоит завершить этот шаг; шаги должны идти по возрастанию и укладываться в срок цели.';
+HABIT_SUGGEST_SYSTEM_PROMPT = 'Ты — Habit Engine в Life RPG. Предложи 2–4 НОВЫЕ привычки под слабые статы. '
+  + 'Учитывай реальность дня: утро/работа/вечер, не предлагай дубликаты. '
+  + 'Каждая привычка — конкретное действие на 5–40 минут, не абстракция. '
+  + 'Отвечай СТРОГО JSON-массивом. Формат: {"title": string, "stat": physical|discipline|knowledge|focus|finance|career|creator|social|mental, '
+  + '"secondaryStat": то же или null, "slot": "wake|morning|hydrate|meal|work|train|social|evening|sleep", "why": "1 фраза"}.';
 
-const GOAL_REALITY_SYSTEM_PROMPT = 'Ты — Reality Check Engine в приложении Life RPG. Пользователь даёт крупную цель с дедлайном и текущим прогрессом. '
-  + 'Оцени реалистичность и предложи РОВНО 3 сценария: "Агрессивный" (быстрее исходного срока, выше риск не удержать темп), '
-  + '"Реалистичный" (сбалансированный, ближе всего к здравому смыслу) и "Безопасный" (более мягкий срок, ниже риск выгорания). '
-  + 'Отвечай СТРОГО одним JSON-объектом без пояснений и markdown, формат: '
-  + '{"scenarios": [{"name": string, "pace": string, "probability": string, "risks": string, "deadlineDays": number}]}. '
-  + 'pace — краткое описание темпа в 1 фразе, probability — вероятность успеха словами ("высокая"/"средняя"/"низкая"), '
-  + 'risks — главный риск в 1 фразе, deadlineDays — предлагаемый срок в днях от сегодня для этого сценария.';
+const HABIT_ORDER_SYSTEM_PROMPT = 'Ты — Day Planner в Life RPG. Тебе дан список привычек/дел на сегодня. '
+  + 'Расставь их в порядке, в котором человеку РЕАЛЬНО удобно и физиологично выполнять в течение дня. '
+  + 'Правила: 1) Пробуждение/подъём/заправка постели — в начале. 2) Полный объём воды (2л) и длинные задачи — НЕ первыми: '
+  + 'вода идёт кусками (утро/день/вечер) или после коротких стартовых ритуалов. 3) Тяжёлая тренировка — не сразу после еды и не перед сном. '
+  + '4) Глубокая работа/учёба — в окно фокуса (обычно утро–день). 5) Соцсети/развлечения — не раньше важных дел. '
+  + '6) Гигиена вечера и сон — в конце. 7) Уже выполненные (done=true) оставь в конце списка. '
+  + 'Отвечай СТРОГО JSON: {"order":["id1","id2",...],"notes":"1-2 предложения почему такой порядок"}. '
+  + 'order должен содержать ВСЕ переданные id ровно один раз.';
 
-const DAILY_QUEST_ENGINE_SYSTEM_PROMPT = 'Ты — Daily Quest Engine в приложении Life RPG. '
-  + 'По статам персонажа (особенно слабым местам), активным целям и уже существующим квестам придумай от 1 до 3 '
-  + 'НОВЫХ заданий. Главное правило: задания должны быть конкретными и однозначно выполнимыми — НИКАКИХ размытых '
-  + 'фраз вроде "внезапный прилив сил, самое время для важного дела" или "момент фокуса". Формулируй как чёткое '
-  + 'действие с понятным результатом ("прочитать 15 страниц книги по specialty", "сделать 20 отжиманий", '
-  + '"написать план на завтра перед сном"). Если есть активная цель — минимум одно задание должно двигать именно её. '
-  + 'Не повторяй уже существующие активные квесты по смыслу. '
-  + 'Отвечай СТРОГО JSON-массивом без пояснений, markdown или текста до/после. '
-  + 'Формат каждого элемента: {"title": string, "type": "Daily"|"Weekly"|"Monthly", '
-  + '"stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], '
-  + '"secondaryStat": одно из того же списка ИЛИ null (если задание реально качает второй аспект — например бег качает и physical, и discipline)}. '
-  + '"Daily" — выполнимо сегодня за 5-40 минут. "Weekly" — рассчитано на несколько дней в течение недели. '
-  + '"Monthly" — крупная веха на месяц вперёд. Обычно давай 1-2 Daily и не больше одного Weekly/Monthly за раз — не выдумывай лишнее ради количества.';
+const HABIT_SLOT_RULES = [
+  { slot: 'wake', score: 5, re: /встат|подъ[её]м|разбуд|просну|заправ.*постел|утренн.*ритуал|alarm|wake/i },
+  { slot: 'morning', score: 15, re: /утр|зарядк|растяж|душ|умы|зуб|завтрак|кофе|чай|медитац|благодар|дневник.*утр/i },
+  { slot: 'hydrate', score: 25, re: /вод[аыуе]|hydrate|2\s*л|литр/i },
+  { slot: 'meal', score: 35, re: /еда|обед|ужин|перекус|питани|калори|завтрак/i },
+  { slot: 'work', score: 45, re: /работ|учеба|учёб|фокус|deep.?work|код|англий|книг|конспект|pomodoro|задач/i },
+  { slot: 'train', score: 55, re: /трен|спорт|зал|бег|отжиман|подтяги|прогулк|шаг[иов]|workout|gym/i },
+  { slot: 'finance', score: 60, re: /финан|расход|бюджет|инвест|долг|учёт/i },
+  { slot: 'social', score: 70, re: /звонок|сообщен|семь|друг|сет[ьи]|соц|общен/i },
+  { slot: 'creator', score: 75, re: /youtube|контент|видео|пост|креатив|рису|писат/i },
+  { slot: 'evening', score: 85, re: /вечер|итог.*дня|ревью|план.*завтра|уборк/i },
+  { slot: 'sleep', score: 95, re: /сон|спать|отход|без.*телефон|screen.?off|lights.?out/i },
+];
 
-async function aiDailyQuestSpecs(state) {
-  const activeTitles = state.quests.filter(q => q.status === 'active').map(q => `${q.title} (${q.type})`);
-  const userMsg = `Контекст персонажа:\n${buildContextSummary(state)}\n\n`
-    + `Активные квесты сейчас:\n${activeTitles.length ? activeTitles.map(t => `- ${t}`).join('\n') : '(нет)'}`;
-  const text = await callClaudeAPIWithRetry(DAILY_QUEST_ENGINE_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
-  const specs = parseJsonLoose(text);
-  if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: no quests returned');
-  const validStats = new Set(STATS_DEF.map(s => s.key));
-  const validTypes = new Set(['Daily', 'Weekly', 'Monthly']);
-  return specs
-    .filter(s => s && typeof s.title === 'string' && s.title.trim() && validStats.has(s.stat) && validTypes.has(s.type))
-    .map(s => ({
-      title: s.title.trim(), type: s.type, stat: s.stat,
-      secondaryStat: validStats.has(s.secondaryStat) && s.secondaryStat !== s.stat ? s.secondaryStat : null,
-    }))
-    .slice(0, 3);
+function classifyHabitSlot(title) {
+  const t = String(title || '');
+  for (const rule of HABIT_SLOT_RULES) {
+    if (rule.re.test(t)) return rule;
+  }
+  return { slot: 'work', score: 50, re: null };
 }
 
-const HABIT_SUGGEST_SYSTEM_PROMPT = 'Ты — Habit Engine в приложении Life RPG. По статам персонажа (особенно слабым местам) и '
-  + 'уже существующим привычкам предложи от 2 до 4 НОВЫХ привычек, которых пока нет в списке и которые реально помогут '
-  + 'именно слабым сторонам. Формулируй конкретно и коротко (3-6 слов), без воды. '
-  + 'Отвечай СТРОГО JSON-массивом без пояснений, markdown или текста до/после. '
-  + 'Формат каждого элемента: {"title": string, "stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], '
-  + '"secondaryStat": одно из того же списка ИЛИ null (если привычка реально качает второй аспект)}.';
+function orderHabitsForDay(habits, opts) {
+  const today = (opts && opts.today) || todayStr();
+  const putDoneLast = !opts || opts.putDoneLast !== false;
+  return [...(habits || [])].map((h, idx) => {
+    const rule = classifyHabitSlot(h.title);
+    const done = h.lastDoneDate === today;
+    const sortIndex = typeof h.sortIndex === 'number' ? h.sortIndex : null;
+    return { h: h, done: done, rule: rule, sortIndex: sortIndex, idx: idx };
+  }).sort((a, b) => {
+    if (putDoneLast && a.done !== b.done) return a.done ? 1 : -1;
+    if (a.sortIndex != null && b.sortIndex != null && a.sortIndex !== b.sortIndex) return a.sortIndex - b.sortIndex;
+    if (a.sortIndex != null && b.sortIndex == null) return -1;
+    if (b.sortIndex != null && a.sortIndex == null) return 1;
+    if (a.rule.score !== b.rule.score) return a.rule.score - b.rule.score;
+    return a.idx - b.idx;
+  }).map(function(x) { return x.h; });
+}
+
+function slotLabelRu(slot) {
+  var map = {
+    wake: 'Подъём', morning: 'Утро', hydrate: 'Вода', meal: 'Еда', work: 'Фокус',
+    train: 'Тело', finance: 'Финансы', social: 'Люди', creator: 'Творчество',
+    evening: 'Вечер', sleep: 'Сон'
+  };
+  return map[slot] || 'День';
+}
 
 async function aiHabitSuggestions(state) {
   const existing = state.habits.map(h => h.title);
-  const userMsg = `Контекст персонажа:\n${buildContextSummary(state)}\n\n`
-    + `Уже существующие привычки:\n${existing.length ? existing.map(t => `- ${t}`).join('\n') : '(нет)'}`;
-  const text = await callClaudeAPIWithRetry(HABIT_SUGGEST_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
+  const userMsg = 'Контекст персонажа:\n' + buildContextSummary(state) + '\n\n'
+    + 'Уже существующие привычки:\n' + (existing.length ? existing.map(t => '- ' + t).join('\n') : '(нет)') + '\n'
+    + 'Сейчас примерно: ' + new Date().getHours() + ':00 (локальное время). Предлагай привычки, которые встраиваются в реальный день.';
+  const text = await callClaudeAPIWithRetry(HABIT_SUGGEST_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }], 2, { taskType: 'HABITS', jsonMode: true });
   const specs = parseJsonLoose(text);
   if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: no habits returned');
   const validStats = new Set(STATS_DEF.map(s => s.key));
@@ -1818,8 +1824,44 @@ async function aiHabitSuggestions(state) {
     .map(s => ({
       title: s.title.trim(), stat: s.stat,
       secondaryStat: validStats.has(s.secondaryStat) && s.secondaryStat !== s.stat ? s.secondaryStat : null,
+      slot: s.slot || classifyHabitSlot(s.title).slot,
+      why: s.why || null,
     }))
     .slice(0, 4);
+}
+
+async function aiReorderTodayPlan(state) {
+  const today = todayStr();
+  const items = (state.habits || []).map(h => ({
+    id: h.id,
+    title: h.title,
+    stat: h.stat,
+    done: h.lastDoneDate === today,
+    streak: h.streakCurrent || 0,
+    hintSlot: classifyHabitSlot(h.title).slot,
+  }));
+  if (items.length < 2) return { order: items.map(i => i.id), notes: 'Мало пунктов — порядок локальный.', source: 'local' };
+
+  const localOrder = orderHabitsForDay(state.habits, { today: today }).map(h => h.id);
+  try {
+    const userMsg = JSON.stringify({
+      nowHour: new Date().getHours(),
+      energy: computeEnergy(state.dailyCheckin && state.dailyCheckin.date === today ? state.dailyCheckin : null),
+      items: items,
+      localGuess: localOrder,
+    });
+    const raw = await callClaudeAPIWithRetry(HABIT_ORDER_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }], 2, { taskType: 'HABITS', jsonMode: true });
+    const data = parseJsonObjectLoose(raw);
+    const order = Array.isArray(data.order) ? data.order.map(String) : [];
+    const idSet = new Set(items.map(i => i.id));
+    const cleaned = [];
+    order.forEach(id => { if (idSet.has(id) && cleaned.indexOf(id) < 0) cleaned.push(id); });
+    items.forEach(i => { if (cleaned.indexOf(i.id) < 0) cleaned.push(i.id); });
+    if (cleaned.length !== items.length) return { order: localOrder, notes: 'ИИ вернул битый порядок — взял локальный.', source: 'local' };
+    return { order: cleaned, notes: String(data.notes || '').slice(0, 240), source: 'ai' };
+  } catch (e) {
+    return { order: localOrder, notes: 'Офлайн-порядок по времени суток.', source: 'local' };
+  }
 }
 
 function parseJsonObjectLoose(text) {
@@ -1841,6 +1883,7 @@ function buildContextSummary(state) {
     `Energy: ${energy}/100`,
     `Статы: ${STATS_DEF.map(s => `${s.label} ${state.stats[s.key]}`).join(', ')} (слабее всего — ${weakest.label})`,
     `Активных квестов: ${activeQuests.length}`,
+    `Привычки (порядок дня): ${(state.habits || []).length ? orderHabitsForDay(state.habits).map(h => h.title + '[' + classifyHabitSlot(h.title).slot + (h.lastDoneDate === todayStr() ? ':done' : '') + ']').join('; ') : 'нет'}`,
     `Целей в работе: ${state.goals.filter(g => g.progress < 100).length}`,
     aliveDebts.length ? `Активные долги: ${aliveDebts.map(d => `${d.title} (осталось ${Math.round(d.remaining)})`).join(', ')}` : 'Долгов нет',
     state.recoveryMode ? 'Recovery Mode включён' : null,
@@ -2480,7 +2523,7 @@ const TRAINING_PRESETS = [
 ];
 
 function ActionsHub({
-  state, energy, completeQuest, completeHabit, addHabit, addQuest,
+  state, energy, completeQuest, completeHabit, addHabit, addQuest, setHabitOrder,
   activeQuests, laterQuests, postponeQuest, skipQuest, skipTarget, setSkipTarget,
   movePriority, reactivateQuest, deleteQuest, showAddQuest, setShowAddQuest, addQuestForm,
   dismissedEvolutions, dismissEvolution, hitBossQuest,
@@ -2490,6 +2533,8 @@ function ActionsHub({
   const today = todayStr();
   const dailyGoals = computeDailyGoalsStatus(state);
   const doneCount = dailyGoals.filter(g => g.done).length;
+  const [planBusy, setPlanBusy] = useState(false);
+  const [planNote, setPlanNote] = useState(null);
 
   const physicalHabits = state.habits.filter(h => h.stat === 'physical');
   const studyHabits = state.habits.filter(h => h.stat === 'knowledge' || h.stat === 'focus');
@@ -2503,16 +2548,43 @@ function ActionsHub({
     addHabit({ title: p.label, stat: p.stat, xp: p.xp, period: 'daily' });
   }
 
+  const orderedHabits = orderHabitsForDay(state.habits, { today: today });
+  const pendingHabits = orderedHabits.filter(h => h.lastDoneDate !== today);
+  const doneHabits = orderedHabits.filter(h => h.lastDoneDate === today);
+
   const todayActions = [
-    ...state.habits.filter(h => h.lastDoneDate !== today).slice(0, 6).map(h => ({
-      id: h.id, kind: 'habit', title: h.title, bonus: `${STAT_LABEL[h.stat] || h.stat}`,
-      done: h.lastDoneDate === today, action: () => completeHabit(h),
+    ...pendingHabits.slice(0, 8).map(h => ({
+      id: h.id, kind: 'habit', title: h.title,
+      bonus: slotLabelRu(h.slot || classifyHabitSlot(h.title).slot) + ' / ' + (STAT_LABEL[h.stat] || h.stat),
+      done: false, action: () => completeHabit(h),
     })),
     ...activeQuests.filter(q => q.type === 'Daily' || q.type === 'Routine' || q.type === 'Bonus').slice(0, 4).map(q => ({
-      id: q.id, kind: 'quest', title: q.title, bonus: `+${q.xp || 0} XP`,
+      id: q.id, kind: 'quest', title: q.title, bonus: '+' + (q.xp || 0) + ' XP',
       done: q.status === 'completed', action: () => completeQuest(q),
     })),
+    ...doneHabits.slice(0, 4).map(h => ({
+      id: h.id, kind: 'habit', title: h.title,
+      bonus: 'готово / ' + (STAT_LABEL[h.stat] || h.stat),
+      done: true, action: () => {},
+    })),
   ];
+
+  async function handleSmartPlan() {
+    if (planBusy) return;
+    setPlanBusy(true);
+    setPlanNote(null);
+    try {
+      const res = await aiReorderTodayPlan(state);
+      if (setHabitOrder) setHabitOrder(res.order, res.notes);
+      setPlanNote((res.source === 'ai' ? 'ИИ: ' : 'Локально: ') + (res.notes || 'порядок обновлён'));
+    } catch (e) {
+      const local = orderHabitsForDay(state.habits, { today: today }).map(h => h.id);
+      if (setHabitOrder) setHabitOrder(local, 'локальный порядок');
+      setPlanNote('Сбой ИИ — поставил локальный порядок по времени суток');
+    } finally {
+      setPlanBusy(false);
+    }
+  }
 
   return (
     <div>
@@ -2524,7 +2596,14 @@ function ActionsHub({
 
       {sub === 'all' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted }}>Сегодня</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted }}>Сегодня · умный порядок</div>
+            <button className="lrpg-btn" disabled={planBusy} onClick={handleSmartPlan} style={{
+              background: COLORS.violetSoft, color: COLORS.violet, border: `1px solid ${COLORS.violet}55`,
+              borderRadius: 999, padding: '5px 10px', fontSize: 11, fontWeight: 700,
+            }}>{planBusy ? 'Думаю…' : 'ИИ-порядок'}</button>
+          </div>
+          {planNote && <div style={{ fontSize: 11, color: COLORS.teal }}>{planNote}</div>}
           {todayActions.length === 0 && (
             <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 14, fontSize: 12, color: COLORS.textMuted }}>
               На сегодня действий нет — добавь привычку или квест.
@@ -2592,7 +2671,7 @@ function ActionsHub({
 
       {sub === 'habits' && (
         <div style={{ marginTop: 12 }}>
-          <HabitsTab habits={habits} addHabit={addHabit} completeHabit={completeHabit} deleteHabit={deleteHabit} aiContextState={state} />
+          <HabitsTab habits={habits} addHabit={addHabit} completeHabit={completeHabit} deleteHabit={deleteHabit} aiContextState={state} setHabitOrder={setHabitOrder} />
         </div>
       )}
 
@@ -3582,6 +3661,7 @@ const COUNCIL_SYSTEM = `Ты секретарь штаба Life RPG. Дирек�
 - Не выдумывайте метрики, которых нет во входе.
 - actions необязательны и редки. Максимум 3. Ачивка/титул/шмот — только если игрок реально сделал что-то достойное в данных, не за «потенциал».
 - quest в actions — один маленький квест на сегодня, если дыра очевидна.
+- Можно action type habit_order (ids: лучший порядок привычек) или habit_add (title+stat), если день хаотичен.
 - Помните прошлые заседания из блока ПАМЯТЬ: ссылайтесь на вчера/неделю, если это уместно.
 - Язык русский, коротко.`;
 
@@ -4369,9 +4449,26 @@ export default function LifeRPG() {
       habits: [...prev.habits, {
         id: uid(), title: data.title, stat: data.stat, secondaryStat: data.secondaryStat || null, level: 1,
         streakCurrent: 0, bestStreak: 0, lastDoneDate: null, createdAt: Date.now(),
+        sortIndex: typeof data.sortIndex === 'number' ? data.sortIndex : prev.habits.length,
+        slot: data.slot || classifyHabitSlot(data.title).slot,
       }],
       chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новая привычка: ${data.title}`),
     }));
+  }
+
+  function setHabitOrder(orderedIds, note) {
+    setState(prev => {
+      const map = new Map((orderedIds || []).map((id, i) => [String(id), i]));
+      const habits = prev.habits.map(h => map.has(h.id) ? { ...h, sortIndex: map.get(h.id) } : h);
+      habits.sort((a, b) => (a.sortIndex ?? 999) - (b.sortIndex ?? 999));
+      return {
+        ...prev,
+        habits,
+        chronicle: note
+          ? pushChronicle(prev.chronicle, 'SYSTEM', `Порядок дня: ${String(note).slice(0, 120)}`)
+          : prev.chronicle,
+      };
+    });
   }
 
   function deleteHabit(id) {
@@ -5570,7 +5667,7 @@ useEffect(() => {
           {tab === 'actions' && (
             <ActionsHub
               state={state} energy={energy}
-              completeQuest={completeQuest} completeHabit={completeHabit} addHabit={addHabit}
+              completeQuest={completeQuest} completeHabit={completeHabit} addHabit={addHabit} setHabitOrder={setHabitOrder}
               addQuest={addQuest} addQuestForm={addQuest}
               activeQuests={activeQuests} laterQuests={laterQuests}
               postponeQuest={postponeQuest} skipQuest={skipQuest}
@@ -7348,7 +7445,7 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
   );
 }
 
-function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextState }) {
+function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextState, setHabitOrder }) {
   const [showAdd, setShowAdd] = useState(false);
   const [title, setTitle] = useState('');
   const [stat, setStat] = useState(STATS_DEF[0].key);
@@ -7371,6 +7468,26 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
     }
   }
 
+  const [orderBusy, setOrderBusy] = useState(false);
+  const [orderNote, setOrderNote] = useState(null);
+  async function handleReorder() {
+    if (orderBusy || !setHabitOrder) return;
+    setOrderBusy(true);
+    setOrderNote(null);
+    try {
+      const res = await aiReorderTodayPlan(aiContextState || { habits: habits });
+      setHabitOrder(res.order, res.notes);
+      setOrderNote((res.source === 'ai' ? 'ИИ: ' : '') + (res.notes || 'Порядок обновлён'));
+    } catch (e) {
+      const local = orderHabitsForDay(habits, { today: today }).map(h => h.id);
+      setHabitOrder(local, 'локальный порядок');
+      setOrderNote('Локальный порядок по времени суток');
+    } finally {
+      setOrderBusy(false);
+    }
+  }
+  const orderedHabitsList = orderHabitsForDay(habits, { today: today });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
@@ -7383,6 +7500,13 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
       }}>
         <Sparkles size={14} /> {suggestLoading ? 'Мастер думает...' : 'Предложить привычки (AI)'}
       </button>
+      <button className="lrpg-btn" disabled={orderBusy} onClick={handleReorder} style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCardAlt,
+        color: COLORS.gold, border: `1px solid ${COLORS.gold}55`, borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13,
+      }}>
+        {orderBusy ? 'Расставляю…' : 'Умный порядок на день'}
+      </button>
+      {orderNote && <div style={{ fontSize: 11, color: COLORS.teal }}>{orderNote}</div>}
       {suggestError && (
         <Card><div style={{ fontSize: 11, color: COLORS.textMuted }}>{suggestError}</div></Card>
       )}
@@ -7434,7 +7558,7 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
         </Card>
       )}
       {habits.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Привычек пока нет. Добавь первую — например, ежедневное чтение.</div></Card>}
-      {habits.map(h => {
+      {orderedHabitsList.map(h => {
         const doneToday = h.lastDoneDate === today;
         return (
           <Card key={h.id}>
