@@ -144,7 +144,8 @@ import {
 // 14.32 Карточки стадий с мини-артом (пустошь/поселение/столица), карта чуть богаче.
 // 14.33 Светящиеся стадии, анимации дорог/узлов/окон, пороги 0/20/60.
 // 14.34 Умный порядок привычек (локально+ИИ), сильнее Mentor/Habit Engine.
-const APP_VERSION = '14.34';
+// 14.35 Fix: const для Habit prompts (чёрный экран).
+const APP_VERSION = '14.35';
 
 const COLORS = {
   bg: '#0B0F14',
@@ -1746,7 +1747,7 @@ const MENTOR_SYSTEM_PROMPT = `Тебя зовут ${MENTOR_NAME}, ${MENTOR_TITLE
   + 'Блок apply только если изменение реально нужно. Без markdown вокруг JSON. '
   + 'Не потакай. Если энергия низкая — сначала восстановление, не геройство.\n\n';
 
-HABIT_SUGGEST_SYSTEM_PROMPT = 'Ты — Habit Engine в Life RPG. Предложи 2–4 НОВЫЕ привычки под слабые статы. '
+const HABIT_SUGGEST_SYSTEM_PROMPT = 'Ты — Habit Engine в Life RPG. Предложи 2–4 НОВЫЕ привычки под слабые статы. '
   + 'Учитывай реальность дня: утро/работа/вечер, не предлагай дубликаты. '
   + 'Каждая привычка — конкретное действие на 5–40 минут, не абстракция. '
   + 'Отвечай СТРОГО JSON-массивом. Формат: {"title": string, "stat": physical|discipline|knowledge|focus|finance|career|creator|social|mental, '
