@@ -59,4 +59,5 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 ## What's installed in `.claude/` (from Everything Claude Code, MIT — see `.claude/ECC-LICENSE`)
 Picked selectively for this project.
 - **Skills:** `react-patterns`, `react-performance`, `frontend-patterns`, `vite-patterns`, `frontend-design-direction`, `browser-qa`, `verification-loop`, `context-budget`, `strategic-compact`
-- **Agents:** `planner`, `code-explorer`, `code-reviewer`, `react-reviewer`, `react-build-resolver`, `performance-optimizer`, `code-simplifier`, `refactor-cleaner`, `silent-failure-hunter`
+- **Agents:** `planner`, `architect`, `code-architect`, `code-explorer`, `code-reviewer`, `react-reviewer`, `typescript-reviewer` (also covers JS and `api/`), `security-reviewer`, `silent-failure-hunter`, `react-build-resolver`, `performance-optimizer`, `code-simplifier`, `refactor-cleaner`, `e2e-runner`, `a11y-architect`, `doc-updater`
+- `doc-updater`: in this project the code map lives in `CLAUDE.md` (the "Map of `src/App.jsx`" section), not in `docs/CODEMAPS`.
