@@ -426,32 +426,147 @@ export const ENTER_EXTRA = {
   nori: ['Еууу, все в сборе? Я с телефона, не обращайте внимания.', 'Йо, штаб. Свет тут ужасный для съёмки.'],
   mira: ['Я принесла три версии плана.', 'Все пришли? Я считаю. Раз, два…'],
   vera: ['Сразу говорю: бюджет на печеньки не утверждён.', 'Добрый день. Монеты пересчитаны.'],
-  tio: ['Тише, тише. Здесь хорошая энергия.', 'Я полил фикус. Можно начинать.'],
+  tio: ['Тише, тише. Здесь хорошая энергия.', 'Я полила фикус. Можно начинать.'],
 };
 export const GREETS = {
   kaylen: 'Кайлен кивает', brum: 'Брум хлопает по плечу', kasper: 'Каспер зевает', nori: 'Нори машет рукой',
   mira: 'Мира поправляет очки', vera: 'Вера сухо кивает', tio: 'Тио улыбается',
 };
 
-// ---------- Голоса (озвучка браузером телефона) ----------
-export const VOICE = {
-  kaylen: { pitch: 0.65, rate: 0.9 }, brum: { pitch: 0.55, rate: 1.1 }, kasper: { pitch: 0.9, rate: 0.82 },
-  nori: { pitch: 1.45, rate: 1.15 }, mira: { pitch: 1.3, rate: 1.12 }, vera: { pitch: 1.0, rate: 1.0 }, tio: { pitch: 1.15, rate: 0.85 },
+// ---------- Голоса ----------
+// Режимы: 'ai' — нейросетевые голоса Gemini TTS (/api/tts), 'device' — голос телефона, 'off'.
+// Каждому наставнику — свой голос и манера речи (стиль задаётся словами).
+export const NPC_VOICE = {
+  kaylen: { voice: 'Algenib', male: true, style: 'Speak Russian in a low, gravelly, tired voice of a strict old commander, slowly and with weight, dry and terse' },
+  brum: { voice: 'Fenrir', male: true, style: 'Speak Russian loudly, roughly and energetically like an angry gym coach who is out of patience' },
+  kasper: { voice: 'Umbriel', male: true, style: 'Speak Russian lazily and sleepily with sarcasm, drawling the words like a bored cynic who just woke up' },
+  nori: { voice: 'Laomedeia', male: false, style: 'Speak Russian cheerfully and fast with a playful teasing smile, like a young video blogger' },
+  mira: { voice: 'Leda', male: false, style: 'Speak Russian quickly and a bit anxiously, like a nervous perfectionist who worries about deadlines' },
+  vera: { voice: 'Kore', male: false, style: 'Speak Russian coldly, crisply and precisely, like a strict auditor counting money' },
+  tio: { voice: 'Vindemiatrix', male: false, style: 'Speak Russian softly, quietly and slowly with a gentle sigh, like a calm meditation teacher' },
 };
-export function speakLine(id, text) {
+const DEVICE_TUNE = {
+  kaylen: { pitch: 0.75, rate: 0.92 }, brum: { pitch: 0.7, rate: 1.08 }, kasper: { pitch: 0.85, rate: 0.85 },
+  nori: { pitch: 1.2, rate: 1.12 }, mira: { pitch: 1.1, rate: 1.1 }, vera: { pitch: 1.0, rate: 1.0 }, tio: { pitch: 1.05, rate: 0.88 },
+};
+const MALE_HINT = /(dmitr|pavel|yuri|maxim|ivan|alex|artem|boris|nikolai|male|муж|дмитр|павел|юр)/i;
+const FEMALE_HINT = /(milena|katya|svetlana|irina|dari|alena|elena|anna|female|жен|милен|ален|ирин|светл)/i;
+
+const VOICE_STATE = { gen: 0, chain: Promise.resolve(), ctx: null, current: null, aiBroken: false, cache: new Map() };
+
+function audioCtx() {
+  if (VOICE_STATE.ctx) return VOICE_STATE.ctx;
+  const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
+  if (!AC) return null;
+  VOICE_STATE.ctx = new AC();
+  return VOICE_STATE.ctx;
+}
+/** Разблокировать звук (вызывать по тапу пользователя — требование iOS/Telegram). */
+export function unlockVoices() {
+  const ctx = audioCtx();
   try {
-    if (typeof window === 'undefined' || !window.speechSynthesis || !text) return;
-    const u = new SpeechSynthesisUtterance(String(text).replace(/[«»"*()]/g, ''));
-    const voices = window.speechSynthesis.getVoices() || [];
-    const ru = voices.filter(v => /^ru/i.test(v.lang));
-    if (ru.length) u.voice = ru[Math.abs(String(id).charCodeAt(0)) % ru.length];
-    u.lang = 'ru-RU';
-    const v = VOICE[id] || { pitch: 1, rate: 1 };
-    u.pitch = v.pitch; u.rate = v.rate;
-    window.speechSynthesis.speak(u);
+    if (ctx && ctx.state !== 'running') ctx.resume();
+    if (ctx) { const b = ctx.createBuffer(1, 1, 22050); const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0); }
+    if (window.speechSynthesis) window.speechSynthesis.getVoices();
   } catch (e) {}
 }
-export function stopSpeaking() { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {} }
+
+function deviceSpeak(id, text, gen) {
+  return new Promise(resolve => {
+    try {
+      if (!window.speechSynthesis || gen !== VOICE_STATE.gen) { resolve(); return; }
+      const u = new SpeechSynthesisUtterance(String(text).replace(/[«»"*()]/g, ''));
+      const ru = (window.speechSynthesis.getVoices() || []).filter(v => /^ru/i.test(v.lang));
+      const want = (NPC_VOICE[id] || {}).male;
+      const match = ru.filter(v => (want ? MALE_HINT : FEMALE_HINT).test(v.name));
+      const pickFrom = match.length ? match : ru;
+      if (pickFrom.length) u.voice = pickFrom[Math.abs(String(id).charCodeAt(0) + String(id).length) % pickFrom.length];
+      u.lang = 'ru-RU';
+      const t = DEVICE_TUNE[id] || { pitch: 1, rate: 1 };
+      // Если мужского голоса в телефоне нет — хотя бы опустить тон.
+      u.pitch = want && !match.length ? Math.min(t.pitch, 0.6) : t.pitch;
+      u.rate = t.rate;
+      u.onend = () => resolve(); u.onerror = () => resolve();
+      window.speechSynthesis.speak(u);
+      setTimeout(resolve, 15000);
+    } catch (e) { resolve(); }
+  });
+}
+
+async function fetchAiVoice(id, text) {
+  const key = id + '|' + text;
+  if (VOICE_STATE.cache.has(key)) return VOICE_STATE.cache.get(key);
+  const v = NPC_VOICE[id] || NPC_VOICE.vera;
+  const p = (async () => {
+    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: v.voice, style: v.style }) });
+    if (!r.ok) { const e = new Error('TTS ' + r.status); e.status = r.status; throw e; }
+    const j = await r.json();
+    const bin = atob(j.audio);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  })();
+  VOICE_STATE.cache.set(key, p);
+  if (VOICE_STATE.cache.size > 60) VOICE_STATE.cache.delete(VOICE_STATE.cache.keys().next().value);
+  p.catch(() => VOICE_STATE.cache.delete(key));
+  return p;
+}
+
+async function playBuffer(arrayBuffer, gen) {
+  const ctx = audioCtx();
+  if (!ctx || gen !== VOICE_STATE.gen) return;
+  if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
+  const buf = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  if (gen !== VOICE_STATE.gen) return;
+  await new Promise(resolve => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain(); g.gain.value = 1;
+    src.connect(g); g.connect(ctx.destination);
+    src.onended = () => resolve();
+    VOICE_STATE.current = src;
+    src.start(0);
+    setTimeout(resolve, buf.duration * 1000 + 800);
+  });
+  VOICE_STATE.current = null;
+}
+
+/**
+ * Сказать реплику голосом персонажа. Реплики идут в очередь и не перебивают друг друга;
+ * аудио следующей реплики начинает готовиться сразу. onFallback(reason) — если ИИ-голос недоступен.
+ */
+export function speakLine(id, text, mode = 'ai', onFallback) {
+  if (!text || mode === 'off' || typeof window === 'undefined') return;
+  const gen = VOICE_STATE.gen;
+  const clean = String(text).replace(/\s+/g, ' ').trim().slice(0, 420);
+  const useAi = mode === 'ai' && !VOICE_STATE.aiBroken;
+  const audioP = useAi ? fetchAiVoice(id, clean) : null;
+  if (audioP) audioP.catch(() => {});
+  VOICE_STATE.chain = VOICE_STATE.chain.then(async () => {
+    if (gen !== VOICE_STATE.gen) return;
+    if (audioP) {
+      try { await playBuffer(await audioP, gen); return; }
+      catch (e) {
+        if (e && (e.status === 503 || e.status === 429 || e.status === 502)) {
+          VOICE_STATE.aiBroken = true;
+          if (onFallback) onFallback(e.status === 429 ? 'лимит голосов Gemini на сегодня' : e.status === 503 ? 'на сервере нет ключа Gemini' : 'Gemini TTS не ответил');
+        }
+      }
+    }
+    await deviceSpeak(id, clean, gen);
+  }).catch(() => {});
+}
+
+export function stopSpeaking() {
+  VOICE_STATE.gen += 1;
+  VOICE_STATE.chain = Promise.resolve();
+  try { if (VOICE_STATE.current) VOICE_STATE.current.stop(); } catch (e) {}
+  try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {}
+}
+export function voiceAiBroken() { return VOICE_STATE.aiBroken; }
+export function resetVoiceAi() { VOICE_STATE.aiBroken = false; }
+export const VOICE_MODES = ['off', 'ai', 'device'];
+export const VOICE_MODE_LABEL = { off: 'Голоса выкл.', ai: 'Голоса ИИ', device: 'Голос телефона' };
 
 // ---------- Галерея портретов для зала ----------
 export function PortraitFrame({ id, size = 92, sleep }) {

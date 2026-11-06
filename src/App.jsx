@@ -131,7 +131,7 @@ import {
 } from 'recharts';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
 import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf } from './progressUI.jsx';
-import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
+import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -175,7 +175,11 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       Каспер плетётся, остановки поздороваться), каждый раз в новом порядке; пока игрок молчит — болтают между
 //       собой (сценка от ИИ + локальные сценки по данным), облачка реплик над головами; задачу совету ставит игрок
 //       (подсказки или «Начинайте без меня»); озвучка голосами браузера, у каждого свой тембр и темп.
-const APP_VERSION = '15.5';
+// 15.6  Живые голоса наставников: нейросетевая озвучка Gemini TTS (/api/tts) — у каждого свой голос и манера
+//       (Кайлен хриплый, Брум напористый, Каспер ленивый, Нори весёлая, Мира тревожная, Вера холодная, Тио мягкая),
+//       очередь без перебиваний с предзагрузкой, воспроизведение через WebAudio; при сбое/лимите — голос телефона
+//       с подбором мужского/женского; режимы «выкл / ИИ / телефон», голоса и в личных чатах.
+const APP_VERSION = '15.6';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -3297,7 +3301,7 @@ const COUNCIL_NPCS = [
     enter: ['Монеты — не зарплата. Я уже смотрела таблицы.', 'Если снова Monthly за 400 монет — я всех порежу.'],
     greet: ['Покажи выплату. Если Easy и монеты — это баг.', 'Колесо крутить можно. Печатать монеты — нет.'] },
   { id: 'tio', name: 'Тио', role: 'Хранитель', emoji: '🌿', late: 0.35, swear: 'light',
-    vibe: 'мягкий пассивно-агрессивный. Помнит сорванные стрики, вздыхает.',
+    vibe: 'мягкая пассивно-агрессивная, говорит о себе в женском роде. Помнит сорванные стрики, вздыхает.',
     domain: 'привычки',
     enter: ['О, совет. Привычку за сегодня уже отметили? …подумала.', 'Я тут. Тихо. Как вчерашняя медитация, которой не было.'],
     greet: ['Привет. Стрик жив?', 'Можно не кричать. Просто скажи, что бросил.'] },
@@ -3756,7 +3760,8 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   const [lines, setLines] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [meetTopic, setMeetTopic] = useState('');
-  const [voiceOn, setVoiceOn] = useState(() => { try { return localStorage.getItem('liferpg_council_voice') === '1'; } catch (e) { return false; } });
+  const [voiceMode, setVoiceMode] = useState(() => { try { const v = localStorage.getItem('liferpg_council_voice'); return v === '1' ? 'ai' : VOICE_MODES.includes(v) ? v : 'off'; } catch (e) { return 'off'; } });
+  const [voiceNote, setVoiceNote] = useState(null);
   const walkers = useWalkers();
   const scrollRef = useRef(null);
   const alive = useRef(true);
@@ -3764,8 +3769,8 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   const banterPool = useRef([]);
   const aiBanterUsed = useRef(false);
   const lastActivity = useRef(Date.now());
-  const voiceRef = useRef(voiceOn);
-  voiceRef.current = voiceOn;
+  const voiceRef = useRef(voiceMode);
+  voiceRef.current = voiceMode;
   const npcId = view.startsWith('npc:') ? view.slice(4) : null;
   const npc = COUNCIL_NPCS.find(n => n.id === npcId);
   const dm = npc ? (council.chats[npc.id] || []) : [];
@@ -3785,7 +3790,26 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
     setBubbles(b => ({ ...b, [id]: text }));
     setTimeout(() => { if (alive.current) setBubbles(b => { if (b[id] !== text) return b; const n = { ...b }; delete n[id]; return n; }); }, ms || Math.min(5200, 1500 + String(text).length * 40));
   };
-  const voice = (id, text) => { if (voiceRef.current) speakLine(id, text); };
+  const voice = (id, text) => {
+    if (voiceRef.current === 'off') return;
+    speakLine(id, text, voiceRef.current, (why) => setVoiceNote(`Голоса ИИ недоступны (${why}) — говорю голосом телефона.`));
+  };
+  const cycleVoice = () => {
+    unlockVoices();
+    const next = VOICE_MODES[(VOICE_MODES.indexOf(voiceMode) + 1) % VOICE_MODES.length];
+    setVoiceMode(next); setVoiceNote(null);
+    try { localStorage.setItem('liferpg_council_voice', next); } catch (e) {}
+    stopSpeaking();
+    if (next === 'ai') resetVoiceAi();
+    if (next !== 'off') speakLine(npc ? npc.id : 'kaylen', next === 'ai' ? 'Голоса включены. Слушаю тебя.' : 'Говорю голосом телефона.', next, (why) => setVoiceNote(`Голоса ИИ недоступны (${why}) — говорю голосом телефона.`));
+    gameFeedback('BUTTON_PRESS');
+  };
+  const voiceBtn = (
+    <button className="lrpg-btn" aria-label={VOICE_MODE_LABEL[voiceMode]} title={VOICE_MODE_LABEL[voiceMode]} onClick={cycleVoice} style={{ height: 38, padding: '0 10px', borderRadius: 10, background: voiceMode === 'off' ? COLORS.bgCard : COLORS.text, color: voiceMode === 'off' ? COLORS.text : COLORS.bg, border: `1px solid ${voiceMode === 'off' ? COLORS.border : COLORS.text}`, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700 }}>
+      {voiceMode === 'off' ? <VolumeX size={16} /> : <Volume2 size={16} />}
+      <span>{voiceMode === 'ai' ? 'ИИ' : voiceMode === 'device' ? 'тел.' : ''}</span>
+    </button>
+  );
 
   async function say(id, payload, mode, transcript) {
     setTyping(id);
@@ -3969,8 +3993,11 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
     const text = (textArg || draft).trim();
     if (!text || !npc || busy) return;
     setDraft(''); setBusy(true); setErr(null);
-    try { await talkToNpc(npc.id, text); }
-    catch (e) { setErr(e.message || String(e)); }
+    if (voiceMode !== 'off') unlockVoices();
+    try {
+      const res = await talkToNpc(npc.id, text);
+      if (res && res.text) voice(npc.id, res.text);
+    } catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
   }
 
@@ -3995,9 +4022,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
               <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold }}>{phase === 'gather' ? 'Собираются…' : phase === 'waiting' ? 'Ждут тебя' : phase === 'meeting' ? 'Идёт совет' : 'Совет наставников'}</div>
               <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 170 }}>{meetTopic || `${seatedIds.length}/${COUNCIL_NPCS.length} за столом`}</div>
             </div>
-            <button className="lrpg-btn" aria-label={voiceOn ? 'Выключить голоса' : 'Включить голоса'} onClick={() => { const v = !voiceOn; setVoiceOn(v); try { localStorage.setItem('liferpg_council_voice', v ? '1' : '0'); } catch (e) {} if (!v) stopSpeaking(); else speakLine('kaylen', 'Голоса включены.'); }} style={{ width: 38, height: 38, borderRadius: 10, background: voiceOn ? COLORS.text : COLORS.bgCard, color: voiceOn ? COLORS.bg : COLORS.text, border: `1px solid ${voiceOn ? COLORS.text : COLORS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {voiceOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
-            </button>
+            {voiceBtn}
           </div>
         </div>
         <div className="lrpg-paper" style={{ overflow: 'hidden', flexShrink: 0 }}>
@@ -4064,6 +4089,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
           )}
         </div>
         {err && <div style={{ fontSize: 12, color: COLORS.crimson }}>{err}</div>}
+        {voiceNote && <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{voiceNote}</div>}
         {(phase === 'waiting' || phase === 'gather') && (
           <div className="lrpg-noscroll" style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 0 }}>
             {TOPIC_CHIPS.map(c => (
@@ -4088,7 +4114,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100dvh - 150px)', minHeight: 460 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           {backBtn}
-          <BrainBadge provider={NPC_BRAIN[npc.id]} />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BrainBadge provider={NPC_BRAIN[npc.id]} />{voiceBtn}</span>
         </div>
         <div className="lrpg-paper" style={{ display: 'flex', gap: 12, alignItems: 'center', padding: 12, flexShrink: 0 }}>
           <NpcPortrait id={npc.id} size={64} talking={busy} sleep={pres.sleep && !busy} />
@@ -4144,6 +4170,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
           )}
         </div>
         {err && <div style={{ fontSize: 12, color: COLORS.crimson }}>{err}</div>}
+        {voiceNote && <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{voiceNote}</div>}
         <div className="lrpg-noscroll" style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 0 }}>
           {(MENTOR_CHIPS[npc.id] || []).map(c => (
             <button key={c} className="lrpg-btn" disabled={busy} onClick={() => sendDm(c)} style={{ flexShrink: 0, background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: '6px 11px', fontSize: 12, fontWeight: 600, color: COLORS.text }}>{c}</button>
