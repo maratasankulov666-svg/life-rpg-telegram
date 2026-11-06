@@ -1,6 +1,6 @@
 // councilUI.jsx — «Штаб Кайлена»: пиксельные портреты наставников, сцена круглого стола, режим дня и
 // «мозги» (какой ИИ-провайдер думает за персонажа). Только отображение и чистые функции — логика в App.jsx.
-import React from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { PAPER } from './actionsUI.jsx';
 
 // ---------- Кто чем думает: предпочтительный ИИ-провайдер персонажа ----------
@@ -225,5 +225,243 @@ export function AffinityHearts({ value = 40, size = 9 }) {
         </svg>
       ))}
     </span>
+  );
+}
+
+
+// ======================= ЖИВОЙ СОВЕТ: ходьба, болтовня, голоса =======================
+
+// Полный рост (16×26): верх — тот же портрет, ниже туловище и ноги. frame 0/1 — шаг.
+export function NpcBody({ id, x, y, frame = 0, talking = false, sleep = false, scale = 1 }) {
+  const c = LOOK[id] || LOOK.kaylen;
+  const legL = frame ? 1 : 0;
+  const legR = frame ? 0 : 1;
+  const w = 16 * scale, h = 26 * scale;
+  return (
+    <svg x={x - w / 2} y={y - h} width={w} height={h} viewBox="0 0 16 26" overflow="visible">
+      <rect x="3" y="25" width="10" height="1" fill="#000" opacity=".18" />
+      {R(3, 15, 10, 6, c.cloth)}
+      {R(2, 15, 1, 5, c.cloth)}{R(13, 15, 1, 5, c.cloth)}
+      {R(2, 20 - legR, 1, 1, c.skin)}{R(13, 20 - legL, 1, 1, c.skin)}
+      {R(4, 21, 3, 4 - legL, '#2b2f3e')}{R(9, 21, 3, 4 - legR, '#2b2f3e')}
+      {R(4, 25 - legL, 3, 1, '#3e3026')}{R(9, 25 - legR, 3, 1, '#3e3026')}
+      <svg x="0" y="0" width="16" height="16" viewBox="0 0 16 16">
+        <NpcPortrait id={id} size={16} talking={talking} sleep={sleep} bg="transparent" />
+      </svg>
+    </svg>
+  );
+}
+
+// Маршруты: дверь слева → коридор за столом → место.
+const DOOR_PT = { x: 12, y: 74 };
+const LANE_Y = 57;
+export function pathToSeat(id) {
+  const s = SEATS[id];
+  if (!s) return [DOOR_PT];
+  if (id === 'vera') return [{ ...DOOR_PT }, { x: 20, y: 70 }, { x: s.x, y: s.y + 10 }];
+  if (id === 'tio') return [{ ...DOOR_PT }, { x: 26, y: LANE_Y }, { x: s.x, y: LANE_Y }, { x: s.x, y: s.y + 10 }];
+  return [{ ...DOOR_PT }, { x: 26, y: LANE_Y }, { x: s.x, y: LANE_Y }, { x: s.x, y: s.y + 10 }];
+}
+
+/**
+ * Ходоки: плавное перемещение по точкам с шагающими ногами.
+ * walk(id, path, speed, { onArrive, stops: [{ i, ms, onStop }] })
+ */
+export function useWalkers() {
+  const [actors, setActors] = useState({});
+  const inner = useRef({});
+  const raf = useRef(0);
+  const last = useRef(0);
+  const lastCount = useRef(0);
+  const tick = useCallback((t) => {
+    const dt = last.current ? Math.min(0.05, (t - last.current) / 1000) : 0;
+    last.current = t;
+    let changed = false;
+    const out = {};
+    Object.entries(inner.current).forEach(([id, a]) => {
+      if (a.mode === 'walk') {
+        if (a.pauseUntil && t < a.pauseUntil) { out[id] = { x: a.x, y: a.y, frame: 0, mode: 'walk', paused: true }; return; }
+        a.pauseUntil = 0;
+        const target = a.path[a.i];
+        const dx = target.x - a.x, dy = target.y - a.y;
+        const d = Math.hypot(dx, dy);
+        const step = a.speed * dt;
+        if (d <= step || d < 0.01) {
+          a.x = target.x; a.y = target.y;
+          const stop = (a.stops || []).find(s => s.i === a.i && !s.done);
+          if (stop) { stop.done = true; a.pauseUntil = t + stop.ms; if (stop.onStop) stop.onStop(); }
+          a.i += 1;
+          if (a.i >= a.path.length) { a.mode = 'seat'; if (a.onArrive) a.onArrive(); }
+        } else {
+          a.x += (dx / d) * step; a.y += (dy / d) * step;
+          a.dist = (a.dist || 0) + step;
+        }
+        changed = true;
+      }
+      out[id] = { x: a.x, y: a.y, frame: Math.floor((a.dist || 0) / 2.2) % 2, mode: a.mode, paused: !!a.pauseUntil };
+    });
+    const cnt = Object.keys(out).length;
+    if (changed || cnt !== lastCount.current) { lastCount.current = cnt; setActors(out); }
+    raf.current = requestAnimationFrame(tick);
+  }, []); // eslint-disable-line
+  useEffect(() => {
+    raf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf.current);
+  }, [tick]);
+  const walk = useCallback((id, path, speed, opts = {}) => {
+    const start = path[0];
+    inner.current[id] = { x: start.x, y: start.y, path, i: 1, speed, mode: 'walk', onArrive: opts.onArrive, stops: opts.stops || [], dist: 0 };
+    if (path.length < 2) { inner.current[id].mode = 'seat'; if (opts.onArrive) opts.onArrive(); }
+  }, []);
+  const seatNow = useCallback((id) => {
+    const s = SEATS[id];
+    inner.current[id] = { x: s.x, y: s.y + 10, path: [], i: 0, speed: 0, mode: 'seat' };
+  }, []);
+  const clear = useCallback(() => { inner.current = {}; setActors({}); }, []);
+  return { actors, walk, seatNow, clear };
+}
+
+/** Сцена совета: стол, стулья, наставники (идут или сидят), облачка реплик над головами. */
+export function CouncilStage({ actors = {}, bubbles = {}, speaking = null, typing = null }) {
+  useCouncilCss();
+  const ids = Object.keys(SEATS);
+  const seated = ids.filter(id => actors[id] && actors[id].mode === 'seat');
+  const walking = ids.filter(id => actors[id] && actors[id].mode === 'walk').sort((a, b) => actors[a].y - actors[b].y);
+  const Bubble = ({ id, x, y }) => {
+    const text = bubbles[id];
+    const think = typing === id;
+    if (!text && !think) return null;
+    const short = text ? (text.length > 34 ? text.slice(0, 33) + '…' : text) : '';
+    const w = think ? 14 : Math.min(84, 8 + short.length * 2.25);
+    const bx = Math.max(2, Math.min(178 - w, x - w / 2));
+    return (
+      <g className="cn-bubble" pointerEvents="none">
+        <rect x={bx} y={y - 9} width={w} height="8" rx="1.5" fill="#fbf9f4" stroke="#d6cdb9" strokeWidth=".4" shapeRendering="auto" />
+        <rect x={x - 1} y={y - 1.2} width="2" height="1.6" fill="#fbf9f4" />
+        {think ? (
+          <g fill={PAPER.terra}>{[0, 1, 2].map(i => <rect key={i} className="cn-dot" x={bx + 3 + i * 3} y={y - 5.8} width="1.6" height="1.6" style={{ animationDelay: `${i * 0.15}s` }} />)}</g>
+        ) : (
+          <text x={bx + w / 2} y={y - 3.4} textAnchor="middle" fontSize="3.6" fontFamily="Manrope, sans-serif" fontWeight="700" fill="#1e2230">{short}</text>
+        )}
+      </g>
+    );
+  };
+  return (
+    <svg viewBox="0 0 180 110" shapeRendering="crispEdges" role="img" aria-label="Совет за круглым столом" style={{ display: 'block', width: '100%', height: 'auto' }}>
+      <rect width="180" height="78" fill="#e6dcc6" />
+      <rect y="0" width="180" height="6" fill="#d8cdb8" />
+      <rect y="74" width="180" height="36" fill="#9a7452" />
+      <g fill="#86623f">{[0, 1, 2, 3].map(i => <rect key={i} x="0" y={80 + i * 8} width="180" height="1" />)}</g>
+      <rect y="73" width="180" height="2" fill="#7c5a3e" />
+      {R(150, 12, 22, 26, '#6e5844')}{R(152, 14, 18, 22, '#8fb3d0')}{R(152, 28, 18, 8, '#b8c4cc')}{R(160, 16, 1, 16, '#e6e2d8')}{R(158, 21, 5, 2, '#e6e2d8')}{R(160, 15, 1, 1, '#c0503a')}{R(160, 14, 1, 22, '#6e5844')}
+      {R(2, 34, 20, 40, '#5a3826')}{R(4, 36, 16, 38, '#3a2618')}{R(4, 36, 16, 38, '#2a1c14')}
+      {R(19, 54, 2, 2, '#c48a2a')}
+      {R(62, 8, 56, 18, '#a4412a')}{R(64, 10, 52, 14, '#b5654a')}
+      <text x="90" y="21" textAnchor="middle" fontFamily="'Fraunces','Lora',Georgia,serif" fontWeight="700" fontSize="9" fill="#f2eee5">ШТАБ</text>
+      {R(124, 40, 8, 10, '#b5654a')}{R(126, 34, 4, 6, '#5a7a4a')}{R(124, 36, 2, 3, '#5a7a4a')}{R(130, 35, 2, 3, '#5a7a4a')}
+      <g className="cn-tw" fill="#c48a2a">{R(40, 16, 1, 1)}{R(132, 22, 1, 1)}</g>
+
+      {ids.map(id => <g key={'c' + id}>{R(SEATS[id].x - 6, SEATS[id].y + 2, 12, 9, '#6e4630')}{R(SEATS[id].x - 6, SEATS[id].y + 2, 12, 1, '#8a5a3a')}</g>)}
+
+      {seated.map(id => (
+        <g key={id} className={speaking === id ? 'cn-bob' : undefined}>
+          <svg x={SEATS[id].x - 8} y={SEATS[id].y - 10} width="16" height="16" viewBox="0 0 16 16">
+            <NpcPortrait id={id} size={16} talking={speaking === id} bg="transparent" />
+          </svg>
+        </g>
+      ))}
+      {walking.filter(id => actors[id].y < 62).map(id => <NpcBody key={id} id={id} x={actors[id].x} y={actors[id].y} frame={actors[id].paused ? 0 : actors[id].frame} talking={speaking === id || !!bubbles[id]} />)}
+
+      <g>
+        {R(28, 60, 124, 16, '#6e4630')}{R(20, 64, 140, 10, '#6e4630')}
+        {R(30, 58, 120, 14, '#a06a44')}{R(22, 62, 136, 8, '#a06a44')}
+        {R(30, 58, 120, 1, '#c48a2a')}
+        {R(70, 61, 40, 8, '#efe6d2')}{R(72, 62, 36, 6, '#cfe0c0')}{R(80, 63, 6, 3, '#9fbf7a')}{R(94, 64, 8, 2, '#d8c49a')}{R(88, 62, 1, 1, '#a4412a')}
+        {R(46, 62, 6, 5, '#f2eee5')}{R(130, 61, 5, 6, '#f2eee5')}{R(131, 62, 3, 1, '#6a4a32')}
+        <rect className="cn-steam" x="132" y="57" width="1" height="3" fill="#f2eee5" />
+        {R(56, 64, 8, 2, '#2f3e6b')}{R(116, 63, 6, 3, '#c48a2a')}
+        {R(26, 74, 4, 8, '#5a3826')}{R(150, 74, 4, 8, '#5a3826')}
+      </g>
+      {walking.filter(id => actors[id].y >= 62).map(id => <NpcBody key={id} id={id} x={actors[id].x} y={actors[id].y} frame={actors[id].paused ? 0 : actors[id].frame} talking={speaking === id || !!bubbles[id]} />)}
+
+      {ids.map(id => {
+        const a = actors[id];
+        if (!a) return null;
+        const hx = a.mode === 'seat' ? SEATS[id].x : a.x;
+        const hy = a.mode === 'seat' ? SEATS[id].y - 10 : a.y - 26;
+        return <Bubble key={'b' + id} id={id} x={hx} y={hy} />;
+      })}
+    </svg>
+  );
+}
+
+// ---------- Болтовня без ИИ: короткие сценки между наставниками ----------
+export function localBanter(present, flags = {}) {
+  const has = (...ids) => ids.every(i => present.includes(i));
+  const pool = [];
+  const add = (ids, lines) => { if (has(...ids)) pool.push(lines); };
+  add(['brum', 'kasper'], [['brum', 'Каспер, это опять второй кофе?'], ['kasper', 'Первый. Вчерашний не считается.']]);
+  add(['mira', 'vera'], [['mira', 'Кто видел мой список приоритетов?'], ['vera', 'Лежит в графе «расходы времени». Пустой.']]);
+  add(['nori', 'kaylen'], [['nori', 'Кайлен, можно я сниму совет для шортсов?'], ['kaylen', 'Нет.'], ['nori', 'Записала как «может быть».']]);
+  add(['tio', 'brum'], [['tio', 'Давайте начнём с трёх спокойных вдохов.'], ['brum', 'Давай начнём с трёх подходов.']]);
+  add(['kasper', 'vera'], [['kasper', 'Если совет затянется, я выставлю счёт.'], ['vera', 'У тебя оклад — ноль монет.'], ['kasper', 'Тогда тем более.']]);
+  add(['kaylen', 'kasper'], [['kaylen', 'Герой молчит. Значит, думает.'], ['kasper', 'Или спит. Я бы спал.']]);
+  add(['mira', 'tio'], [['mira', 'У нас семнадцать минут до чего-то важного!'], ['tio', 'До спокойствия, Мира. Только до него.']]);
+  add(['brum', 'nori'], [['brum', 'Кто трогал мою гантелю?'], ['nori', 'В кадре она смотрелась лучше, чем у тебя в руке.']]);
+  add(['vera', 'kasper'], [['vera', 'Напоминаю: колесо удачи — не пенсионный фонд.'], ['kasper', 'А звучит как стратегия.']]);
+  add(['nori', 'mira'], [['nori', 'Мира, сделай лицо попроще, у нас тут не аудит.'], ['mira', 'У нас ВСЕГДА аудит.']]);
+  add(['kaylen', 'tio'], [['tio', 'Кайлен, ты сегодня спал?'], ['kaylen', 'Директора не спят. Директора ждут отчётов.']]);
+  if (flags.noMove) add(['brum', 'tio'], [['brum', 'Герой сегодня ещё не вспотел. Я считаю минуты.'], ['tio', 'Не дави. Он придёт к этому сам.'], ['brum', 'Я подтолкну.']]);
+  if (flags.debts) add(['kasper', 'mira'], [['kasper', 'Долг сам себя не закроет. Я проверял — ждал.'], ['mira', 'Ставлю дедлайн на твоё «ждал».']]);
+  if (flags.routeDone) add(['kaylen', 'brum'], [['kaylen', 'Маршрут дня пройден. Неплохо.'], ['brum', 'Неплохо — это когда завтра повторит.']]);
+  if (flags.bigStreak) add(['tio', 'vera'], [['tio', 'Видели огонь серии у героя? Красиво горит.'], ['vera', 'Красиво. Главное, чтобы монет за это не просил.']]);
+  return pool;
+}
+
+// Реплики при входе: каждый раз чуть по-разному.
+export const ENTER_EXTRA = {
+  kaylen: ['Садитесь. Начнём, когда герой скажет.', 'Проверка явки. Опоздавшие — отметьтесь.'],
+  brum: ['Прямо с пробежки. Не нюхайте.', 'Я тут. Кто опять сидит без движения?'],
+  kasper: ['Я не опоздал. Это вы рано.', '…я просто зашёл за кофе. Ну ладно, сяду.'],
+  nori: ['Еууу, все в сборе? Я с телефона, не обращайте внимания.', 'Йо, штаб. Свет тут ужасный для съёмки.'],
+  mira: ['Я принесла три версии плана.', 'Все пришли? Я считаю. Раз, два…'],
+  vera: ['Сразу говорю: бюджет на печеньки не утверждён.', 'Добрый день. Монеты пересчитаны.'],
+  tio: ['Тише, тише. Здесь хорошая энергия.', 'Я полил фикус. Можно начинать.'],
+};
+export const GREETS = {
+  kaylen: 'Кайлен кивает', brum: 'Брум хлопает по плечу', kasper: 'Каспер зевает', nori: 'Нори машет рукой',
+  mira: 'Мира поправляет очки', vera: 'Вера сухо кивает', tio: 'Тио улыбается',
+};
+
+// ---------- Голоса (озвучка браузером телефона) ----------
+export const VOICE = {
+  kaylen: { pitch: 0.65, rate: 0.9 }, brum: { pitch: 0.55, rate: 1.1 }, kasper: { pitch: 0.9, rate: 0.82 },
+  nori: { pitch: 1.45, rate: 1.15 }, mira: { pitch: 1.3, rate: 1.12 }, vera: { pitch: 1.0, rate: 1.0 }, tio: { pitch: 1.15, rate: 0.85 },
+};
+export function speakLine(id, text) {
+  try {
+    if (typeof window === 'undefined' || !window.speechSynthesis || !text) return;
+    const u = new SpeechSynthesisUtterance(String(text).replace(/[«»"*()]/g, ''));
+    const voices = window.speechSynthesis.getVoices() || [];
+    const ru = voices.filter(v => /^ru/i.test(v.lang));
+    if (ru.length) u.voice = ru[Math.abs(String(id).charCodeAt(0)) % ru.length];
+    u.lang = 'ru-RU';
+    const v = VOICE[id] || { pitch: 1, rate: 1 };
+    u.pitch = v.pitch; u.rate = v.rate;
+    window.speechSynthesis.speak(u);
+  } catch (e) {}
+}
+export function stopSpeaking() { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {} }
+
+// ---------- Галерея портретов для зала ----------
+export function PortraitFrame({ id, size = 92, sleep }) {
+  return (
+    <div style={{ position: 'relative', padding: 6, background: 'linear-gradient(145deg, #a06a44, #6e4630)', borderRadius: 6, boxShadow: '0 6px 14px rgba(30,34,48,.22), inset 0 0 0 2px #c48a2a, inset 0 0 0 4px #5a3826' }}>
+      <div style={{ padding: 3, background: '#efe6d2', borderRadius: 2, boxShadow: 'inset 0 0 0 1px #d6cdb9' }}>
+        <NpcPortrait id={id} size={size} sleep={sleep} bg="#e8dcc4" />
+      </div>
+      <span style={{ position: 'absolute', left: '50%', top: -9, width: 2, height: 9, background: '#3e3026', transform: 'translateX(-50%)' }} />
+      <span style={{ position: 'absolute', left: '50%', top: -12, width: 6, height: 6, borderRadius: 3, background: '#c48a2a', transform: 'translateX(-50%)' }} />
+    </div>
   );
 }
