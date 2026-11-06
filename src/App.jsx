@@ -129,7 +129,7 @@ import {
   LineChart, Line, AreaChart, Area, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
-import { DayRoad, ActionTicket, EnergyPips, StreakFlame, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
+import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -155,7 +155,11 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       с печатью «ГОТОВО», квесты-билеты и бой с боссом, привычки с огоньком серии; пиксельное конфетти
 //       и всплывашки от точки нажатия; честная награда привычки (+1 к характеристике вместо фальшивых +10 XP).
 //       «Тренировки» — заготовка под интеграцию «Проект 78».
-const APP_VERSION = '15.1';
+// 15.2  Маршрут дня фиксируется на сутки (state.dayRoute) — «до сундука» больше не убегает; сундук дня с церемонией
+//       открытия (3 удара, вспышка, лучи, монеты) и наградой: монеты, опыт и подарок (предмет в комнату/кристалл/монеты).
+//       Огонь серии в 8 уровнях (искра → чёрное пламя на 100+ дней), праздник при рекордах 3/7/20/30/50/100,
+//       плашка лучшей серии на главной, полноэкранный «Новый уровень», новые звуки сундука и серии.
+const APP_VERSION = '15.2';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -315,6 +319,10 @@ const SoundManager = {
     };
     const table = {
       nav: () => { beep(620, 0.035, 'triangle', 0.32); beep(930, 0.045, 'sine', 0.22, 0.03); },
+      chest_tap: () => { beep(130, 0.12, 'triangle', 0.9); noise(0.1, 0.5, 0, 1200, 300); beep(260, 0.05, 'square', 0.18, 0.02); },
+      chest_open: () => { noise(0.5, 0.45, 0, 300, 3800); [392, 523, 659, 784, 1046].forEach((f, i) => beep(f, 0.22, 'sine', 0.5, 0.08 + i * 0.09)); beep(1568, 0.5, 'sine', 0.25, 0.55); },
+      reward_pop: () => { beep(740, 0.06, 'triangle', 0.45); beep(1110, 0.1, 'sine', 0.35, 0.05); },
+      streak_up: () => { noise(0.35, 0.4, 0, 200, 1600); beep(440, 0.12, 'sawtooth', 0.18, 0.05); beep(660, 0.16, 'sine', 0.4, 0.15); beep(990, 0.25, 'sine', 0.35, 0.28); },
       place: () => { beep(150, 0.1, 'sine', 0.9); beep(95, 0.14, 'triangle', 0.5, 0.02); noise(0.12, 0.4, 0, 900, 300); beep(880, 0.06, 'sine', 0.25, 0.12); },
       sheet_open: () => noise(0.22, 0.32, 0, 380, 2400),
       sheet_close: () => noise(0.18, 0.26, 0, 2200, 380),
@@ -355,6 +363,10 @@ const EVENT_MAP = {
   LOCKED: { sound: 'locked', haptic: 'light', vfx: 'error' },
   PURCHASE: { sound: 'purchase', haptic: 'medium', vfx: 'coins' },
   NAV: { sound: 'nav', haptic: 'light' },
+  CHEST_TAP: { sound: 'chest_tap', haptic: 'medium' },
+  CHEST_OPEN: { sound: 'chest_open', haptic: 'success', vfx: 'level' },
+  REWARD_POP: { sound: 'reward_pop', haptic: 'light' },
+  STREAK_MILESTONE: { sound: 'streak_up', haptic: 'success', vfx: 'level' },
   ITEM_PLACE: { sound: 'place', haptic: 'medium' },
   SHEET_OPEN: { sound: 'sheet_open', haptic: 'light' },
   SHEET_CLOSE: { sound: 'sheet_close', haptic: 'light' },
@@ -401,6 +413,7 @@ function FeedbackLayer() {
       else if (ev.type === 'COIN_GAIN' && pl.coins) label = `+${pl.coins} монет`;
       else if (ev.type === 'LEVEL_UP') label = `Уровень ${pl.level || ''}`;
       else if (ev.type === 'ACHIEVEMENT_UNLOCK') label = pl.title || 'Достижение';
+      else if (ev.type === 'STREAK_MILESTONE') label = `Серия ${pl.n} дн. · ${flameTier(pl.n).name}`;
       const recent = Date.now() - LAST_TAP.at < 2500;
       const ox = recent ? LAST_TAP.x : window.innerWidth / 2;
       const oy = recent ? LAST_TAP.y : window.innerHeight * 0.42;
@@ -2535,7 +2548,7 @@ function ActionsHub({
   activeQuests, laterQuests, postponeQuest, skipQuest, skipTarget, setSkipTarget,
   movePriority, reactivateQuest, deleteQuest, showAddQuest, setShowAddQuest, addQuestForm,
   dismissedEvolutions, dismissEvolution, hitBossQuest,
-  habits, deleteHabit,
+  habits, deleteHabit, claimDayChest,
   sub, setSub,
 }) {
   const today = todayStr();
@@ -2581,16 +2594,26 @@ function ActionsHub({
     ],
     action: () => completeQuest(q),
   });
-  const pendingItems = [
-    ...pendingHabits.slice(0, 8).map(h => habitItem(h, false)),
-    ...activeQuests.filter(q => !q.isBoss && (q.type === 'Daily' || q.type === 'Routine' || q.type === 'Bonus')).slice(0, 4).map(q => questItem(q, false)),
-  ];
-  const doneItems = [
-    ...doneHabits.map(h => habitItem(h, true)),
-    ...completedQuestsToday.map(q => questItem(q, true)),
-  ];
-  const routeTotal = pendingItems.length + doneItems.length;
+  // Маршрут дня зафиксирован в state.dayRoute (см. buildDayRoute) — шаги не «подтягиваются» после выполнения.
+  const route = state.dayRoute && state.dayRoute.date === today ? state.dayRoute : null;
+  const routeKeys = route ? route.ids : [];
+  const habitOrder = new Map(orderedHabits.map((h, i) => [h.id, i]));
+  const routeItems = routeKeys.map(key => {
+    const id = key.slice(2);
+    if (key[0] === 'h') { const h = state.habits.find(x => x.id === id); return h ? habitItem(h, h.lastDoneDate === today) : null; }
+    const q = state.quests.find(x => x.id === id);
+    return q ? questItem(q, q.status === 'completed') : null;
+  }).filter(Boolean);
+  const pendingItems = routeItems.filter(i => !i.done).sort((x, y) => {
+    if (x.kind !== y.kind) return x.kind === 'habit' ? -1 : 1;
+    return x.kind === 'habit' ? (habitOrder.get(x.id) ?? 0) - (habitOrder.get(y.id) ?? 0) : 0;
+  });
+  const doneItems = routeItems.filter(i => i.done);
+  const routeTotal = routeItems.length;
   const routeDone = doneItems.length;
+  const chestReady = routeTotal > 0 && routeDone >= routeTotal && route && !route.chestClaimed;
+  const chestClaimed = !!(route && route.chestClaimed);
+  const [chest, setChest] = useState(null);
   const boss = activeQuests.find(q => q.isBoss);
   const dayNumber = state.firstOpenedAt ? Math.max(1, Math.floor((Date.now() - state.firstOpenedAt) / 86400000) + 1) : 1;
 
@@ -2631,12 +2654,19 @@ function ActionsHub({
       {sub === 'all' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
           <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden' }}>
-            <DayRoad total={routeTotal} done={routeDone} />
+            <DayRoad total={routeTotal} done={routeDone} claimed={chestClaimed} />
             <div style={{ padding: '10px 14px 12px', borderTop: `1px solid ${COLORS.border}` }}>
               {routeTotal === 0 ? (
                 <div style={{ fontSize: 13.5, color: '#4a4e5a' }}>Маршрут на сегодня пуст. Добавь привычку или квест, и на дороге появятся шаги.</div>
-              ) : routeDone >= routeTotal ? (
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: COLORS.green }}>Все шаги пройдены. Сундук дня открыт, отличный день!</div>
+              ) : chestReady ? (
+                <button className="lrpg-btn ag-pulse" onClick={() => { gameFeedback('SHEET_OPEN'); setChest(rollDayChest(state)); }} style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: COLORS.gold, color: '#fbf9f4',
+                  borderRadius: 12, padding: '12px 0', fontSize: 15, fontWeight: 700, boxShadow: '0 3px 0 #7a2e1c',
+                }}>
+                  <PixelIcon kind="finance" color="#f6d08a" size={18} bg={COLORS.gold} /> Открыть сундук дня
+                </button>
+              ) : chestClaimed ? (
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: COLORS.green }}>Сундук дня открыт. Возвращайся завтра за новым маршрутом!</div>
               ) : (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
@@ -2713,6 +2743,11 @@ function ActionsHub({
             </div>
           )}
         </div>
+      )}
+
+      {chest && (
+        <ChestCeremony rewards={chest} fx={(e) => gameFeedback(e)} renderItem={(it) => <RoomItemThumb it={it} />}
+          onClaim={() => { claimDayChest(chest); setChest(null); }} />
       )}
 
       {sub === 'training' && (
@@ -3815,6 +3850,40 @@ export default function LifeRPG() {
   const [showAddReward, setShowAddReward] = useState(false);
   const [skipTarget, setSkipTarget] = useState(null);
   const [levelUpFlash, setLevelUpFlash] = useState(null);
+  useEffect(() => {
+    setState(prev => {
+      if (!prev || !prev.habits) return prev;
+      const r = buildDayRoute(prev);
+      return r === prev.dayRoute ? prev : { ...prev, dayRoute: r };
+    });
+  }, [state && state.habits, state && state.quests]);
+  function claimDayChest(rew) {
+    setState(prev => {
+      if (!prev.dayRoute || prev.dayRoute.chestClaimed) return prev;
+      const { character, bonusCoins, leveledUp } = applyXP(prev.character, rew.xp);
+      const extraCoins = rew.gift.kind === 'coins' ? rew.gift.amount : 0;
+      let next = { ...prev, character, dayRoute: { ...prev.dayRoute, chestClaimed: true } };
+      next = { ...next, ...applyCoinLedger(next, 'earn', rew.coins + extraCoins + (bonusCoins || 0), 'day_chest', 'Сундук дня') };
+      if (rew.gift.kind === 'crystal') next = { ...next, ...applyCrystalLedger(next, 'earn', rew.gift.amount, 'day_chest', 'Сундук дня') };
+      if (rew.gift.kind === 'room') {
+        const room = normalizeRoom(next.room);
+        if (!room.owned.includes(rew.gift.item.id)) {
+          const slotFree = !room.equipped[rew.gift.item.slot];
+          next.room = { owned: [...room.owned, rew.gift.item.id], equipped: slotFree ? { ...room.equipped, [rew.gift.item.slot]: rew.gift.item.id } : room.equipped, placePulse: slotFree ? { slot: rew.gift.item.slot, id: rew.gift.item.id, ts: Date.now() } : room.placePulse };
+        }
+      }
+      const giftText = rew.gift.kind === 'room' ? `, предмет «${rew.gift.item.name}»` : rew.gift.kind === 'crystal' ? `, +${rew.gift.amount} кристалл` : `, +${rew.gift.amount} бонусных монет`;
+      next.chronicle = pushChronicle(prev.chronicle, 'REWARD', `Сундук дня открыт: +${rew.coins} монет, +${rew.xp} XP${giftText}`);
+      if (leveledUp) {
+        next.chronicle = pushChronicle(next.chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${character.level} уровня.`);
+        setLevelUpFlash(character.level);
+        setTimeout(() => gameFeedback('LEVEL_UP', { level: character.level }), 200);
+        setTimeout(() => setLevelUpFlash(null), 3400);
+      }
+      return next;
+    });
+    gameFeedback('COIN_GAIN', { coins: rew.coins });
+  }
   const [editingName, setEditingName] = useState(false);
   const [storageStatus, setStorageStatus] = useState('checking');
   const [storageError, setStorageError] = useState(null);
@@ -4551,6 +4620,10 @@ export default function LifeRPG() {
       return { ...prev, habits, stats, chronicle };
     });
     gameFeedback('QUEST_COMPLETE', { xp: 0, stat: h.stat });
+    const nextStreak = (h.lastDoneDate === todayStr() ? h.streakCurrent : (h.streakCurrent || 0) + 1);
+    if (h.lastDoneDate !== todayStr() && STREAK_MILESTONES.includes(nextStreak)) {
+      setTimeout(() => gameFeedback('STREAK_MILESTONE', { n: nextStreak, title: h.title }), 700);
+    }
   }
 
   function toggleRecoveryMode() {
@@ -5731,20 +5804,29 @@ useEffect(() => {
         .lrpg-icon-bounce { animation: lrpg-icon-bounce .45s cubic-bezier(.2,.9,.3,1.2) both; }
         @keyframes lrpg-hud-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
         .lrpg-hud-in { animation: lrpg-hud-in .5s cubic-bezier(.16,1,.3,1) both; }
+        @keyframes lrpg-lvl-wrap { 0% { opacity: 0; } 8% { opacity: 1; } 82% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes lrpg-lvl-rays { to { transform: rotate(360deg); } }
+        @keyframes lrpg-lvl-pop { 0% { transform: scale(.3) translateY(30px); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+        @keyframes lrpg-lvl-star { 0%,100% { opacity: .15; transform: scale(.5); } 50% { opacity: 1; transform: scale(1.1); } }
         @keyframes lrpg-levelup { 0% { opacity: 0; transform: translate(-50%, -12px) scale(.9); } 15% { opacity: 1; transform: translate(-50%, 0) scale(1.03); } 25% { transform: translate(-50%,0) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -6px); } }
         @media (prefers-reduced-motion: reduce) { .lrpg-root *, .lrpg-root *::before { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
       `}</style>
 
 
       {levelUpFlash && (
-        <div style={{
-          position: 'fixed', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: '50%', zIndex: 120,
-          background: '#fbf9f4', color: COLORS.text, border: `1px solid ${COLORS.border}`,
-          padding: '14px 26px 12px', borderRadius: 16, boxShadow: '0 12px 30px rgba(30,34,48,.18)', textAlign: 'center',
-          animation: 'lrpg-levelup 2.6s ease both', pointerEvents: 'none',
-        }}>
-          <div className="lrpg-mono" style={{ fontSize: 10, color: COLORS.gold }}>Новый уровень</div>
-          <div className="lrpg-display" style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.1 }}>{levelUpFlash}</div>
+        <div aria-live="polite" style={{ position: 'fixed', inset: 0, zIndex: 150, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'lrpg-lvl-wrap 3.2s ease both' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 45%, rgba(58,42,58,.82) 0%, rgba(30,34,48,.9) 60%, rgba(18,20,28,.94) 100%)' }} />
+          <div style={{ position: 'absolute', left: '50%', top: '45%', width: 820, height: 820, marginLeft: -410, marginTop: -410, borderRadius: '50%', animation: 'lrpg-lvl-rays 8s linear infinite',
+            background: 'repeating-conic-gradient(from 0deg, rgba(246,208,138,.28) 0deg 8deg, transparent 8deg 22deg)',
+            WebkitMaskImage: 'radial-gradient(circle, #000 0%, transparent 60%)', maskImage: 'radial-gradient(circle, #000 0%, transparent 60%)' }} />
+          {[[14, 20], [82, 16], [20, 74], [86, 70], [50, 10], [62, 86], [8, 46], [92, 44], [34, 28], [70, 30]].map(([x, y], i) => (
+            <span key={i} style={{ position: 'absolute', left: x + '%', top: y + '%', width: 6, height: 6, background: i % 2 ? '#f6d08a' : '#fbf9f4', animation: `lrpg-lvl-star 1.4s ease-in-out ${-i * 0.23}s infinite` }} />
+          ))}
+          <div style={{ position: 'relative', textAlign: 'center', color: '#f2eee5', animation: 'lrpg-lvl-pop .9s cubic-bezier(.2,1.4,.3,1) both' }}>
+            <div className="lrpg-mono" style={{ fontSize: 12, color: '#f6d08a' }}>Новый уровень</div>
+            <div className="lrpg-display" style={{ fontSize: 120, fontWeight: 700, lineHeight: 1, textShadow: '0 6px 0 rgba(164,65,42,.85), 0 0 40px rgba(246,208,138,.45)' }}>{levelUpFlash}</div>
+            <div style={{ fontSize: 15, color: '#d8cdb8', marginTop: 8 }}>Герой стал сильнее</div>
+          </div>
         </div>
       )}
 
@@ -5787,7 +5869,7 @@ useEffect(() => {
               reactivateQuest={reactivateQuest} deleteQuest={deleteQuest}
               showAddQuest={showAddQuest} setShowAddQuest={setShowAddQuest}
               dismissedEvolutions={state.dismissedEvolutions} dismissEvolution={dismissEvolution}
-              hitBossQuest={hitBossQuest}
+              hitBossQuest={hitBossQuest} claimDayChest={claimDayChest}
               habits={state.habits} deleteHabit={deleteHabit}
               sub={subTab.actions || 'all'} setSub={k => setSubTab(s => ({ ...s, actions: k }))}
             />
@@ -6205,6 +6287,60 @@ function RightStatsPanel({ body, currentWeight, onEdit }) {
       ))}
     </div>
   );
+}
+
+// ---- Маршрут дня: фиксируется один раз в сутки, чтобы «до сундука» не убегало ----
+const ROUTE_QUEST_TYPES = ['Daily', 'Routine', 'Bonus'];
+function dayOfTs(ts) { try { return new Date(ts).toISOString().slice(0, 10); } catch (e) { return ''; } }
+function routeCandidates(st, today) {
+  const habits = (st.habits || []).map(h => 'h:' + h.id);
+  const quests = (st.quests || [])
+    .filter(q => !q.isBoss && ROUTE_QUEST_TYPES.includes(q.type))
+    .filter(q => (q.status === 'active' && (!q.deadline || String(q.deadline).slice(0, 10) >= today)) || (q.status === 'completed' && dayOfTs(q.completedAt) === today))
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .map(q => 'q:' + q.id);
+  return [...habits, ...quests];
+}
+function buildDayRoute(st) {
+  const today = todayStr();
+  const prev = st.dayRoute;
+  const habitIds = new Set((st.habits || []).map(h => h.id));
+  const questMap = new Map((st.quests || []).map(q => [q.id, q]));
+  const alive = (key) => {
+    const [k, id] = [key.slice(0, 1), key.slice(2)];
+    if (k === 'h') return habitIds.has(id);
+    const q = questMap.get(id);
+    return !!q && (q.status === 'active' || q.status === 'completed');
+  };
+  if (!prev || prev.date !== today) {
+    return { date: today, ids: routeCandidates(st, today).slice(0, 14), createdAt: Date.now(), chestClaimed: false };
+  }
+  let ids = prev.ids.filter(alive);
+  // шаги, которые игрок сам добавил после построения маршрута
+  (st.habits || []).forEach(h => { if (h.createdAt > prev.createdAt && !ids.includes('h:' + h.id)) ids.push('h:' + h.id); });
+  (st.quests || []).forEach(q => {
+    if (q.createdAt > prev.createdAt && !q.source && !q.isBoss && ROUTE_QUEST_TYPES.includes(q.type) && q.status === 'active' && !ids.includes('q:' + q.id)) ids.push('q:' + q.id);
+  });
+  ids = ids.slice(0, 16);
+  if (ids.length === prev.ids.length && ids.every((x, i) => x === prev.ids[i])) return prev;
+  return { ...prev, ids };
+}
+function routeItemDone(st, key, today) {
+  const id = key.slice(2);
+  if (key[0] === 'h') { const h = (st.habits || []).find(x => x.id === id); return !!h && h.lastDoneDate === today; }
+  const q = (st.quests || []).find(x => x.id === id);
+  return !!q && q.status === 'completed';
+}
+function rollDayChest(st) {
+  const steps = (st.dayRoute && st.dayRoute.ids.length) || 3;
+  const coins = Math.min(260, 40 + steps * 15);
+  const xp = Math.min(150, 20 + steps * 8);
+  const owned = normalizeRoom(st.room).owned;
+  const pool = ROOM_CATALOG.filter(i => !owned.includes(i.id) && (i.rarity === 'Common' || i.rarity === 'Rare'));
+  const r = Math.random();
+  const gift = pool.length && r < 0.45 ? { kind: 'room', item: pool[Math.floor(Math.random() * pool.length)] }
+    : r < 0.8 ? { kind: 'crystal', amount: 1 } : { kind: 'coins', amount: 120 };
+  return { coins, xp, gift };
 }
 
 function computeDailyGoalsStatus(state) {
@@ -6673,6 +6809,7 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
   const hScale = heightScaleFor(state.body.heightCm);
   const weather = sceneClock().weather;
   const openRoom = () => { gameFeedback('SHEET_OPEN'); setRoomOpen(true); };
+  const topStreak = (state.habits || []).reduce((m, h) => Math.max(m, h.streakCurrent || 0), 0);
   const sceneRef = useRef(null);
   const [box, setBox] = useState({ w: 390, h: 760 });
   useEffect(() => {
@@ -6719,6 +6856,20 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
           boxShadow: '0 2px 0 rgba(30,34,48,.06), 0 8px 20px rgba(30,34,48,.14)', color: COLORS.text, fontSize: 13, fontWeight: 700, animationDelay: '.2s',
         }}>
           <Sofa size={17} color={COLORS.gold} /> Комната
+        </button>
+      )}
+
+      {!roomOpen && topStreak > 0 && (
+        <button className="lrpg-btn lrpg-hud-in" onClick={() => { gameFeedback('NAV'); setTab('actions'); setSubTab(st => ({ ...st, actions: 'habits' })); }} aria-label={`Лучшая серия: ${topStreak} дней`} style={{
+          position: 'absolute', zIndex: 3, right: 10, bottom: 12, display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 12px', borderRadius: 14, background: 'rgba(251,249,244,.96)', border: `1px solid ${COLORS.border}`,
+          boxShadow: '0 2px 0 rgba(30,34,48,.06), 0 8px 20px rgba(30,34,48,.14)', color: COLORS.text, animationDelay: '.26s',
+        }}>
+          <FlameIcon n={topStreak} size={20} />
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
+            <span className="lrpg-num" style={{ fontSize: 15, fontWeight: 700 }}>{topStreak} дн.</span>
+            <span className="lrpg-mono" style={{ fontSize: 8, color: COLORS.textMuted }}>{flameTier(topStreak).name}</span>
+          </span>
         </button>
       )}
 
@@ -7791,7 +7942,7 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
             ]}
             onDo={() => completeHabit(h)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, paddingTop: 9, borderTop: `1px dashed ${COLORS.borderLight}` }}>
-              <StreakFlame n={h.streakCurrent || 0} />
+              <StreakFlame n={h.streakCurrent || 0} size={18} showName />
               <span style={{ display: 'flex', gap: 2, flex: 1 }} aria-label={`До следующего уровня привычки ${toNext} дн.`}>
                 {Array.from({ length: 7 }, (_, i) => <span key={i} style={{ flex: 1, height: 5, borderRadius: 1, background: i < segOn ? (STAT_COLOR[h.stat] || COLORS.gold) : '#e6e0d3' }} />)}
               </span>

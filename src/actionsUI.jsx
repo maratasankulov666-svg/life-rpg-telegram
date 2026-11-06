@@ -1,6 +1,7 @@
 // actionsUI.jsx — игровые элементы раздела «Действия» в стиле «бумага + пиксель».
 // Только отображение: логику (выполнить, отложить, атаковать босса) передаёт App.jsx через props.
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export const PAPER = {
   bg: '#f2eee5', card: '#fbf9f4', alt: '#f3eee3', line: '#e2dbcc', line2: '#d6cdb9',
@@ -212,22 +213,232 @@ export function EnergyPips({ value }) {
   );
 }
 
-// ---------- Огонёк серии ----------
-export function StreakFlame({ n, size = 14 }) {
-  useCss();
-  const hot = n >= 3;
+// ---------- Огонь серии: чем дольше серия, тем сильнее и «дороже» пламя ----------
+export const FLAME_TIERS = [
+  { min: 0, name: 'Нет серии', outer: '#c9bfae', mid: '#b8ae9c', core: '#e6e0d3', glow: null, scale: 0.85, sparks: 0, speed: 0 },
+  { min: 1, name: 'Искра', outer: '#e8a05a', mid: '#d8823a', core: '#f6d08a', glow: null, scale: 0.85, sparks: 0, speed: 1.2 },
+  { min: 3, name: 'Огонёк', outer: '#e07a3a', mid: '#c8562a', core: '#f6c47a', glow: 'rgba(224,122,58,.35)', scale: 1, sparks: 1, speed: 0.9 },
+  { min: 7, name: 'Пламя', outer: '#d8562a', mid: '#a4412a', core: '#f6d08a', glow: 'rgba(216,86,42,.5)', scale: 1.1, sparks: 2, speed: 0.75 },
+  { min: 20, name: 'Костёр', outer: '#e8402a', mid: '#b8302a', core: '#ffe08a', glow: 'rgba(232,64,42,.65)', scale: 1.25, sparks: 3, speed: 0.6 },
+  { min: 30, name: 'Синее пламя', outer: '#3a7ad8', mid: '#2a5aa8', core: '#cff0ff', glow: 'rgba(58,122,216,.7)', scale: 1.32, sparks: 4, speed: 0.5 },
+  { min: 50, name: 'Фиолетовое пламя', outer: '#9a4ad8', mid: '#6a2aa8', core: '#f4d4ff', glow: 'rgba(154,74,216,.8)', scale: 1.42, sparks: 5, speed: 0.42 },
+  { min: 100, name: 'Чёрное пламя', outer: '#1a1420', mid: '#3a2450', core: '#c08aff', glow: 'rgba(120,40,200,.9)', scale: 1.55, sparks: 6, speed: 0.36, black: true },
+];
+export function flameTier(n) {
+  let t = FLAME_TIERS[0];
+  FLAME_TIERS.forEach(x => { if ((n || 0) >= x.min) t = x; });
+  return t;
+}
+export const STREAK_MILESTONES = [3, 7, 20, 30, 50, 100];
+
+const FLAME_CSS = `
+@keyframes agFlick { 0%,100% { transform: scale(1,1); } 50% { transform: scale(.94,1.1); } }
+@keyframes agTongue { 0%,100% { opacity: 1; transform: translateY(0); } 50% { opacity: 0; transform: translateY(-1px); } }
+@keyframes agRise { 0% { transform: translate(0,0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translate(var(--dx), -26px); opacity: 0; } }
+@keyframes agAura { 0%,100% { opacity: .55; transform: scale(1); } 50% { opacity: .95; transform: scale(1.12); } }
+.ag-flick { animation: agFlick var(--sp) steps(2) infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.ag-tongue { animation: agTongue calc(var(--sp) * 1.3) steps(2) infinite; }
+.ag-rise { position: absolute; animation: agRise var(--d) linear infinite; }
+.ag-aura { animation: agAura 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ag-flick,.ag-tongue,.ag-rise,.ag-aura { animation: none; } }
+`;
+let flameCss = false;
+function useFlameCss() {
+  if (flameCss || typeof document === 'undefined') return;
+  const el = document.createElement('style'); el.textContent = FLAME_CSS; document.head.appendChild(el); flameCss = true;
+}
+
+export function FlameIcon({ n, size = 16 }) {
+  useCss(); useFlameCss();
+  const t = flameTier(n);
+  const px = Math.round(size * t.scale);
+  const sparks = Array.from({ length: t.sparks }, (_, i) => i);
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: hot ? PAPER.terra : PAPER.muted }}>
-      <svg width={size} height={size} viewBox="0 0 8 8" shapeRendering="crispEdges" aria-hidden="true">
-        <g className={hot ? 'ag-flame' : undefined}>
-          <rect x="3" y="0" width="2" height="2" fill={hot ? '#e07a3a' : '#c9bfae'} /><rect x="2" y="2" width="4" height="2" fill={hot ? '#e07a3a' : '#c9bfae'} />
-          <rect x="1" y="4" width="6" height="3" fill={hot ? PAPER.terra : '#b8ae9c'} /><rect x="2" y="7" width="4" height="1" fill={hot ? PAPER.terra : '#b8ae9c'} />
-          <rect x="3" y="4" width="2" height="2" fill={hot ? '#f2c47a' : '#e6e0d3'} />
+    <span style={{ position: 'relative', width: px, height: Math.round(px * 1.2), display: 'inline-block', flexShrink: 0 }}>
+      {t.black && <span className="ag-aura" style={{ position: 'absolute', inset: -px * 0.35, borderRadius: '50%', background: 'radial-gradient(closest-side, rgba(120,40,200,.55), rgba(26,20,32,.25) 60%, transparent)' }} />}
+      <svg width={px} height={Math.round(px * 1.2)} viewBox="0 0 10 12" shapeRendering="crispEdges" aria-hidden="true"
+        style={{ position: 'relative', display: 'block', overflow: 'visible', filter: t.glow ? `drop-shadow(0 0 ${Math.max(2, px / 5)}px ${t.glow})` : 'none', '--sp': `${t.speed || 1}s` }}>
+        <g className={t.speed ? 'ag-flick' : undefined}>
+          {t.black && <g fill="#8a4ad8"><rect x="3" y="0" width="4" height="2" /><rect x="1" y="2" width="8" height="4" /><rect x="0" y="6" width="10" height="5" /><rect x="1" y="11" width="8" height="1" /></g>}
+          <g fill={t.outer}><rect x="4" y="0" width="2" height="1" /><rect x="3" y="1" width="4" height="2" /><rect x="2" y="3" width="6" height="3" /><rect x="1" y="6" width="8" height="4" /><rect x="2" y="10" width="6" height="2" /></g>
+          <g fill={t.mid}><rect x="4" y="3" width="2" height="1" /><rect x="3" y="4" width="4" height="3" /><rect x="2" y="7" width="6" height="3" /><rect x="3" y="10" width="4" height="1" /></g>
+          <g fill={t.core}><rect x="4" y="6" width="2" height="2" /><rect x="3" y="8" width="4" height="2" /></g>
+          {t.speed > 0 && <rect className="ag-tongue" x={t.min >= 20 ? 2 : 6} y="1" width="1" height="2" fill={t.outer} />}
         </g>
       </svg>
-      <span className="lrpg-num" style={{ fontSize: 12, fontWeight: 700 }}>{n}</span>
+      {sparks.map(i => (
+        <span key={i} className="ag-rise" style={{
+          left: `${20 + ((i * 37) % 60)}%`, bottom: '55%', width: Math.max(2, px / 8), height: Math.max(2, px / 8),
+          background: t.black ? (i % 2 ? '#c08aff' : '#2a1a38') : t.core, '--dx': `${(i % 2 ? 1 : -1) * (2 + i)}px`, '--d': `${1.1 + (i % 3) * 0.35}s`, animationDelay: `${-i * 0.33}s`,
+        }} />
+      ))}
     </span>
   );
+}
+
+export function StreakFlame({ n, size = 14, showName }) {
+  const t = flameTier(n);
+  const color = t.black ? '#5a2a8a' : n >= 1 ? (t.min >= 30 ? t.mid : PAPER.terra) : PAPER.muted;
+  return (
+    <span title={t.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color }}>
+      <FlameIcon n={n} size={size} />
+      <span className="lrpg-num" style={{ fontSize: 12.5, fontWeight: 700 }}>{n}</span>
+      {showName && n >= 1 && <span className="lrpg-mono" style={{ fontSize: 8.5, color }}>{t.name}</span>}
+    </span>
+  );
+}
+
+// ---------- Сундук дня: церемония открытия ----------
+const CHEST_CSS = `
+@keyframes agChestIdle { 0%,100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-4px) rotate(-1deg); } }
+@keyframes agChestHit { 0% { transform: rotate(0) scale(1); } 20% { transform: rotate(-9deg) scale(1.06); } 40% { transform: rotate(8deg) scale(1.04); } 60% { transform: rotate(-5deg); } 80% { transform: rotate(3deg); } 100% { transform: rotate(0) scale(1); } }
+@keyframes agRays { to { transform: rotate(360deg); } }
+@keyframes agLidFly { 0% { transform: translate(0,0) rotate(0); } 100% { transform: translate(-18px,-70px) rotate(-38deg); opacity: 0; } }
+@keyframes agFlashOut { 0% { opacity: .95; } 100% { opacity: 0; } }
+@keyframes agCardIn { 0% { opacity: 0; transform: translateY(26px) scale(.6) rotate(-6deg); } 60% { opacity: 1; transform: translateY(-6px) scale(1.06) rotate(1deg); } 100% { opacity: 1; transform: none; } }
+@keyframes agCoinFall { 0% { transform: translate(0,0) rotate(0); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; } }
+@keyframes agTwinkle { 0%,100% { opacity: .15; transform: scale(.6); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes agScrim { from { opacity: 0; } to { opacity: 1; } }
+@keyframes agHintBob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.ag-chest-idle { animation: agChestIdle 1.6s ease-in-out infinite; }
+.ag-chest-hit { animation: agChestHit .5s cubic-bezier(.3,1.5,.5,1) both; }
+.ag-rays { animation: agRays 9s linear infinite; }
+.ag-lidfly { animation: agLidFly .7s cubic-bezier(.2,.9,.3,1) both; transform-box: fill-box; transform-origin: 0 100%; }
+.ag-flash { animation: agFlashOut .7s ease-out both; }
+.ag-cardin { animation: agCardIn .6s cubic-bezier(.2,1.3,.3,1) both; }
+.ag-coinfall { animation: agCoinFall 1.2s cubic-bezier(.2,.7,.4,1) both; }
+.ag-twinkle { animation: agTwinkle 1.6s ease-in-out infinite; }
+.ag-scrim { animation: agScrim .35s ease both; }
+.ag-hint { animation: agHintBob 1s ease-in-out infinite; }
+`;
+let chestCss = false;
+function useChestCss() {
+  if (chestCss || typeof document === 'undefined') return;
+  const el = document.createElement('style'); el.textContent = CHEST_CSS; document.head.appendChild(el); chestCss = true;
+}
+
+function BigChest({ open, glow }) {
+  return (
+    <svg viewBox="0 0 40 34" width="190" height="162" shapeRendering="crispEdges" aria-hidden="true" style={{ display: 'block', overflow: 'visible', filter: `drop-shadow(0 0 ${6 + glow * 6}px rgba(246,208,138,${0.25 + glow * 0.2}))` }}>
+      <rect x="4" y="30" width="32" height="3" fill="#000" opacity=".25" />
+      <rect x="4" y="15" width="32" height="16" fill="#8a5a3a" />
+      <rect x="4" y="15" width="32" height="2" fill="#a06a44" />
+      <rect x="4" y="22" width="32" height="2" fill="#c48a2a" /><rect x="4" y="29" width="32" height="2" fill="#5a3826" />
+      <rect x="4" y="15" width="2" height="16" fill="#c48a2a" /><rect x="34" y="15" width="2" height="16" fill="#c48a2a" />
+      <rect x="18" y="19" width="4" height="7" fill="#e8c48a" /><rect x="19" y="21" width="2" height="2" fill="#5a3826" />
+      {open && <rect x="6" y="13" width="28" height="3" fill="#ffe9a8" />}
+      {glow > 0 && !open && <g fill="#ffe9a8" opacity={0.4 + glow * 0.3}><rect x="6" y="14" width="28" height="1" />{glow > 1 && <rect x="17" y="13" width="1" height="2" />}{glow > 1 && <rect x="26" y="12" width="1" height="3" />}</g>}
+      <g className={open ? 'ag-lidfly' : undefined}>
+        <rect x="3" y="7" width="34" height="8" fill="#a06a44" />
+        <rect x="5" y="5" width="30" height="2" fill="#a06a44" /><rect x="8" y="4" width="24" height="1" fill="#a06a44" />
+        <rect x="3" y="7" width="34" height="1" fill="#c48a2a" /><rect x="3" y="13" width="34" height="2" fill="#c48a2a" />
+        <rect x="3" y="7" width="2" height="8" fill="#c48a2a" /><rect x="35" y="7" width="2" height="8" fill="#c48a2a" />
+        <rect x="17" y="11" width="6" height="4" fill="#e8c48a" />
+      </g>
+    </svg>
+  );
+}
+
+/**
+ * Церемония сундука. rewards: { coins, xp, gift: { kind: 'room'|'crystal'|'coins', item?, amount? } }
+ * fx(name): звуки/вибрация из App (CHEST_TAP, CHEST_OPEN, REWARD_POP). renderItem(item) — превью предмета комнаты.
+ */
+export function ChestCeremony({ rewards, fx, renderItem, onClaim }) {
+  useCss(); useChestCss();
+  const [taps, setTaps] = useState(0);
+  const [stage, setStage] = useState('closed');
+  const [hit, setHit] = useState(0);
+  const [shown, setShown] = useState(0);
+  const cards = [
+    { key: 'coins', title: `+${rewards.coins}`, sub: 'монет', color: PAPER.mustard },
+    { key: 'xp', title: `+${rewards.xp}`, sub: 'опыта', color: PAPER.terra },
+    rewards.gift.kind === 'room'
+      ? { key: 'gift', title: rewards.gift.item.name, sub: 'в твою комнату', color: PAPER.teal, item: rewards.gift.item, big: true }
+      : rewards.gift.kind === 'crystal'
+        ? { key: 'gift', title: `+${rewards.gift.amount}`, sub: 'кристалл', color: PAPER.berry, big: true }
+        : { key: 'gift', title: `+${rewards.gift.amount}`, sub: 'бонусных монет', color: PAPER.mustard, big: true },
+  ];
+  const tap = () => {
+    if (stage !== 'closed') return;
+    const n = taps + 1;
+    setTaps(n); setHit(h => h + 1);
+    if (n < 3) { fx('CHEST_TAP'); return; }
+    fx('CHEST_OPEN');
+    setStage('burst');
+    setTimeout(() => {
+      setStage('reveal');
+      cards.forEach((_, i) => setTimeout(() => { setShown(i + 1); fx('REWARD_POP'); }, 280 + i * 420));
+    }, 850);
+  };
+  const coins = Array.from({ length: 16 }, (_, i) => i);
+  const view = (
+    <div role="dialog" aria-label="Сундук дня" style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <div className="ag-scrim" style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 42%, #3a2a3a 0%, #1e2230 62%, #12141c 100%)' }} />
+      <div className={stage === 'closed' ? undefined : 'ag-rays'} style={{
+        position: 'absolute', left: '50%', top: '40%', width: 760, height: 760, marginLeft: -380, marginTop: -380, borderRadius: '50%',
+        opacity: stage === 'closed' ? 0.12 + taps * 0.1 : 0.55, transition: 'opacity .5s ease',
+        background: 'repeating-conic-gradient(from 0deg, rgba(246,208,138,.35) 0deg 9deg, transparent 9deg 24deg)',
+        WebkitMaskImage: 'radial-gradient(circle, #000 0%, transparent 62%)', maskImage: 'radial-gradient(circle, #000 0%, transparent 62%)',
+      }} />
+      {[[12, 18], [80, 14], [22, 70], [86, 64], [50, 8], [64, 82], [8, 44], [92, 40]].map(([x, y], i) => (
+        <span key={i} className="ag-twinkle" style={{ position: 'absolute', left: x + '%', top: y + '%', width: 5, height: 5, background: i % 2 ? '#f6d08a' : '#fbf9f4', animationDelay: `${-i * 0.27}s` }} />
+      ))}
+
+      <div style={{ position: 'relative', textAlign: 'center', color: '#f2eee5', marginBottom: 6, minHeight: 58 }}>
+        <div className="lrpg-mono" style={{ fontSize: 10, color: '#f6d08a' }}>Награда за день</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.1 }}>{stage === 'reveal' ? 'Твоя добыча' : 'Сундук дня'}</div>
+      </div>
+
+      <button onClick={tap} aria-label="Открыть сундук" className="lrpg-btn" style={{ position: 'relative', background: 'none', border: 'none', padding: 0, cursor: stage === 'closed' ? 'pointer' : 'default' }}>
+        <div key={hit} className={stage === 'closed' ? (hit ? 'ag-chest-hit' : 'ag-chest-idle') : undefined}>
+          <BigChest open={stage !== 'closed'} glow={taps} />
+        </div>
+        {stage !== 'closed' && coins.map(i => (
+          <span key={i} className="ag-coinfall" style={{
+            position: 'absolute', left: '50%', top: '42%', width: 8, height: 8, background: i % 3 === 0 ? '#e8c48a' : '#c48a2a', boxShadow: 'inset -2px -2px 0 rgba(0,0,0,.2)',
+            '--dx': `${Math.cos(i * 0.9) * (70 + (i % 4) * 25)}px`, '--dy': `${-60 - (i % 5) * 26}px`, '--r': `${i * 40}deg`, animationDelay: `${(i % 4) * 0.05}s`,
+          }} />
+        ))}
+      </button>
+
+      {stage === 'closed' && (
+        <div className="ag-hint lrpg-mono" style={{ position: 'relative', marginTop: 14, fontSize: 11, color: '#f6d08a' }}>
+          {taps === 0 ? 'Стучи по сундуку' : taps === 1 ? 'Ещё!' : 'Последний удар!'} · {3 - taps}
+        </div>
+      )}
+
+      {stage === 'reveal' && (
+        <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, width: 'min(340px, 88vw)', marginTop: 4 }}>
+          {cards.map((c, i) => i < shown && (
+            <div key={c.key} className="ag-cardin" style={{
+              gridColumn: c.big ? '1 / -1' : 'auto', background: '#fbf9f4', border: `1px solid ${c.color}66`, borderRadius: 14, padding: c.item ? 10 : '12px 10px',
+              display: 'flex', alignItems: 'center', gap: 12, boxShadow: `0 10px 28px rgba(0,0,0,.35), 0 0 0 3px ${c.color}22`, textAlign: 'left', color: PAPER.ink,
+            }}>
+              {c.item && renderItem ? (
+                <div style={{ width: 96, borderRadius: 10, overflow: 'hidden', border: `1px solid ${PAPER.line}`, flexShrink: 0 }}>{renderItem(c.item)}</div>
+              ) : (
+                <span style={{ width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.color + '1f', flexShrink: 0 }}>
+                  <PixelIcon kind={c.key === 'xp' ? 'creator' : c.sub === 'кристалл' ? 'focus' : 'finance'} color={c.color} size={20} />
+                </span>
+              )}
+              <span style={{ minWidth: 0 }}>
+                <span className={c.item ? undefined : 'lrpg-num'} style={{ display: 'block', fontSize: c.item ? 16 : 20, fontWeight: 700, lineHeight: 1.15 }}>{c.title}</span>
+                <span className="lrpg-mono" style={{ fontSize: 9, color: c.color }}>{c.sub}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {stage === 'reveal' && shown >= cards.length && (
+        <button className="lrpg-btn ag-cardin" onClick={onClaim} style={{ position: 'relative', marginTop: 18, background: PAPER.terra, color: '#fbf9f4', border: 'none', borderRadius: 14, padding: '13px 34px', fontSize: 16, fontWeight: 700, boxShadow: '0 3px 0 #7a2e1c, 0 10px 26px rgba(164,65,42,.45)' }}>
+          Забрать
+        </button>
+      )}
+      {stage === 'burst' && <div className="ag-flash" style={{ position: 'absolute', inset: 0, background: '#fff6dc', pointerEvents: 'none' }} />}
+    </div>
+  );
+  return typeof document !== 'undefined' ? createPortal(view, document.body) : view;
 }
 
 // ---------- Заготовка под тренировки («Проект 78») ----------
