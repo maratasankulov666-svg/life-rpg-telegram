@@ -130,6 +130,7 @@ import {
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
+import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf } from './progressUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -159,7 +160,11 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       открытия (3 удара, вспышка, лучи, монеты) и наградой: монеты, опыт и подарок (предмет в комнату/кристалл/монеты).
 //       Огонь серии в 8 уровнях (искра → чёрное пламя на 100+ дней), праздник при рекордах 3/7/20/30/50/100,
 //       плашка лучшей серии на главной, полноэкранный «Новый уровень», новые звуки сундука и серии.
-const APP_VERSION = '15.2';
+// 15.3  «Прогресс» как игра: карточка героя (звание, уровень с сегментной шкалой, сила героя, лучшая серия),
+//       пиксельная карта мира — 9 земель по характеристикам растут в 6 стадий (от пустоши до легендарной столицы),
+//       туман над неоткрытыми землями, бегущие дороги, детали земли со шкалой стадий; праздник «Земля выросла»;
+//       характеристики блочными шкалами с приростом за 7 дней; «Баланс героя» и «История» в бумажном стиле.
+const APP_VERSION = '15.3';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -3083,133 +3088,151 @@ function ProgressWorldMap({ stats, selected, onSelect }) {
   );
 }
 
+const PROGRESS_STATS = ['physical', 'discipline', 'knowledge', 'focus', 'finance', 'career', 'creator', 'social', 'mental'];
+const LAND_STAGE_KEY = 'liferpg_land_stages_v1';
+
 function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecoveryMode, sub, setSub }) {
-  const xpNeed = xpNeeded(state.character.level);
-  const daysPlayed = (state.playLog || []).length;
-  const completedQuests = state.quests.filter(q => q.status === 'completed').length;
-  const [selected, setSelected] = useState('career');
   const stats = state.stats || {};
-  const node = WORLD_NODES.find(n => n.key === selected) || WORLD_NODES[0];
-  const selectedVal = stats[node.key] || 0;
-  const selectedStage = worldStageIndex(selectedVal);
-  const history = (state.statsHistory || []).slice(-14);
-  const historyData = (history.length ? history : [{ date: todayStr(), stats }]).map((h, i) => ({
-    day: String(i + 1),
-    Тело: h.stats.physical || 0,
-    Дисциплина: h.stats.discipline || 0,
-    Знания: h.stats.knowledge || 0,
-    Финансы: h.stats.finance || 0,
-    Карьера: h.stats.career || 0,
+  const xpNeed = xpNeeded(state.character.level);
+  const daysPlayed = Math.max(1, (state.playLog || []).length);
+  const completedQuests = state.quests.filter(q => q.status === 'completed').length;
+  const power = PROGRESS_STATS.reduce((sum, k) => sum + (stats[k] || 0), 0);
+  const bestStreak = (state.habits || []).reduce((m, h) => Math.max(m, h.bestStreak || 0, h.streakCurrent || 0), 0);
+  const [selected, setSelected] = useState(() => PROGRESS_STATS.reduce((best, k) => ((stats[k] || 0) > (stats[best] || 0) ? k : best), 'career'));
+  const [histStat, setHistStat] = useState('physical');
+  const [grown, setGrown] = useState(null);
+  const land = LANDS.find(l => l.key === selected) || LANDS[0];
+  const val = stats[land.key] || 0;
+  const stage = stageOf(val);
+  const history = state.statsHistory || [];
+  const weekAgo = history.length > 1 ? history[Math.max(0, history.length - 8)].stats : null;
+  const delta = (k) => (weekAgo ? (stats[k] || 0) - (weekAgo[k] || 0) : 0);
+
+  // Праздник: земля поднялась на новую стадию с прошлого визита.
+  useEffect(() => {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(LAND_STAGE_KEY) || '{}'); } catch (e) { saved = {}; }
+    const now = Object.fromEntries(LANDS.map(l => [l.key, stageOf(stats[l.key])]));
+    const ups = LANDS.filter(l => saved[l.key] !== undefined && now[l.key] > saved[l.key]);
+    if (ups.length) {
+      const top = ups.sort((a, b) => now[b.key] - now[a.key])[0];
+      setGrown({ key: top.key, stage: now[top.key] });
+      setSelected(top.key);
+      setTimeout(() => gameFeedback('ACHIEVEMENT_UNLOCK', { title: `${top.name}: ${LAND_STAGES[now[top.key]]}` }), 450);
+    }
+    try { localStorage.setItem(LAND_STAGE_KEY, JSON.stringify(now)); } catch (e) {}
+  }, []);
+
+  const historyData = (history.length ? history.slice(-21) : [{ date: todayStr(), stats }]).map(h => ({
+    day: String(h.date || '').slice(5).replace('-', '.'),
+    v: (h.stats && h.stats[histStat]) || 0,
   }));
-  const radarData = PROGRESS_STAT_META.filter(s => ['physical', 'discipline', 'knowledge', 'focus', 'finance', 'career', 'creator', 'mental'].includes(s.key)).map(s => ({
-    stat: s.label,
-    value: stats[s.key] || 0,
-  }));
-  const stages = [
-    { title: 'Пустошь', need: 0, kind: 'waste' },
-    { title: 'Поселение', need: 20, kind: 'settlement' },
-    { title: 'Столица', need: 60, kind: 'capital' },
-  ];
+  const radarData = PROGRESS_STATS.map(k => ({ stat: STAT_RU[k], value: stats[k] || 0 }));
+  const toNext = stage >= 5 ? 0 : 20 - (val % 20);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <ScreenHeader title="Прогресс" icon={Activity} extra={<span style={{ fontSize: 11, color: COLORS.gold }}>Lv.{state.character.level}</span>} />
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Летопись героя</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Прогресс</div>
+      </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 8 }}>
-        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: 10 }}>
-          {PROGRESS_STAT_META.map(s => {
-            const Icon = s.icon;
-            const active = selected === s.key || WORLD_NODES.some(n => n.key === s.key && n.key === selected);
-            return (
-              <button key={s.key} className="lrpg-btn" onClick={() => WORLD_NODES.some(n => n.key === s.key) && setSelected(s.key)} style={{
-                display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: active ? 'rgba(164,65,42,0.08)' : 'transparent',
-                borderRadius: 8, padding: '3px 2px', marginBottom: 3,
-              }}>
-                <Icon size={11} color={s.color} />
-                <span style={{ fontSize: 9, fontWeight: 700, width: 62, textAlign: 'left', color: COLORS.text }}>{s.label}</span>
-                <span style={{ flex: 1, height: 5, borderRadius: 99, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                  <span style={{ display: 'block', width: `${Math.min(100, stats[s.key] || 0)}%`, height: '100%', background: s.color, borderRadius: 99 }} />
-                </span>
-                <span style={{ fontSize: 9, color: COLORS.textMuted, width: 32, textAlign: 'right' }}>{stats[s.key] || 0}</span>
-              </button>
-            );
-          })}
+      <HeroRankCard level={state.character.level} xp={state.character.xp} xpNeed={xpNeed} power={power} days={daysPlayed} quests={completedQuests} bestStreak={bestStreak} />
+
+      <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden', animationDelay: '.05s' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 14px 8px' }}>
+          <span className="lrpg-display" style={{ fontSize: 19, fontWeight: 700 }}>Карта мира</span>
+          <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>{LANDS.filter(l => stageOf(stats[l.key]) > 0).length}/{LANDS.length} земель открыто</span>
         </div>
-        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: '8px 4px 0', minHeight: 220 }}>
-          <div className="lrpg-display" style={{ textAlign: 'center', color: COLORS.gold, fontSize: 12, letterSpacing: 1 }}>СТАТИСТИКА</div>
-          <div style={{ height: 196 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart data={radarData} cx="50%" cy="52%" outerRadius="62%">
-                <PolarGrid stroke="rgba(164,65,42,0.25)" />
-                <PolarAngleAxis dataKey="stat" tick={{ fill: '#6b6f7a', fontSize: 8 }} />
-                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar dataKey="value" stroke="#c48a2a" fill="#c48a2a" fillOpacity={0.28} />
-              </RadarChart>
-            </ResponsiveContainer>
+        <div style={{ borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}` }}>
+          <WorldMapPixel stats={stats} selected={selected} onSelect={k => { if (k !== selected) gameFeedback('PAGE_TURN'); setSelected(k); setGrown(null); }} />
+        </div>
+        <div key={land.key} className="lrpg-fade" style={{ padding: '12px 14px 14px' }}>
+          {grown && grown.key === land.key && (
+            <div className="lrpg-stagger" style={{ marginBottom: 10, padding: '8px 10px', borderRadius: 10, background: 'rgba(196,138,42,.14)', border: '1px solid rgba(196,138,42,.45)', fontSize: 13, fontWeight: 700, color: '#8a5a1a' }}>
+              Земля выросла: теперь здесь «{LAND_STAGES[grown.stage]}»!
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <StatTile stat={land.key} size={40} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="lrpg-display" style={{ fontSize: 19, fontWeight: 700, lineHeight: 1.1 }}>{land.name}</div>
+              <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Растёт от «{STAT_RU[land.key]}» · {val}/100</div>
+            </div>
+            <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, textAlign: 'right' }}>{LAND_STAGES[stage]}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 4, marginTop: 12 }}>
+            {LAND_STAGES.map((name, i) => (
+              <div key={name} title={name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '6px 0 4px', borderRadius: 8, background: i === stage ? 'rgba(164,65,42,.10)' : 'transparent', border: `1px solid ${i === stage ? 'rgba(164,65,42,.45)' : 'transparent'}` }}>
+                <StageMini stage={i} on={i <= stage} size={38} />
+                <span className="lrpg-num" style={{ fontSize: 9, color: i <= stage ? COLORS.text : COLORS.textMuted }}>{i * 20}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'flex', gap: 2 }}>
+              {Array.from({ length: 20 }, (_, i) => <span key={i} style={{ flex: 1, height: 6, borderRadius: 1, background: stage >= 5 || i < (val % 20) ? (STAT_COLOR[land.key] || COLORS.gold) : '#e6e0d3' }} />)}
+            </div>
+            <div style={{ fontSize: 12.5, color: '#4a4e5a', marginTop: 6 }}>
+              {stage >= 5 ? 'Земля достигла легендарной стадии.' : <>Ещё <b style={{ color: COLORS.text }}>{toNext}</b> очков до «{LAND_STAGES[stage + 1]}». Прокачивай привычками и квестами «{STAT_RU[land.key]}».</>}
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: 10 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-          <span className="lrpg-display" style={{ color: COLORS.gold, fontSize: 12 }}>ИСТОРИЯ</span>
-          <span style={{ fontSize: 10, color: COLORS.textMuted }}>{daysPlayed} дн · {completedQuests} заданий · энергия {energy}</span>
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: '12px 8px 8px', animationDelay: '.1s' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '0 6px 6px' }}>
+          <span className="lrpg-display" style={{ fontSize: 19, fontWeight: 700 }}>Характеристики</span>
+          <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>за 7 дней</span>
         </div>
-        <div style={{ height: 132 }}>
+        {PROGRESS_STATS.map((k, i) => (
+          <StatRow key={k} stat={k} value={stats[k] || 0} delta={delta(k)} active={k === selected} index={i}
+            onClick={() => { gameFeedback('BUTTON_PRESS'); setSelected(k); setHistStat(k); }} />
+        ))}
+      </div>
+
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: '12px 10px 6px', animationDelay: '.15s' }}>
+        <div className="lrpg-display" style={{ fontSize: 19, fontWeight: 700, padding: '0 4px' }}>Баланс героя</div>
+        <div style={{ height: 230 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={historyData}>
-              <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: '#6b6f7a', fontSize: 9 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fill: '#6b6f7a', fontSize: 9 }} axisLine={false} tickLine={false} width={24} />
-              <Tooltip contentStyle={{ background: '#fbf9f4', border: '1px solid #e2dbcc', fontSize: 11 }} />
-              <Line type="monotone" dataKey="Тело" stroke="#a83e66" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Дисциплина" stroke="#4a6a9a" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Знания" stroke="#7a5a8a" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Финансы" stroke="#3f7a4a" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Карьера" stroke="#c48a2a" strokeWidth={1.6} dot={false} />
-            </LineChart>
+            <RadarChart data={radarData} cx="50%" cy="52%" outerRadius="68%">
+              <PolarGrid stroke="#e2dbcc" />
+              <PolarAngleAxis dataKey="stat" tick={{ fill: '#4a4e5a', fontSize: 10, fontFamily: 'Manrope' }} />
+              <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+              <Radar dataKey="value" stroke="#a4412a" strokeWidth={2} fill="#a4412a" fillOpacity={0.16} isAnimationActive />
+            </RadarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      <div>
-        <div className="lrpg-display" style={{ color: COLORS.gold, fontSize: 12, marginBottom: 8 }}>КАРТА МИРА</div>
-        <ProgressWorldMap stats={stats} selected={selected} onSelect={setSelected} />
-        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 10, marginTop: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontWeight: 800, fontSize: 13 }}>{node.name}</span>
-            <span style={{ color: COLORS.gold, fontSize: 11, fontWeight: 700 }}>{TERRITORY_STAGES[selectedStage]}</span>
-          </div>
-          <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '4px 0 6px' }}>
-            Растёт от «{PROGRESS_STAT_META.find(s => s.key === node.key)?.label}» · {selectedVal}/100
-          </div>
-          <Bar value={selectedVal} max={100} color={COLORS.gold} height={6} />
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: 12, animationDelay: '.2s' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <span className="lrpg-display" style={{ fontSize: 19, fontWeight: 700 }}>История</span>
+          <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>энергия {Math.round(energy)}</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
-          {stages.map(st => {
-            const open = selectedVal >= st.need;
-            const current =
-              (st.need === 0 && selectedVal < 20) ||
-              (st.need === 20 && selectedVal >= 20 && selectedVal < 60) ||
-              (st.need === 60 && selectedVal >= 60);
+        <div className="lrpg-noscroll" style={{ display: 'flex', gap: 6, overflowX: 'auto', margin: '10px 0 6px' }}>
+          {PROGRESS_STATS.map(k => {
+            const on = k === histStat;
             return (
-              <div key={st.title} className={"lrpg-glass lrpg-chamfer" + (current ? " lrpg-stage-current" : "")} style={{
-                borderRadius: 14, padding: 8, opacity: open ? 1 : 0.42,
-                border: current ? '1px solid rgba(164,65,42,0.85)' : '1px solid rgba(255,255,255,0.06)',
-                boxShadow: current ? '0 0 18px rgba(164,65,42,0.28)' : undefined,
-                transition: 'box-shadow .25s ease, border-color .25s ease, opacity .25s ease',
-              }}>
-                <div style={{ borderRadius: 10, marginBottom: 6, overflow: 'hidden', border: current ? '1px solid rgba(164,65,42,0.45)' : '1px solid rgba(164,65,42,0.15)' }}>
-                  <StageThumb kind={st.kind} active={open} />
-                </div>
-                <div style={{ fontSize: 10, fontWeight: 800 }}>{st.title}</div>
-                <div style={{ fontSize: 9, color: current ? COLORS.gold : COLORS.textMuted }}>
-                  {current ? 'сейчас' : open ? 'открыто' : `с ${st.need}`}
-                </div>
-              </div>
+              <button key={k} className="lrpg-btn" onClick={() => setHistStat(k)} style={{ flexShrink: 0, padding: '5px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: on ? (STAT_COLOR[k] || COLORS.text) : COLORS.bgCard, color: on ? '#fbf9f4' : COLORS.text, border: `1px solid ${on ? (STAT_COLOR[k] || COLORS.text) : COLORS.border}` }}>{STAT_RU[k]}</button>
             );
           })}
         </div>
+        <div style={{ height: 150 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={historyData} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
+              <defs>
+                <linearGradient id="progHist" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={STAT_COLOR[histStat] || '#a4412a'} stopOpacity={0.3} /><stop offset="100%" stopColor={STAT_COLOR[histStat] || '#a4412a'} stopOpacity={0} /></linearGradient>
+              </defs>
+              <CartesianGrid stroke="#ece6d9" vertical={false} />
+              <XAxis dataKey="day" tick={{ fill: '#6b6f7a', fontSize: 9 }} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} tick={{ fill: '#6b6f7a', fontSize: 9 }} axisLine={false} tickLine={false} width={28} />
+              <Tooltip contentStyle={{ background: '#fbf9f4', border: '1px solid #e2dbcc', borderRadius: 10, fontSize: 12 }} formatter={(v) => [v, STAT_RU[histStat]]} />
+              <Area type="monotone" dataKey="v" stroke={STAT_COLOR[histStat] || '#a4412a'} strokeWidth={2} fill="url(#progHist)" dot={{ r: 2.5, fill: STAT_COLOR[histStat] || '#a4412a' }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 4 }}>{daysPlayed} дн. в игре · {completedQuests} заданий выполнено</div>
       </div>
     </div>
   );
