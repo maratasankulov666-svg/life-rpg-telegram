@@ -1,8 +1,10 @@
-// Озвучка наставников. Провайдеры (по порядку, пропуская ненастроенные):
-//   azure  — Azure Speech (AZURE_SPEECH_KEY + AZURE_SPEECH_REGION), бесплатно 500 тыс. символов/мес;
-//   google — Google Cloud Text-to-Speech (GOOGLE_TTS_API_KEY), бесплатно ~1 млн символов/мес (WaveNet);
-//   gemini — Gemini TTS (GEMINI_API_KEY), маленький дневной лимит.
-// Порядок можно задать TTS_PROVIDER_ORDER="google,azure,gemini".
+// Озвучка наставников. У каждого наставника СВОЙ постоянный сервис и голос (чтобы голос не менялся):
+//   google — Google Cloud Text-to-Speech (GOOGLE_TTS_API_KEY), WaveNet;
+//   azure  — Azure Speech (AZURE_SPEECH_KEY + AZURE_SPEECH_REGION);
+//   gemini — Gemini TTS (GEMINI_API_KEY), запасной: только если у сервиса наставника нет ключа.
+// Распределение по умолчанию — ASSIGN ниже; переопределение без кода: TTS_ASSIGN="kaylen:azure,brum:google".
+// Если у сервиса наставника кончился лимит — НЕ переключаемся на чужой голос, а отвечаем 429 с provider,
+// и клиент на время говорит голосом телефона.
 // POST { npc, text, voice, style } → { mime, audio: base64, provider }.
 
 const GEMINI_MODELS = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash-tts', 'gemini-2.5-pro-preview-tts'];
@@ -12,10 +14,14 @@ const GEMINI_VOICES = new Set([
   'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
 ]);
 
-// Голоса наставников у Azure и Google: один и тот же характер, подстроенный тоном и темпом.
+// Кто кем озвучивается. Мужских голосов у Google два (B, D), у Azure один (Дмитрий) — так все трое
+// мужчин звучат по-разному. Google (больше лимит) — у самых разговорчивых.
+const ASSIGN = { kaylen: 'google', kasper: 'google', mira: 'google', tio: 'google', brum: 'azure', nori: 'azure', vera: 'azure' };
+
+// Голоса наставников у Azure и Google (используется тот, что назначен; остальное — на случай TTS_ASSIGN).
 const AZURE = {
   kaylen: { name: 'ru-RU-DmitryNeural', pitch: '-14%', rate: '-10%' },
-  brum: { name: 'ru-RU-DmitryNeural', pitch: '-4%', rate: '+14%', volume: '+15%' },
+  brum: { name: 'ru-RU-DmitryNeural', pitch: '-2%', rate: '+12%', volume: '+15%' },
   kasper: { name: 'ru-RU-DmitryNeural', pitch: '-8%', rate: '-20%' },
   nori: { name: 'ru-RU-DariyaNeural', pitch: '+8%', rate: '+12%' },
   mira: { name: 'ru-RU-SvetlanaNeural', pitch: '+6%', rate: '+10%' },
@@ -23,14 +29,29 @@ const AZURE = {
   tio: { name: 'ru-RU-DariyaNeural', pitch: '-4%', rate: '-16%' },
 };
 const GOOGLE = {
-  kaylen: { name: 'ru-RU-Wavenet-B', pitch: -5, rate: 0.9 },
-  brum: { name: 'ru-RU-Wavenet-D', pitch: -2, rate: 1.12 },
-  kasper: { name: 'ru-RU-Wavenet-D', pitch: -4, rate: 0.84 },
-  nori: { name: 'ru-RU-Wavenet-E', pitch: 2, rate: 1.12 },
+  kaylen: { name: 'ru-RU-Wavenet-B', pitch: -4, rate: 0.9 },
+  brum: { name: 'ru-RU-Wavenet-D', pitch: -1, rate: 1.12 },
+  kasper: { name: 'ru-RU-Wavenet-D', pitch: -3, rate: 0.84 },
+  nori: { name: 'ru-RU-Wavenet-E', pitch: 3, rate: 1.12 },
   mira: { name: 'ru-RU-Wavenet-C', pitch: 1, rate: 1.1 },
   vera: { name: 'ru-RU-Wavenet-A', pitch: -2, rate: 1 },
   tio: { name: 'ru-RU-Wavenet-E', pitch: -1, rate: 0.85 },
 };
+
+function assignment() {
+  const map = { ...ASSIGN };
+  String(process.env.TTS_ASSIGN || '').split(',').forEach(pair => {
+    const [npc, prov] = pair.split(':').map(x => (x || '').trim().toLowerCase());
+    if (npc && ['google', 'azure', 'gemini'].includes(prov)) map[npc] = prov;
+  });
+  return map;
+}
+function isConfigured(id) {
+  if (id === 'azure') return !!(process.env.AZURE_SPEECH_KEY && process.env.AZURE_SPEECH_REGION);
+  if (id === 'google') return !!process.env.GOOGLE_TTS_API_KEY;
+  if (id === 'gemini') return !!process.env.GEMINI_API_KEY;
+  return false;
+}
 
 function pcmToWav(pcm, rate = 24000, channels = 1, bits = 16) {
   const header = Buffer.alloc(44);
@@ -137,30 +158,27 @@ async function viaGemini({ text, voice, style }) {
 }
 
 const RUNNERS = { azure: viaAzure, google: viaGoogle, gemini: viaGemini };
+const FALLBACK_ORDER = ['google', 'azure', 'gemini'];
 
-export { pcmToWav, xmlEscape };
+export { pcmToWav, xmlEscape, assignment };
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
   const body = req.body || {};
   const text = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 420);
   if (!text) { res.status(400).json({ error: 'Missing text' }); return; }
-  const args = { npc: String(body.npc || ''), text, voice: body.voice, style: body.style };
-  const order = (process.env.TTS_PROVIDER_ORDER || 'azure,google,gemini').split(',').map(s => s.trim()).filter(s => RUNNERS[s]);
-  const errors = [];
-  let lastStatus = 503;
-  for (const id of order) {
-    try {
-      const out = await RUNNERS[id](args);
-      if (!out) { errors.push(`${id}: not configured`); continue; }
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(200).json(out);
-      return;
-    } catch (e) {
-      errors.push(`${id}: ${(e && e.message) || e}`);
-      lastStatus = e && e.status ? e.status : 502;
-    }
+  const npc = String(body.npc || '');
+  const args = { npc, text, voice: body.voice, style: body.style };
+  // Постоянный сервис наставника. Запасной — только если у него вообще нет ключа (тогда голос «временный»).
+  const assigned = assignment()[npc] || 'google';
+  const provider = isConfigured(assigned) ? assigned : FALLBACK_ORDER.find(isConfigured);
+  if (!provider) { res.status(503).json({ error: 'NOT_CONFIGURED' }); return; }
+  try {
+    const out = await RUNNERS[provider](args);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({ ...out, assigned, substitute: provider !== assigned });
+  } catch (e) {
+    const status = e && e.status === 429 ? 429 : 502;
+    res.status(status).json({ error: status === 429 ? 'LIMIT' : 'TTS недоступен', provider, details: [(e && e.message) || String(e)] });
   }
-  const configured = order.filter(id => !errors.some(x => x === `${id}: not configured`));
-  res.status(configured.length ? (lastStatus === 429 ? 429 : 502) : 503).json({ error: configured.length ? 'TTS недоступен' : 'NOT_CONFIGURED', details: errors });
 }

@@ -19,7 +19,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | `src/telegramStorage.js` | Storage: Telegram DeviceStorage → localStorage fallback |
 | `src/main.jsx` | Entry point |
 | `api/ai.js` | AI router across several providers (Groq, Gemini, Grok, OpenRouter, Mistral, Cerebras, NVIDIA); keys come from env |
-| `api/tts.js` | Mentor voices, provider chain `TTS_PROVIDER_ORDER` (default azure → google → gemini): Azure Speech (`AZURE_SPEECH_KEY`+`AZURE_SPEECH_REGION`), Google Cloud TTS (`GOOGLE_TTS_API_KEY`, `GOOGLE_TTS_FAMILY=chirp` optional), Gemini TTS (`GEMINI_API_KEY`); per-mentor voice tables `AZURE`/`GOOGLE` |
+| `api/tts.js` | Mentor voices: each mentor is pinned to ONE provider (`ASSIGN`: kaylen/kasper/mira/tio → google, brum/nori/vera → azure; override `TTS_ASSIGN="npc:provider,..."`), no cross-provider fallback on limit (client falls back to device voice per provider); Gemini only substitutes when the assigned provider has no key. Keys: `GOOGLE_TTS_API_KEY` (`GOOGLE_TTS_FAMILY=chirp` optional), `AZURE_SPEECH_KEY`+`AZURE_SPEECH_REGION`, `GEMINI_API_KEY`; voice tables `AZURE`/`GOOGLE`. Client caches clips in IndexedDB (key prefix `v2|`) |
 | `api/youtube*.js` | YouTube stats and OAuth |
 
 ## Map of `src/App.jsx` (line → what)
