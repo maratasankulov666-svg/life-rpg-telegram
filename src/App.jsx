@@ -129,6 +129,7 @@ import {
   LineChart, Line, AreaChart, Area, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
+import { DayRoad, ActionTicket, EnergyPips, StreakFlame, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -150,7 +151,11 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       главная — пиксельная комната на весь экран с живым Ташкентом за окном (время суток по часам, погода),
 //       обустройство комнаты за монеты (9 слотов, 27 предметов, превью, подсветка места, анимация установки),
 //       новые звуки (вкладки, установка, панели), переходы между экранами и появление карточек.
-const APP_VERSION = '15.0';
+// 15.1  «Действия» как игра: дорога дня с героем и сундуком, испытания дня, «Следующий шаг», карточки-задания
+//       с печатью «ГОТОВО», квесты-билеты и бой с боссом, привычки с огоньком серии; пиксельное конфетти
+//       и всплывашки от точки нажатия; честная награда привычки (+1 к характеристике вместо фальшивых +10 XP).
+//       «Тренировки» — заготовка под интеграцию «Проект 78».
+const APP_VERSION = '15.1';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -363,6 +368,21 @@ function gameFeedback(type, payload = {}) {
   FeedbackBus.emit({ type, vfx: cfg.vfx, payload, at: Date.now() });
 }
 
+// Точка последнего нажатия: эффекты (конфетти, «+XP») вылетают оттуда, где игрок тапнул.
+const LAST_TAP = { x: 0, y: 0, at: 0 };
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', e => { LAST_TAP.x = e.clientX; LAST_TAP.y = e.clientY; LAST_TAP.at = Date.now(); }, { capture: true, passive: true });
+}
+const VFX_COLORS = {
+  coins: ['#c48a2a', '#e8c48a', '#a06a2a'],
+  level: ['#a4412a', '#c48a2a', '#2f6b6e', '#a83e66'],
+  quest: ['#a4412a', '#3f7a4a', '#c48a2a', '#2f6b6e'],
+  xp: ['#a4412a', '#c48a2a'],
+  achieve: ['#c48a2a', '#a83e66', '#2f6b6e'],
+  item: ['#2f6b6e', '#c48a2a'],
+  error: ['#b8432e'],
+};
+
 function FeedbackLayer() {
   const [toasts, setToasts] = useState([]);
   const [flash, setFlash] = useState(null);
@@ -373,39 +393,40 @@ function FeedbackLayer() {
   useEffect(() => { SoundManager.ensure(); SoundManager.unlock(); }, []);
   useEffect(() => {
     const un = FeedbackBus.on(ev => {
-      if (ev.vfx === 'error') setFlash({ c: 'rgba(255,80,80,0.18)', id: ev.at });
-      if (ev.vfx === 'level') setFlash({ c: 'rgba(47,62,107,0.22)', id: ev.at });
-      if (ev.vfx === 'achieve') setFlash({ c: 'rgba(164,65,42,0.16)', id: ev.at });
-      const label = ev.type === 'QUEST_COMPLETE' ? `+${ev.payload.xp || 0} XP`
-        : ev.type === 'XP_GAIN' ? `+${ev.payload.xp || 0} XP`
-        : ev.type === 'COIN_GAIN' ? `+${ev.payload.coins || 0}`
-        : ev.type === 'LEVEL_UP' ? `LEVEL ${ev.payload.level || ''} UP`
-        : ev.type === 'ACHIEVEMENT_UNLOCK' ? (ev.payload.title || 'Достижение')
-        : null;
-      if (label) setToasts(t => [...t.slice(-4), { id: ev.at + Math.random(), label, kind: ev.vfx }]);
-      const n = FEEDBACK_PREFS.batterySaver ? 8 : (ev.vfx === 'level' ? 36 : ev.vfx === 'quest' ? 22 : 14);
-      const col = ev.vfx === 'coins' ? '#c48a2a' : ev.vfx === 'level' ? '#a4412a' : ev.vfx === 'error' ? '#FF6B6B' : '#2f6b6e';
-      const cx = window.innerWidth / 2, cy = window.innerHeight * 0.42;
+      if (ev.vfx === 'error') setFlash({ c: 'rgba(184,67,46,0.10)', id: ev.at });
+      if (ev.vfx === 'level') setFlash({ c: 'rgba(196,138,42,0.16)', id: ev.at });
+      const pl = ev.payload || {};
+      let label = null;
+      if (ev.type === 'QUEST_COMPLETE') label = pl.xp ? `+${pl.xp} XP` : (pl.stat && STAT_RU[pl.stat] ? `+1 ${STAT_RU[pl.stat]}` : 'Готово');
+      else if (ev.type === 'COIN_GAIN' && pl.coins) label = `+${pl.coins} монет`;
+      else if (ev.type === 'LEVEL_UP') label = `Уровень ${pl.level || ''}`;
+      else if (ev.type === 'ACHIEVEMENT_UNLOCK') label = pl.title || 'Достижение';
+      const recent = Date.now() - LAST_TAP.at < 2500;
+      const ox = recent ? LAST_TAP.x : window.innerWidth / 2;
+      const oy = recent ? LAST_TAP.y : window.innerHeight * 0.42;
+      if (label) setToasts(t => [...t.slice(-3), { id: ev.at + Math.random(), label, kind: ev.vfx, x: ox, y: oy, i: t.length }]);
+      if (!ev.vfx) return;
+      const n = FEEDBACK_PREFS.batterySaver ? 6 : (ev.vfx === 'level' ? 48 : ev.vfx === 'quest' ? 26 : ev.vfx === 'error' ? 6 : 14);
+      const pal = VFX_COLORS[ev.vfx] || VFX_COLORS.quest;
       for (let i = 0; i < n; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const s = 0.8 + Math.random() * 2.4;
-        parts.current.push({ x: cx, y: cy, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1.2, life: 1, size: 1.5 + Math.random() * 2.5, col });
+        const a = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * (ev.vfx === 'level' ? 2 : 1.3);
+        const sp = 2 + Math.random() * (ev.vfx === 'level' ? 5 : 3.6);
+        parts.current.push({ x: ox, y: oy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, size: 3 + Math.floor(Math.random() * 3), col: pal[i % pal.length], spin: Math.random() < 0.5 });
       }
     });
     const tick = () => {
       const c = canvasRef.current;
       if (c) {
         const ctx = c.getContext('2d');
-        if (c.width !== window.innerWidth || c.height !== window.innerHeight) {
-          c.width = window.innerWidth; c.height = window.innerHeight;
-        }
+        if (c.width !== window.innerWidth || c.height !== window.innerHeight) { c.width = window.innerWidth; c.height = window.innerHeight; }
         ctx.clearRect(0, 0, c.width, c.height);
-        parts.current = parts.current.filter(p => p.life > 0);
+        parts.current = parts.current.filter(p => p.life > 0 && p.y < c.height + 20);
         parts.current.forEach(p => {
-          p.x += p.vx; p.y += p.vy; p.vy += 0.04; p.life -= 0.018;
-          ctx.globalAlpha = Math.max(0, p.life);
+          p.x += p.vx; p.y += p.vy; p.vy += 0.16; p.vx *= 0.985; p.life -= 0.014;
+          ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.4));
           ctx.fillStyle = p.col;
-          ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+          const w = p.spin && Math.floor(p.life * 20) % 2 ? Math.max(1, p.size - 2) : p.size;
+          ctx.fillRect(Math.round(p.x), Math.round(p.y), w, p.size);
         });
         ctx.globalAlpha = 1;
       }
@@ -416,31 +437,32 @@ function FeedbackLayer() {
   }, []);
 
   useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 280);
+    if (!flash) return undefined;
+    const t = setTimeout(() => setFlash(null), 320);
     return () => clearTimeout(t);
   }, [flash]);
 
   useEffect(() => {
-    if (!toasts.length) return;
-    const t = setTimeout(() => setToasts(s => s.slice(1)), 900);
+    if (!toasts.length) return undefined;
+    const t = setTimeout(() => setToasts(s => s.slice(1)), 1100);
     return () => clearTimeout(t);
   }, [toasts]);
 
   return (
     <>
+      <style>{`@keyframes lrpg-toast { 0% { opacity: 0; transform: translate(-50%, 6px) scale(.8); } 18% { opacity: 1; transform: translate(-50%, -14px) scale(1.06); } 30% { transform: translate(-50%, -18px) scale(1); } 100% { opacity: 0; transform: translate(-50%, -64px); } }`}</style>
       <canvas ref={canvasRef} style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 80 }} />
-      {flash && <div style={{ position: 'fixed', inset: 0, background: flash.c, pointerEvents: 'none', zIndex: 79 }} />}
-      <div style={{ position: 'fixed', left: 0, right: 0, top: '18%', pointerEvents: 'none', zIndex: 81, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-        {toasts.map(t => (
-          <div key={t.id} style={{
-            padding: '6px 12px', borderRadius: 999, fontSize: t.kind === 'level' ? 16 : 13, fontWeight: 800,
-            color: t.kind === 'coins' ? '#c48a2a' : t.kind === 'level' ? '#fff' : '#5a9a6a',
-            background: 'rgba(251,249,244,0.55)', border: '1px solid rgba(47,62,107,0.35)',
-            animation: 'lrpg-float-up 0.9s ease-out both',
-          }}>{t.label}</div>
-        ))}
-      </div>
+      {flash && <div style={{ position: 'fixed', inset: 0, background: flash.c, pointerEvents: 'none', zIndex: 79, animation: 'lrpg-fade-in .3s ease reverse both' }} />}
+      {toasts.map((t, i) => (
+        <div key={t.id} style={{
+          position: 'fixed', left: Math.max(60, Math.min(window.innerWidth - 60, t.x)), top: t.y - 18 - i * 30, zIndex: 81, pointerEvents: 'none',
+          padding: t.kind === 'level' ? '8px 16px' : '5px 11px', borderRadius: 10, whiteSpace: 'nowrap',
+          fontFamily: "'JetBrains Mono', monospace", fontSize: t.kind === 'level' ? 17 : 13.5, fontWeight: 700,
+          color: t.kind === 'coins' ? '#a06a2a' : t.kind === 'level' ? '#fbf9f4' : '#a4412a',
+          background: t.kind === 'level' ? '#a4412a' : '#fbf9f4', border: `1px solid ${t.kind === 'level' ? '#a4412a' : '#e2dbcc'}`,
+          boxShadow: '0 6px 16px rgba(30,34,48,.16)', animation: 'lrpg-toast 1.1s cubic-bezier(.16,1,.3,1) both',
+        }}>{t.label}</div>
+      ))}
     </>
   );
 }
@@ -537,6 +559,11 @@ const TYPE_LABELS = {
   Routine: 'Routine', Daily: 'Daily', Weekly: 'Weekly',
   Bonus: 'Bonus', Monthly: 'Monthly Challenge', Goal: 'Goal Quest',
   Event: 'Event Quest', Recovery: 'Recovery Quest', Boss: 'Boss Task',
+};
+
+const QUEST_TYPE_RU = {
+  Routine: 'Рутина', Daily: 'Ежедневный', Weekly: 'Недельный', Bonus: 'Бонус', Monthly: 'Испытание месяца',
+  Goal: 'Квест цели', Event: 'Событие', Recovery: 'Восстановление', Boss: 'Босс',
 };
 
 const TYPE_COLOR = {
@@ -2533,22 +2560,39 @@ function ActionsHub({
   const pendingHabits = orderedHabits.filter(h => h.lastDoneDate !== today);
   const doneHabits = orderedHabits.filter(h => h.lastDoneDate === today);
 
-  const todayActions = [
-    ...pendingHabits.slice(0, 8).map(h => ({
-      id: h.id, kind: 'habit', title: h.title,
-      bonus: slotLabelRu(h.slot || classifyHabitSlot(h.title).slot) + ' / ' + (STAT_LABEL[h.stat] || h.stat),
-      done: false, action: () => completeHabit(h),
-    })),
-    ...activeQuests.filter(q => q.type === 'Daily' || q.type === 'Routine' || q.type === 'Bonus').slice(0, 4).map(q => ({
-      id: q.id, kind: 'quest', title: q.title, bonus: '+' + (q.xp || 0) + ' XP',
-      done: q.status === 'completed', action: () => completeQuest(q),
-    })),
-    ...doneHabits.slice(0, 4).map(h => ({
-      id: h.id, kind: 'habit', title: h.title,
-      bonus: 'готово / ' + (STAT_LABEL[h.stat] || h.stat),
-      done: true, action: () => {},
-    })),
+  const completedQuestsToday = (state.quests || []).filter(q => q.status === 'completed' && q.completedAt
+    && new Date(q.completedAt).toISOString().slice(0, 10) === today);
+  const habitItem = (h, done) => ({
+    id: h.id, kind: 'habit', title: h.title, stat: h.stat, done,
+    meta: (done ? 'пройдено' : slotLabelRu(h.slot || classifyHabitSlot(h.title).slot)) + ' · привычка',
+    rewards: [
+      ...(STAT_RU[h.stat] ? [{ label: `+1 ${STAT_RU[h.stat]}`, color: STAT_COLOR[h.stat] }] : []),
+      ...(h.secondaryStat && STAT_RU[h.secondaryStat] ? [{ label: `+1 ${STAT_RU[h.secondaryStat]}`, color: STAT_COLOR[h.secondaryStat] }] : []),
+      { label: `серия ${done ? h.streakCurrent : (h.streakCurrent || 0) + 1}`, color: PAPER.muted },
+    ],
+    action: () => completeHabit(h),
+  });
+  const questItem = (q, done) => ({
+    id: q.id, kind: 'quest', title: q.title, stat: q.stat || 'quest', done,
+    meta: (QUEST_TYPE_RU[q.type] || 'квест') + (q.difficulty ? ' · ' + q.difficulty : ''),
+    rewards: [
+      ...(q.xp ? [{ label: `+${Math.round(q.xp)} XP`, color: PAPER.terra }] : []),
+      ...(q.coins ? [{ label: `+${Math.round(q.coins)} монет`, color: PAPER.mustard }] : []),
+    ],
+    action: () => completeQuest(q),
+  });
+  const pendingItems = [
+    ...pendingHabits.slice(0, 8).map(h => habitItem(h, false)),
+    ...activeQuests.filter(q => !q.isBoss && (q.type === 'Daily' || q.type === 'Routine' || q.type === 'Bonus')).slice(0, 4).map(q => questItem(q, false)),
   ];
+  const doneItems = [
+    ...doneHabits.map(h => habitItem(h, true)),
+    ...completedQuestsToday.map(q => questItem(q, true)),
+  ];
+  const routeTotal = pendingItems.length + doneItems.length;
+  const routeDone = doneItems.length;
+  const boss = activeQuests.find(q => q.isBoss);
+  const dayNumber = state.firstOpenedAt ? Math.max(1, Math.floor((Date.now() - state.firstOpenedAt) / 86400000) + 1) : 1;
 
   async function handleSmartPlan() {
     if (planBusy) return;
@@ -2569,84 +2613,111 @@ function ActionsHub({
 
   return (
     <div>
-      <ScreenHeader title="Действия" icon={Sword} extra={<span style={{ fontSize: 11, color: COLORS.textMuted }}>{doneCount}/4 сегодня</span>} />
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
+        <div>
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>День {dayNumber} · журнал приключений</div>
+          <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Задания дня</div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, paddingBottom: 3 }}>
+          <EnergyPips value={energy} />
+          <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>Энергия {Math.round(energy)}</span>
+        </div>
+      </div>
       <PillTabs
-        options={[{ key: 'all', label: 'Все' }, { key: 'training', label: 'Тренировки' }, { key: 'habits', label: 'Привычки' }, { key: 'quests', label: 'Квесты' }]}
+        options={[{ key: 'all', label: 'Сегодня' }, { key: 'training', label: 'Тренировки' }, { key: 'habits', label: 'Привычки' }, { key: 'quests', label: 'Квесты' }]}
         active={sub} onChange={setSub}
       />
 
       {sub === 'all' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted }}>Сегодня · умный порядок</div>
-            <button className="lrpg-btn" disabled={planBusy} onClick={handleSmartPlan} style={{
-              background: COLORS.violetSoft, color: COLORS.violet, border: `1px solid ${COLORS.violet}55`,
-              borderRadius: 999, padding: '5px 10px', fontSize: 11, fontWeight: 700,
-            }}>{planBusy ? 'Думаю…' : 'ИИ-порядок'}</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+          <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden' }}>
+            <DayRoad total={routeTotal} done={routeDone} />
+            <div style={{ padding: '10px 14px 12px', borderTop: `1px solid ${COLORS.border}` }}>
+              {routeTotal === 0 ? (
+                <div style={{ fontSize: 13.5, color: '#4a4e5a' }}>Маршрут на сегодня пуст. Добавь привычку или квест, и на дороге появятся шаги.</div>
+              ) : routeDone >= routeTotal ? (
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: COLORS.green }}>Все шаги пройдены. Сундук дня открыт, отличный день!</div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontSize: 13.5, color: '#4a4e5a' }}>Пройдено <b style={{ color: COLORS.text }}>{routeDone}</b> из {routeTotal}</span>
+                    <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold }}>до сундука {routeTotal - routeDone}</span>
+                  </div>
+                  <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: '#e6e0d3', overflow: 'hidden' }}>
+                    <div className="ag-fill" style={{ width: `${(routeDone / routeTotal) * 100}%`, height: '100%', background: COLORS.gold, borderRadius: 2 }} />
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-          {planNote && <div style={{ fontSize: 11, color: COLORS.teal }}>{planNote}</div>}
-          {todayActions.length === 0 && (
-            <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 14, fontSize: 12, color: COLORS.textMuted }}>
-              На сегодня действий нет — добавь привычку или квест.
-            </div>
-          )}
-          {todayActions.map(a => (
-            <div key={a.kind + a.id} className="lrpg-glass lrpg-chamfer" style={{
-              borderRadius: 14, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{a.title}</div>
-                <div style={{ fontSize: 10, color: COLORS.teal, marginTop: 2 }}>{a.bonus}</div>
-              </div>
-              <button className="lrpg-btn" onClick={a.action} style={{
-                background: 'linear-gradient(180deg, #b5654a, #a4412a)', color: '#fff',
-                borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700, flexShrink: 0,
-                boxShadow: '0 0 12px rgba(47,62,107,0.4)',
-              }}>{a.kind === 'habit' ? 'Выполнить' : 'Начать'}</button>
-            </div>
-          ))}
 
-          {activeQuests.length > 0 && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 6px' }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMuted }}>Квесты</span>
-                <button className="lrpg-btn" onClick={() => setSub('quests')} style={{ background: 'none', color: COLORS.violet, fontSize: 11, fontWeight: 700 }}>Смотреть все →</button>
-              </div>
-              {activeQuests.slice(0, 2).map(q => (
-                <div key={q.id} className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{q.isBoss ? '⚔️ ' : ''}{q.title}</div>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>+{q.xp || 0} XP · {TYPE_LABELS[q.type] || q.type}</div>
+          <div className="lrpg-paper lrpg-stagger" style={{ padding: '10px 12px', animationDelay: '.05s' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <span className="lrpg-display" style={{ fontSize: 16, fontWeight: 700 }}>Испытания дня</span>
+              <span className="lrpg-num" style={{ fontSize: 12, color: COLORS.textMuted }}>{doneCount}/4</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6 }}>
+              {dailyGoals.map(g => (
+                <div key={g.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '8px 2px', borderRadius: 10, background: g.done ? 'rgba(63,122,74,.10)' : COLORS.bgCardAlt, border: `1px solid ${g.done ? 'rgba(63,122,74,.35)' : COLORS.border}` }}>
+                  <PixelIcon kind={{ training: 'physical', study: 'knowledge', nutrition: 'finance', sleep: 'mental' }[g.key]} color={g.done ? COLORS.green : '#a9a59c'} size={18} bg={g.done ? '#e9efe6' : COLORS.bgCardAlt} />
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: g.done ? COLORS.green : COLORS.textMuted, textAlign: 'center', lineHeight: 1.15 }}>{g.label}</span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {boss && (
+            <ActionTicket title={boss.title} stat="boss" accent={COLORS.crimson} meta="Босс · бой идёт"
+              rewards={[{ label: `+${Math.round(boss.xp || 0)} XP`, color: PAPER.terra }, ...(boss.coins ? [{ label: `+${Math.round(boss.coins)} монет`, color: PAPER.mustard }] : [])]}>
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  {Array.from({ length: 12 }, (_, i) => (
+                    <span key={i} style={{ flex: 1, height: 8, borderRadius: 1, background: i < Math.ceil(12 * (boss.bossHPRemaining || 0) / Math.max(1, boss.bossHP || 1)) ? COLORS.crimson : '#e6e0d3' }} />
+                  ))}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                  <span className="lrpg-num" style={{ fontSize: 11, color: COLORS.textMuted }}>HP {boss.bossHPRemaining} / {boss.bossHP}</span>
+                  <button className="lrpg-btn" onClick={() => setSub('quests')} style={{ background: COLORS.text, color: COLORS.bg, borderRadius: 10, padding: '7px 12px', fontSize: 12, fontWeight: 700 }}>К бою →</button>
+                </div>
+              </div>
+            </ActionTicket>
+          )}
+
+          {pendingItems.length > 0 && (
+            <div>
+              <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, margin: '2px 0 6px' }}>Следующий шаг</div>
+              <ActionTicket key={pendingItems[0].kind + pendingItems[0].id} big {...pendingItems[0]} onDo={pendingItems[0].action} />
+            </div>
+          )}
+
+          {pendingItems.length > 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 }}>
+                <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Дальше по маршруту</span>
+                <button className="lrpg-btn" disabled={planBusy} onClick={handleSmartPlan} style={{
+                  background: COLORS.bgCard, color: COLORS.text, border: `1px solid ${COLORS.border}`,
+                  borderRadius: 10, padding: '6px 10px', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5,
+                }}><Sparkles size={13} color={COLORS.gold} />{planBusy ? 'Думаю…' : 'Умный порядок'}</button>
+              </div>
+              {planNote && <div style={{ fontSize: 12, color: COLORS.teal }}>{planNote}</div>}
+              {pendingItems.slice(1).map(a => (
+                <ActionTicket key={a.kind + a.id} {...a} onDo={a.action} />
+              ))}
+            </div>
+          )}
+
+          {doneItems.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>Пройдено сегодня</span>
+              {doneItems.map(a => <ActionTicket key={'d' + a.kind + a.id} {...a} />)}
             </div>
           )}
         </div>
       )}
 
       {sub === 'training' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-          {TRAINING_PRESETS.map(p => {
-            const habit = state.habits.find(h => (h.title || '').toLowerCase() === p.label.toLowerCase());
-            const done = habit && habit.lastDoneDate === today;
-            return (
-              <div key={p.key} className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '12px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span className="lrpg-badge-icon" style={{ width: 34, height: 34, borderRadius: 10, flexShrink: 0 }}>
-                  <Dumbbell size={16} color={COLORS.violet} />
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{p.label}</div>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{p.hint} · {p.energy} энергии · +{p.xp} XP</div>
-                </div>
-                <button className="lrpg-btn" disabled={done} onClick={() => startPreset(p)} style={{
-                  background: done ? 'rgba(255,255,255,0.06)' : 'linear-gradient(180deg, #b5654a, #a4412a)',
-                  color: done ? COLORS.teal : '#fff', borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700,
-                }}>{done ? 'Готово' : 'Начать'}</button>
-              </div>
-            );
-          })}
-          {physicalHabits.length > 0 && (
-            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6 }}>Твои физические привычки тоже здесь — отмечай их во вкладке «Привычки».</div>
-          )}
+        <div style={{ marginTop: 14 }}>
+          <TrainingSoon />
         </div>
       )}
 
@@ -4479,7 +4550,7 @@ export default function LifeRPG() {
       }
       return { ...prev, habits, stats, chronicle };
     });
-    gameFeedback('QUEST_COMPLETE', { xp: 10, coins: 0 });
+    gameFeedback('QUEST_COMPLETE', { xp: 0, stat: h.stat });
   }
 
   function toggleRecoveryMode() {
@@ -6674,74 +6745,99 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
 function QuestCard({ q, priority, completeQuest, postponeQuest, skipTarget, setSkipTarget, skipQuest, movePriority, canMoveUp, canMoveDown, showDelete, deleteQuest, compact, hitBossQuest }) {
   const skipping = skipTarget === q.id;
   const [hitAmount, setHitAmount] = useState('');
+  const [phase, setPhase] = useState(null);
+  const [shake, setShake] = useState(0);
   const isBossActive = q.isBoss && hitBossQuest;
+  const accent = q.isBoss ? COLORS.crimson : (STAT_COLOR[q.stat] || TYPE_COLOR[q.type] || COLORS.gold);
+  const done = () => {
+    if (phase) return;
+    setPhase('stamp');
+    setTimeout(() => { setPhase('out'); completeQuest(q); }, 650);
+  };
+  const attack = () => {
+    const n = Number(hitAmount) || 0;
+    if (n <= 0) { gameFeedback('LOCKED'); return; }
+    setShake(k => k + 1);
+    gameFeedback('BUTTON_PRESS');
+    hitBossQuest(q.id, n);
+    setHitAmount('');
+  };
+  const hpSegs = 12;
+  const hpOn = q.isBoss ? Math.ceil(hpSegs * (q.bossHPRemaining || 0) / Math.max(1, q.bossHP || 1)) : 0;
+  const ghost = { background: COLORS.bgCard, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '8px 12px', fontSize: 12.5, fontWeight: 600 };
   return (
-    <Card>
-      <div style={{ display: 'flex', gap: 10 }}>
-        {!compact && movePriority && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-            <button className="lrpg-btn" disabled={!canMoveUp} onClick={() => movePriority(q, -1)} style={{ background: 'none', opacity: canMoveUp ? 1 : 0.25 }}><ChevronUp size={16} color={COLORS.textMuted} /></button>
-            <span style={{ fontSize: 11, color: COLORS.gold, fontWeight: 700 }}>#{priority}</span>
-            <button className="lrpg-btn" disabled={!canMoveDown} onClick={() => movePriority(q, 1)} style={{ background: 'none', opacity: canMoveDown ? 1 : 0.25 }}><ChevronDown size={16} color={COLORS.textMuted} /></button>
-          </div>
-        )}
+    <div className={phase === 'out' ? 'ag-out' : 'lrpg-stagger'} style={{
+      position: 'relative', background: COLORS.bgCard, border: `1px solid ${q.isBoss ? COLORS.crimson + '55' : COLORS.border}`, borderRadius: 14,
+      padding: '12px 12px 12px 15px', marginBottom: 10, boxShadow: '0 1px 0 #e9e3d6', overflow: 'hidden',
+    }}>
+      <span style={{ position: 'absolute', left: 0, top: 10, bottom: 10, width: 3, borderRadius: 2, background: accent }} />
+      <div style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+        <div key={shake} style={{ animation: shake ? 'lrpg-chest-shake .45s ease' : 'none' }}>
+          <StatTile stat={q.isBoss ? 'boss' : (q.stat || 'quest')} size={40} />
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{compact ? `#${priority} ` : ''}{q.isBoss ? '⚔️ ' : ''}{q.title}</div>
-            {showDelete && <button className="lrpg-btn" onClick={() => deleteQuest(q)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>}
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0' }}>
-            <Tag color={TYPE_COLOR[q.type]}>{TYPE_LABELS[q.type]}</Tag>
-            <Tag color={COLORS.textMuted}>{q.difficulty}</Tag>
-            {q.stat && <Tag color={COLORS.violet}>{STAT_LABEL[q.stat]}</Tag>}
-            {q.goalTitle && <Tag color={COLORS.gold}>🎯 {q.goalTitle}</Tag>}
-            {q.rarity && <Tag color={RARITY_COLOR[q.rarity]}>✨ {q.rarity}</Tag>}
-            {q.secondaryStat && <Tag color={COLORS.teal}>+{STAT_LABEL[q.secondaryStat]}</Tag>}
-          </div>
-          <div style={{ display: 'flex', gap: 12, fontSize: 12, color: COLORS.textMuted, alignItems: 'center' }}>
-            <span style={{ color: COLORS.gold, fontWeight: 600 }}>+{q.xp} XP</span>
-            <span style={{ color: COLORS.gold, fontWeight: 600 }}>+{q.coins} Coins</span>
-            {q.deadline && <span style={{ display: 'flex', alignItems: 'center', gap: 3 }}><Clock size={11} />{fmtDeadline(q.deadline)}</span>}
-          </div>
-
-          {isBossActive ? (
-            <div style={{ marginTop: 10 }}>
-              <Bar value={q.bossHPRemaining} max={q.bossHP} color={COLORS.crimson} />
-              <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>HP {q.bossHPRemaining} / {q.bossHP}</div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                <input className="lrpg-input" type="number" min={1} placeholder="Сила удара" value={hitAmount} onChange={e => setHitAmount(e.target.value)} />
-                <button className="lrpg-btn" onClick={() => { hitBossQuest(q.id, Number(hitAmount) || 0); setHitAmount(''); }}
-                  style={{ background: COLORS.crimson, color: '#fff', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>
-                  Атака
-                </button>
-                {!compact && (
-                  <button className="lrpg-btn" onClick={() => setSkipTarget(skipping ? null : q.id)} style={{ background: COLORS.bgCardAlt, color: COLORS.crimson, borderRadius: 8, padding: '0 12px', fontSize: 12, border: `1px solid ${COLORS.border}` }}>Skip</button>
-                )}
-              </div>
+            <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>
+              {priority ? `№${priority} · ` : ''}{QUEST_TYPE_RU[q.type] || q.type}{q.difficulty ? ` · ${q.difficulty}` : ''}
             </div>
-          ) : (
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button className="lrpg-btn" onClick={() => completeQuest(q)} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                <Check size={13} /> Готово
-              </button>
-              <button className="lrpg-btn" onClick={() => postponeQuest(q)} style={{ background: COLORS.bgCardAlt, color: COLORS.text, borderRadius: 8, padding: '7px 12px', fontSize: 12, border: `1px solid ${COLORS.border}` }}>Later</button>
-              <button className="lrpg-btn" onClick={() => setSkipTarget(skipping ? null : q.id)} style={{ background: COLORS.bgCardAlt, color: COLORS.crimson, borderRadius: 8, padding: '7px 12px', fontSize: 12, border: `1px solid ${COLORS.border}` }}>Skip</button>
-            </div>
-          )}
-          {skipping && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${COLORS.border}` }}>
-              <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 6 }}>Причина пропуска (уважительная — без штрафа):</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {SKIP_REASONS.map(r => (
-                  <button key={r} className="lrpg-btn" onClick={() => skipQuest(q, r)} style={{ background: COLORS.violetSoft, color: COLORS.violet, borderRadius: 999, padding: '5px 10px', fontSize: 11, border: `1px solid ${COLORS.violet}55` }}>{r}</button>
-                ))}
-                <button className="lrpg-btn" onClick={() => skipQuest(q, null)} style={{ background: COLORS.crimsonSoft, color: COLORS.crimson, borderRadius: 999, padding: '5px 10px', fontSize: 11, border: `1px solid ${COLORS.crimson}55` }}>Без причины</button>
-              </div>
-            </div>
-          )}
+            {showDelete && <button className="lrpg-btn" onClick={() => deleteQuest(q)} aria-label="Удалить квест" style={{ background: 'none', padding: 2, marginTop: -2 }}><Trash2 size={14} color={COLORS.textMuted} /></button>}
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.25, marginTop: 3 }}>{q.title}</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+            {!!q.xp && <span className="lrpg-num" style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 6, background: 'rgba(164,65,42,.08)', color: COLORS.gold }}>+{Math.round(q.xp)} XP</span>}
+            {!!q.coins && <span className="lrpg-num" style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 6, background: 'rgba(196,138,42,.12)', color: '#a06a2a' }}>+{Math.round(q.coins)} монет</span>}
+            {q.stat && STAT_RU[q.stat] && <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 6, background: (STAT_COLOR[q.stat] || COLORS.teal) + '14', color: STAT_COLOR[q.stat] || COLORS.teal }}>{STAT_RU[q.stat]}{q.secondaryStat && STAT_RU[q.secondaryStat] ? ` + ${STAT_RU[q.secondaryStat]}` : ''}</span>}
+            {q.goalTitle && <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 6, background: COLORS.bgCardAlt, color: COLORS.text, border: `1px solid ${COLORS.border}` }}>Цель: {q.goalTitle}</span>}
+            {q.rarity && <span className="lrpg-mono" style={{ fontSize: 9, padding: '3px 7px', borderRadius: 6, color: RARITY_COLOR[q.rarity] || COLORS.textMuted, border: `1px solid ${COLORS.border}` }}>{rarityRu(q.rarity)}</span>}
+            {q.deadline && <span className="lrpg-num" style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: COLORS.textMuted }}><Clock size={11} />{fmtDeadline(q.deadline)}</span>}
+          </div>
         </div>
+        {!compact && movePriority && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+            <button className="lrpg-btn" disabled={!canMoveUp} onClick={() => movePriority(q, -1)} aria-label="Выше" style={{ ...ghost, padding: 4, opacity: canMoveUp ? 1 : 0.3 }}><ChevronUp size={15} /></button>
+            <button className="lrpg-btn" disabled={!canMoveDown} onClick={() => movePriority(q, 1)} aria-label="Ниже" style={{ ...ghost, padding: 4, opacity: canMoveDown ? 1 : 0.3 }}><ChevronDown size={15} /></button>
+          </div>
+        )}
       </div>
-    </Card>
+
+      {isBossActive ? (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', gap: 2 }}>
+            {Array.from({ length: hpSegs }, (_, i) => (
+              <span key={i} style={{ flex: 1, height: 9, borderRadius: 1, background: i < hpOn ? COLORS.crimson : '#e6e0d3', transition: 'background .4s ease' }} />
+            ))}
+          </div>
+          <div className="lrpg-num" style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 5 }}>HP {q.bossHPRemaining} / {q.bossHP}</div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <input className="lrpg-input" type="number" min={1} inputMode="numeric" placeholder="Сила удара" value={hitAmount} onChange={e => setHitAmount(e.target.value)} />
+            <button className="lrpg-btn" onClick={attack} style={{ background: COLORS.crimson, color: '#fbf9f4', borderRadius: 10, padding: '0 16px', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', boxShadow: '0 2px 0 #7a2e1c' }}>Атака</button>
+            {!compact && <button className="lrpg-btn" onClick={() => setSkipTarget(skipping ? null : q.id)} style={{ ...ghost, color: COLORS.crimson }}>Пропуск</button>}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="lrpg-btn" onClick={done} style={{ flex: 1, background: phase ? COLORS.green : COLORS.gold, color: '#fbf9f4', borderRadius: 10, padding: '9px 0', fontWeight: 700, fontSize: 13.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, boxShadow: `0 2px 0 ${phase ? '#2c5a35' : '#7a2e1c'}` }}>
+            <Check size={15} /> {phase ? 'Выполнено' : 'Готово'}
+          </button>
+          <button className="lrpg-btn" onClick={() => postponeQuest(q)} style={ghost}>Отложить</button>
+          <button className="lrpg-btn" onClick={() => setSkipTarget(skipping ? null : q.id)} style={{ ...ghost, color: COLORS.crimson }}>Пропуск</button>
+        </div>
+      )}
+      {skipping && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${COLORS.borderLight}` }}>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>Причина пропуска (уважительная — без штрафа):</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {SKIP_REASONS.map(r => (
+              <button key={r} className="lrpg-btn" onClick={() => skipQuest(q, r)} style={{ ...ghost, padding: '6px 10px', fontSize: 12, borderRadius: 999 }}>{r}</button>
+            ))}
+            <button className="lrpg-btn" onClick={() => skipQuest(q, null)} style={{ ...ghost, padding: '6px 10px', fontSize: 12, borderRadius: 999, color: COLORS.crimson, borderColor: COLORS.crimson + '55' }}>Без причины</button>
+          </div>
+        </div>
+      )}
+      {phase && (
+        <span className="ag-stamp" aria-hidden="true" style={{ position: 'absolute', right: 14, top: 12, transform: 'rotate(-8deg)', border: `2px solid ${COLORS.green}`, color: COLORS.green, borderRadius: 6, padding: '2px 8px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 700, letterSpacing: '.12em', background: 'rgba(251,249,244,.9)', pointerEvents: 'none' }}>ГОТОВО</span>
+      )}
+    </div>
   );
 }
 
@@ -7619,22 +7715,17 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
-        <Plus size={16} /> Новая привычка
-      </button>
-      <button className="lrpg-btn" disabled={suggestLoading} onClick={handleSuggest} style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCardAlt,
-        color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 10, padding: '9px 0', fontWeight: 700, fontSize: 12,
-        opacity: suggestLoading ? 0.6 : 1,
-      }}>
-        <Sparkles size={14} /> {suggestLoading ? 'Мастер думает...' : 'Предложить привычки (AI)'}
-      </button>
-      <button className="lrpg-btn" disabled={orderBusy} onClick={handleReorder} style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCardAlt,
-        color: COLORS.gold, border: `1px solid ${COLORS.gold}55`, borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13,
-      }}>
-        {orderBusy ? 'Расставляю…' : 'Умный порядок на день'}
-      </button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="lrpg-btn" onClick={() => { gameFeedback(showAdd ? 'MENU_CLOSE' : 'MENU_OPEN'); setShowAdd(v => !v); }} style={{ flex: 1.3, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.text, color: COLORS.bg, borderRadius: 12, padding: '11px 0', fontWeight: 700, fontSize: 13.5, boxShadow: '0 2px 0 #0e1018' }}>
+          <Plus size={16} /> Привычка
+        </button>
+        <button className="lrpg-btn" disabled={suggestLoading} onClick={handleSuggest} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCard, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '11px 0', fontWeight: 600, fontSize: 13, opacity: suggestLoading ? 0.6 : 1 }}>
+          <Sparkles size={14} color={COLORS.gold} /> {suggestLoading ? 'Думаю…' : 'Идеи ИИ'}
+        </button>
+        <button className="lrpg-btn" disabled={orderBusy} onClick={handleReorder} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCard, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '11px 0', fontWeight: 600, fontSize: 13 }}>
+          <Layers size={14} color={COLORS.teal} /> {orderBusy ? '…' : 'Порядок'}
+        </button>
+      </div>
       {orderNote && <div style={{ fontSize: 11, color: COLORS.teal }}>{orderNote}</div>}
       {suggestError && (
         <Card><div style={{ fontSize: 11, color: COLORS.textMuted }}>{suggestError}</div></Card>
@@ -7689,32 +7780,25 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
       {habits.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Привычек пока нет. Добавь первую — например, ежедневное чтение.</div></Card>}
       {orderedHabitsList.map(h => {
         const doneToday = h.lastDoneDate === today;
+        const toNext = 7 - ((h.streakCurrent || 0) % 7);
+        const segOn = (h.streakCurrent || 0) % 7;
         return (
-          <Card key={h.id}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{h.title}</div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-                  <Tag color={COLORS.violet}>{STAT_LABEL[h.stat]}</Tag>
-                  {h.secondaryStat && STAT_LABEL[h.secondaryStat] && <Tag color={COLORS.teal}>+{STAT_LABEL[h.secondaryStat]}</Tag>}
-                  <Tag color={COLORS.gold}>Level {h.level}</Tag>
-                </div>
-              </div>
-              <button className="lrpg-btn" onClick={() => deleteHabit(h.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
+          <ActionTicket key={h.id} title={h.title} stat={h.stat} done={doneToday}
+            meta={`${STAT_RU[h.stat] || 'привычка'} · ур. ${h.level || 1}`}
+            rewards={[
+              ...(STAT_RU[h.stat] ? [{ label: `+1 ${STAT_RU[h.stat]}`, color: STAT_COLOR[h.stat] }] : []),
+              ...(h.secondaryStat && STAT_RU[h.secondaryStat] ? [{ label: `+1 ${STAT_RU[h.secondaryStat]}`, color: STAT_COLOR[h.secondaryStat] }] : []),
+            ]}
+            onDo={() => completeHabit(h)}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, paddingTop: 9, borderTop: `1px dashed ${COLORS.borderLight}` }}>
+              <StreakFlame n={h.streakCurrent || 0} />
+              <span style={{ display: 'flex', gap: 2, flex: 1 }} aria-label={`До следующего уровня привычки ${toNext} дн.`}>
+                {Array.from({ length: 7 }, (_, i) => <span key={i} style={{ flex: 1, height: 5, borderRadius: 1, background: i < segOn ? (STAT_COLOR[h.stat] || COLORS.gold) : '#e6e0d3' }} />)}
+              </span>
+              <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, whiteSpace: 'nowrap' }}>рекорд {h.bestStreak || 0}</span>
+              <button className="lrpg-btn" onClick={() => deleteHabit(h.id)} aria-label="Удалить привычку" style={{ background: 'none', padding: 2 }}><Trash2 size={14} color={COLORS.textMuted} /></button>
             </div>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginTop: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: COLORS.gold, fontWeight: 700, fontSize: 13 }}>
-                <Flame size={15} /> {h.streakCurrent}
-              </div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Best: {h.bestStreak}</div>
-              <button className="lrpg-btn" disabled={doneToday} onClick={() => completeHabit(h)} style={{
-                marginLeft: 'auto', background: doneToday ? COLORS.bgCardAlt : COLORS.gold, color: doneToday ? COLORS.textMuted : '#fbf9f4',
-                borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: doneToday ? `1px solid ${COLORS.border}` : 'none',
-              }}>
-                {doneToday ? 'Сделано сегодня' : 'Отметить'}
-              </button>
-            </div>
-          </Card>
+          </ActionTicket>
         );
       })}
     </div>

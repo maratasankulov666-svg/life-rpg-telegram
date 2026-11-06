@@ -12,6 +12,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | File | What it is |
 |---|---|
 | `src/App.jsx` | The whole game: logic, state, UI, all tabs. Theme = `COLORS` (paper palette) + the CSS block in `LifeRPG` ("PAPER THEME" overrides at its end) |
+| `src/actionsUI.jsx` | Game UI for the Actions section: `DayRoad`, `ActionTicket` (stamp «ГОТОВО»), `PixelIcon`/`StatTile`, `StreakFlame`, `EnergyPips`, `TrainingSoon`; `STAT_RU`/`STAT_COLOR` |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
 | `src/telegramStorage.js` | Storage: Telegram DeviceStorage → localStorage fallback |
 | `src/main.jsx` | Entry point |
@@ -25,17 +26,17 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 - 549–700 Random events, equipment tiers, `economistPayout`
 - 704–990 Finance: debts, `computeNetWorth`, `financialHealth`, `financeMonthSummary`; YouTube helpers (852–925)
 - `RoomShopPanel` (room furniture shop, paper style), economy: crystals/tickets, shop, wheel of fortune
-- 1243 `EconomyPanel`; 1409 `applyCoinLedger`
+- 1270 `EconomyPanel`; 1436 `applyCoinLedger`
 - 1459–1505 Backups and cloud payload
-- 1487 `xpNeeded`, 1490 `computeEnergy`
+- 1514 `xpNeeded`, 1517 `computeEnergy`
 - 1531–1640 Loans/amortization, `migrateFinance`
 - 1660–1950 AI: `callClaudeAPI`/`WithRetry` (calls `/api/ai`), JSON parsing, habit plan, goal splitting
 - 1952 Body/calories: BMR/TDEE/macros; 1997 AI calorie counting from text/photo
-- 2058 **`defaultState`** — the state shape; 2128 `resetBrokenStreaks`, 2140 `ensureDailyContent`, 2292 anti-farm, 2299 **`applyXP`**
+- 2058 **`defaultState`** — the state shape; 2155 `resetBrokenStreaks`, 2167 `ensureDailyContent`, 2292 anti-farm, 2299 **`applyXP`**
 - 2315–2510 Basic UI: `Bar`, `Card`, `Tag`, `SubNav`, `PillTabs`, `ScreenHeader`…
 
 **Navigation and hubs (v14, 5 sections)** — 2440
-- 2506 `ActionsHub`, 2676 `GoalsHub`, 2892 `ProgressWorldMap`, 2980 `ProgressHub`, 3650 `ProfileHub`
+- 2533 `ActionsHub`, 2747 `GoalsHub`, 2963 `ProgressWorldMap`, 3051 `ProgressHub`, 3721 `ProfileHub`
 - 3184–3670 NPC council: `CouncilTab`, `councilDue`, `parseCouncilJson`
 
 **3746 `LifeRPG` — the main component** (state, effects, handlers; ~2000 lines, up to ~5840)
@@ -48,14 +49,14 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 **Tabs**
 | Line | Tab | Line | Tab |
 |---|---|---|---|
-| 6748 | QuestsTab (+QuestCard 6546) | 8835 | MentorTab |
-| 6923 | GoalsTab | 8994 | WorldTab |
-| 7211 | StatsTab | 9069 | EventsTab |
-| 7314 | ShopTab | 9219/9598 | YouTubeHQ / YouTubeTab |
-| 7493 | ChronicleTab | 9901 | GarageTab |
-| 7577 | HabitsTab | 10223 | SettingsTab (+SaveManager 9945, AICenter 10040) |
-| 7915 | FinanceTab | 10622 | BodyTab (+NutritionCard 10249) |
-| 10740 | CalendarTab | 10821 | InventoryTab |
+| 6844 | QuestsTab (+QuestCard 6546) | 8919 | MentorTab |
+| 7019 | GoalsTab | 9078 | WorldTab |
+| 7307 | StatsTab | 9153 | EventsTab |
+| 7410 | ShopTab | 9219/9598 | YouTubeHQ / YouTubeTab |
+| 7589 | ChronicleTab | 9985 | GarageTab |
+| 7673 | HabitsTab | 10307 | SettingsTab (+SaveManager 9945, AICenter 10040) |
+| 7999 | FinanceTab | 10706 | BodyTab (+NutritionCard 10249) |
+| 10824 | CalendarTab | 10905 | InventoryTab |
 
 ## What's installed in `.claude/` (from Everything Claude Code, MIT — see `.claude/ECC-LICENSE`)
 Picked selectively for this project.
