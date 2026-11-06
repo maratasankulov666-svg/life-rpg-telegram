@@ -131,6 +131,7 @@ import {
 } from 'recharts';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
 import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf } from './progressUI.jsx';
+import { NpcPortrait, RoundTable, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
@@ -164,7 +165,12 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       пиксельная карта мира — 9 земель по характеристикам растут в 6 стадий (от пустоши до легендарной столицы),
 //       туман над неоткрытыми землями, бегущие дороги, детали земли со шкалой стадий; праздник «Земля выросла»;
 //       характеристики блочными шкалами с приростом за 7 дней; «Баланс героя» и «История» в бумажном стиле.
-const APP_VERSION = '15.3';
+// 15.4  Штаб Кайлена — живой совет наставников: пиксельные портреты 7 персонажей, круглый стол (входят и садятся,
+//       опаздывают, говорящий подсвечен), у каждого свой ИИ-«мозг» (Gemini/Grok/Groq/Mistral/Cerebras с откатом),
+//       режим дня, реплика дня по реальным данным, симпатия и настроение; совет: открытие, выступления, итог и решения
+//       с «Утвердить»; личный чат с подсказками; наставники правят свой раздел (задания, привычки, цели, идеи YouTube,
+//       расходы/доходы/копилки) с квитанцией и «Отменить».
+const APP_VERSION = '15.4';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -1699,6 +1705,7 @@ function pushAILog(entry) {
   saveAIHealth(h);
 }
 
+const LAST_AI_META = { provider: null, model: null };
 async function callClaudeAPI(system, messages, extra = {}) {
   const started = Date.now();
   let response;
@@ -1726,6 +1733,7 @@ async function callClaudeAPI(system, messages, extra = {}) {
   const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
   if (!text) throw new Error('EMPTY: no text block in response');
   pushAILog({ taskType: extra.taskType || 'CHAT', provider: data._provider || 'unknown', model: data._model, ok: true, fallbackUsed: !!data.fallbackUsed, latency: Date.now() - started });
+  LAST_AI_META.provider = data._provider || null; LAST_AI_META.model = data._model || null;
   return text;
 }
 
@@ -3545,219 +3553,518 @@ function pickEnterOrder() {
   return withDelay;
 }
 
-function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, setCharacterTitle, talkToNpc, sendCouncilChat, appendCouncilRoom }) {
+// ===================== ШТАБ: живые наставники =====================
+const VALID_STATS = ['physical', 'discipline', 'knowledge', 'focus', 'finance', 'career', 'creator', 'social', 'mental'];
+const SWEAR_RULE = { none: 'не материшься вообще', light: 'иногда крепкое словцо, но без мата', medium: 'можешь редко лёгкий мат, если к месту', heavy: 'материшься по-дружески, но не оскорбляешь игрока' };
+
+function mentorBrief(id, st) {
+  const today = todayStr();
+  const habits = st.habits || [];
+  const h = (x) => ({ t: x.title, streak: x.streakCurrent || 0, best: x.bestStreak || 0, done: x.lastDoneDate === today });
+  const checkin = st.dailyCheckin && st.dailyCheckin.date === today ? st.dailyCheckin : null;
+  const base = { герой: st.character?.name, уровень: st.character?.level, время: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) };
+  const route = st.dayRoute && st.dayRoute.date === today ? st.dayRoute.ids.length : 0;
+  if (id === 'brum') return { ...base, тело: st.stats?.physical, вес: latestWeight(st.body), рост: st.body?.heightCm, сон_часов: checkin ? checkin.sleepHours : null, привычки_тела: habits.filter(x => x.stat === 'physical').slice(0, 6).map(h) };
+  if (id === 'kasper') {
+    const f = st.finance || {};
+    return { ...base, кэш: f.cashBalance, долги: (f.debts || []).filter(d => d.remaining > 0).slice(0, 5).map(d => ({ t: d.title, осталось: d.remaining })), траты: (f.transactions || []).slice(-6).map(t => ({ t: t.title, сумма: t.amount, тип: t.type, дата: t.date })), копилки: (f.savingsGoals || []).slice(0, 4).map(g => ({ t: g.title, есть: g.saved, цель: g.target })) };
+  }
+  if (id === 'nori') { const yt = normalizeYoutube(st.youtube || { channels: [] }); return { ...base, каналы: yt.channels.map(c => c.title || c.name).slice(0, 3), идеи: yt.ideas.slice(-6).map(i => i.title), в_работе: yt.contentItems.filter(i => i.status !== 'PUBLISHED').length }; }
+  if (id === 'mira') return { ...base, цели: (st.goals || []).slice(0, 6).map(g => ({ t: g.title, прогресс: g.progress || 0, срок: g.deadline })), активных_заданий: (st.quests || []).filter(q => q.status === 'active').length };
+  if (id === 'vera') { const tx = (st.coinTransactions || []).filter(t => dayOfTs(t.timestamp) === today); return { ...base, монеты: st.coins, заработано_сегодня: tx.filter(t => t.type === 'earn').reduce((s, t) => s + t.amount, 0), потрачено_сегодня: tx.filter(t => t.type === 'spend').reduce((s, t) => s + t.amount, 0) }; }
+  if (id === 'tio') return { ...base, привычки: habits.slice(0, 8).map(h), сорванные: habits.filter(x => !x.streakCurrent && (x.bestStreak || 0) >= 3).map(x => x.title).slice(0, 4), энергия_чекин: checkin ? checkin.energy || null : null };
+  return { ...base, маршрут_дня: route, сделано_сегодня: (st.dayRoute && st.dayRoute.date === today) ? st.dayRoute.ids.filter(k => routeItemDone(st, k, today)).length : 0, характеристики: st.stats, задания: (st.quests || []).filter(q => q.status === 'active').slice(0, 4).map(q => q.title) };
+}
+
+// Реплика дня без ИИ — персонаж реагирует на реальные данные.
+function npcDailyLine(id, st) {
+  const today = todayStr();
+  const habits = st.habits || [];
+  const pick = (arr) => arr[Math.abs(hashSeed(today + id)) % arr.length];
+  if (id === 'brum') {
+    const moved = habits.some(h => h.stat === 'physical' && h.lastDoneDate === today) || (st.quests || []).some(q => q.status === 'completed' && q.stat === 'physical' && dayOfTs(q.completedAt) === today);
+    return moved ? pick(['Сегодня вспотел. Уважаю.', 'Видел, ты двигался. Продолжай, не расслабляйся.']) : pick(['Ноль движения сегодня. Встал и пошёл.', 'Мышцы сами себя не накачают, герой.']);
+  }
+  if (id === 'kasper') { const d = (st.finance?.debts || []).filter(x => x.remaining > 0).length; return d ? `Долгов ${d}. Я помню каждый, даже когда сплю.` : pick(['Долгов нет. Подозрительно спокойно.', 'Кэш на месте. Не трогай без нужды.']); }
+  if (id === 'nori') { const yt = normalizeYoutube(st.youtube || { channels: [] }); const w = yt.contentItems.filter(i => i.status !== 'PUBLISHED').length; return yt.channels.length ? (w ? `В работе ${w} роликов. Где монтаж, еу?` : 'Пайплайн пустой. Снимаем или страдаем?') : 'Канала нет, а потенциал есть. Подумай.'; }
+  if (id === 'mira') { const g = (st.goals || []).filter(x => (x.progress || 0) < 100); return g.length ? `Целей в работе: ${g.length}. Ближайшая — «${String(g[0].title).slice(0, 26)}».` : 'Целей нет. Это пугает меня больше дедлайнов.'; }
+  if (id === 'vera') return `В казне ${st.coins || 0} монет. Каждую считаю.`;
+  if (id === 'tio') { const best = habits.reduce((m, h) => Math.max(m, h.streakCurrent || 0), 0); const broken = habits.filter(h => !h.streakCurrent && (h.bestStreak || 0) >= 3).length; return broken ? `${broken} серии оборвались… я не осуждаю. Почти.` : best ? `Лучшая серия — ${best} дн. Береги огонь.` : 'Начни с одной маленькой привычки. Я подожду.'; }
+  const r = st.dayRoute && st.dayRoute.date === today ? st.dayRoute : null;
+  if (r) { const done = r.ids.filter(k => routeItemDone(st, k, today)).length; return done >= r.ids.length && r.ids.length ? 'Маршрут пройден. Достойно.' : `Маршрут ${done}/${r.ids.length}. Не расслабляйся.`; }
+  return 'Говори по делу. Время дорого.';
+}
+
+// Кому выступать на совете: по проблемам в данных и по теме.
+function pickMeetingSpeakers(st, topic) {
+  const score = { brum: 0, kasper: 0, nori: 0, mira: 0, vera: 0, tio: 0 };
+  const today = todayStr();
+  if ((st.stats?.physical || 0) < 35) score.brum += 2;
+  if (!(st.habits || []).some(h => h.stat === 'physical' && h.lastDoneDate === today)) score.brum += 1;
+  if ((st.finance?.debts || []).some(d => d.remaining > 0)) score.kasper += 3;
+  if ((st.finance?.transactions || []).length) score.kasper += 1;
+  const yt = normalizeYoutube(st.youtube || { channels: [] });
+  if (yt.channels.length) score.nori += 2;
+  if ((st.goals || []).length) score.mira += 2; else score.mira += 1;
+  if ((st.coins || 0) > 800) score.vera += 2;
+  if ((st.habits || []).some(h => !h.streakCurrent && (h.bestStreak || 0) >= 3)) score.tio += 3;
+  const t = String(topic || '').toLowerCase();
+  const hit = detectNpcHandoff('none', t);
+  if (hit && score[hit] !== undefined) score[hit] += 5;
+  return Object.entries(score).map(([id, v]) => [id, v + Math.random()]).sort((a, b) => b[1] - a[1]).slice(0, 3).map(x => x[0]);
+}
+
+function mentorSystemPrompt(npc, st, mode) {
+  const bond = (normalizeCouncil(st.council).bonds || {})[npc.id] || emptyNpcBond(npc.id);
+  const pres = npcPresence(npc.id);
+  const pw = NPC_POWERS[npc.id] || NPC_POWERS.kaylen;
+  const roster = COUNCIL_NPCS.filter(n => n.id !== npc.id).map(n => `${n.name} (${n.id}) — ${n.domain}`).join('; ');
+  const actionsSpec = pw.types.map(t => ({
+    quest: '{"type":"quest","title":"конкретное действие на сегодня","stat":"' + pw.stat + '"}',
+    habit: '{"type":"habit","title":"ежедневная привычка","stat":"' + pw.stat + '"}',
+    goal: '{"type":"goal","title":"цель","deadline":"ГГГГ-ММ-ДД или null"}',
+    yt_idea: '{"type":"yt_idea","title":"идея ролика"}',
+    expense: '{"type":"expense","title":"на что","amount":число} — только если игрок сам назвал сумму',
+    income: '{"type":"income","title":"откуда","amount":число} — только если игрок сам назвал сумму',
+    savings: '{"type":"savings","title":"на что копим","target":число}',
+  }[t])).join(', ');
+  const modeRule = mode === 'open' ? 'Сейчас ты ОТКРЫВАЕШЬ совет: коротко обозначь 1–2 главные проблемы по данным и скажи, кого хочешь услышать.'
+    : mode === 'meeting' ? 'Идёт совет. Ответь в 1–3 предложениях по своей зоне, можно обратиться к коллеге по имени, поспорить или поддержать.'
+    : mode === 'close' ? 'Ты ЗАКРЫВАЕШЬ совет: итог в 1–2 предложениях и до 3 решений. Решения клади в "decisions": [{"owner":"id коллеги или kaylen", ...действие}]. Owner — тот, чей это раздел.'
+    : 'Это личный разговор один на один в мессенджере.';
+  return [
+    `Ты — ${npc.name}, ${npc.role} в штабе наставников игрока (игра Life RPG). Ты живой человек со своим характером, не бот и не ассистент.`,
+    `Характер: ${npc.vibe} Мат: ${SWEAR_RULE[npc.swear] || SWEAR_RULE.light}.`,
+    `Твоя зона: ${npc.domain}. Твой раздел в игре: ${pw.section}. Коллеги: ${roster}.`,
+    `Сейчас ты ${pres.status}. Отношение к игроку: ${affinityWord(bond.affinity)} (${bond.affinity}/100), настроение: ${bond.mood || 'обычное'}.`,
+    modeRule,
+    'Как говорить: по-русски, на «ты», коротко, как в мессенджере. Без списков, без канцелярита, без «Конечно! Вот…». Реагируй на сказанное и на свежие данные из блока «вижу» — цифры только оттуда. Помни историю и прошлое. Можно подколоть, похвалить, обидеться, задать встречный вопрос. Не здоровайся каждый раз и не повторяй свои прошлые фразы.',
+    'Чужая тема — своими словами отправь к коллеге и поставь "handoff": id коллеги.',
+    `Действия в своём разделе (только если игрок попросил или явно согласился, максимум 3): ${actionsSpec}.`,
+    mode === 'close'
+      ? 'Ответ ТОЛЬКО JSON: {"text":"итог","decisions":[]}'
+      : 'Ответ ТОЛЬКО JSON: {"text":"реплика","mood":"одно слово","actions":[],"handoff":null}',
+  ].join('\n');
+}
+
+// Применить правки наставника в его разделе. Возвращает новое состояние и квитанцию для отмены.
+function applyMentorActions(prev, npcId, actions) {
+  const npc = COUNCIL_NPCS.find(n => n.id === npcId) || { name: npcId };
+  const pw = NPC_POWERS[npcId] || NPC_POWERS.kaylen;
+  let next = { ...prev };
+  const receipt = [];
+  (actions || []).slice(0, 4).forEach(a => {
+    if (!a || !pw.types.includes(a.type)) return;
+    const title = String(a.title || a.label || '').trim().slice(0, 80);
+    if (!title) return;
+    const stat = VALID_STATS.includes(a.stat) ? a.stat : pw.stat;
+    if (a.type === 'quest') {
+      if ((next.quests || []).some(q => q.status === 'active' && q.title.toLowerCase() === title.toLowerCase())) return;
+      const id = uid();
+      next.quests = [...next.quests, { id, title, type: 'Daily', difficulty: 'Easy', xp: 25, coins: 8, stat, status: 'active', deadline: todayStr() + 'T23:59', order: next.nextOrder || 1, createdAt: Date.now(), byMentor: npcId }];
+      next.nextOrder = (next.nextOrder || 1) + 1;
+      receipt.push({ type: 'quest', id, label: title });
+    } else if (a.type === 'habit') {
+      if ((next.habits || []).some(h => (h.title || '').toLowerCase() === title.toLowerCase())) return;
+      const id = uid();
+      next.habits = [...(next.habits || []), { id, title, stat, secondaryStat: null, level: 1, streakCurrent: 0, bestStreak: 0, lastDoneDate: null, createdAt: Date.now(), sortIndex: (next.habits || []).length, slot: classifyHabitSlot(title).slot, byMentor: npcId }];
+      receipt.push({ type: 'habit', id, label: title });
+    } else if (a.type === 'goal') {
+      const id = uid();
+      const dl = /^\d{4}-\d{2}-\d{2}$/.test(String(a.deadline || '')) ? a.deadline : null;
+      next.goals = [...(next.goals || []), { id, title, description: '', deadline: dl, sphere: 'career', progress: 0, createdAt: Date.now(), updatedAt: Date.now(), byMentor: npcId }];
+      receipt.push({ type: 'goal', id, label: title });
+    } else if (a.type === 'yt_idea') {
+      const id = uid();
+      const yt = normalizeYoutube(next.youtube || { channels: [] });
+      next.youtube = { ...(next.youtube || {}), ideas: [...(yt.ideas || []), { id, title, status: 'new', createdAt: Date.now(), byMentor: npcId }] };
+      receipt.push({ type: 'yt_idea', id, label: title });
+    } else if (a.type === 'expense' || a.type === 'income') {
+      const amount = Math.abs(Number(a.amount) || 0);
+      if (!amount || !next.finance) return;
+      const id = uid();
+      const tx = { id, type: a.type, title, amount, category: a.type === 'income' ? 'other' : 'other_life', date: todayStr(), recurring: false, essential: false, source: 'mentor', ts: Date.now() };
+      next.finance = { ...next.finance, transactions: [...(next.finance.transactions || []), tx], cashBalance: (next.finance.cashBalance || 0) + (a.type === 'income' ? amount : -amount) };
+      receipt.push({ type: a.type, id, label: `${title} — ${amount}`, amount });
+    } else if (a.type === 'savings') {
+      const target = Math.abs(Number(a.target) || 0);
+      if (!target || !next.finance) return;
+      const id = uid();
+      next.finance = { ...next.finance, savingsGoals: [...(next.finance.savingsGoals || []), { id, title, target, saved: 0, deadline: null, type: 'goal' }] };
+      receipt.push({ type: 'savings', id, label: `${title} — ${target}` });
+    }
+  });
+  if (receipt.length) next.chronicle = [{ id: uid(), ts: Date.now(), type: 'SYSTEM', text: `${npc.name} внёс в раздел «${pw.section}»: ${receipt.map(r => r.label).join(', ')}` }, ...(next.chronicle || [])].slice(0, 300);
+  return { state: next, receipt };
+}
+
+function undoMentorItems(prev, receipt) {
+  let next = { ...prev };
+  (receipt || []).forEach(r => {
+    if (r.type === 'quest') next.quests = next.quests.filter(q => q.id !== r.id);
+    else if (r.type === 'habit') next.habits = (next.habits || []).filter(h => h.id !== r.id);
+    else if (r.type === 'goal') next.goals = (next.goals || []).filter(g => g.id !== r.id);
+    else if (r.type === 'yt_idea') { const yt = normalizeYoutube(next.youtube || { channels: [] }); next.youtube = { ...(next.youtube || {}), ideas: (yt.ideas || []).filter(i => i.id !== r.id) }; }
+    else if ((r.type === 'expense' || r.type === 'income') && next.finance) {
+      const tx = (next.finance.transactions || []).find(t => t.id === r.id);
+      if (tx) next.finance = { ...next.finance, transactions: next.finance.transactions.filter(t => t.id !== r.id), cashBalance: next.finance.cashBalance - (tx.type === 'income' ? tx.amount : -tx.amount) };
+    } else if (r.type === 'savings' && next.finance) next.finance = { ...next.finance, savingsGoals: (next.finance.savingsGoals || []).filter(g => g.id !== r.id) };
+  });
+  return next;
+}
+
+function parseMentorJson(raw) {
+  try { const d = parseCouncilJson(raw); if (d && (d.text || d.decisions || d.actions)) return d; } catch (e) {}
+  const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+  try { const s = cleaned.indexOf('{'); const e = cleaned.lastIndexOf('}'); if (s >= 0 && e > s) return JSON.parse(cleaned.slice(s, e + 1)); } catch (e) {}
+  return { text: cleaned.replace(/^\{|\}$/g, '').slice(0, 500), actions: [] };
+}
+
+const MENTOR_CHIPS = {
+  kaylen: ['Что главное сегодня?', 'Разнеси мой день', 'Оцени мою неделю'],
+  brum: ['Дай тренировку на сегодня', 'Как мой сон?', 'Добавь привычку для тела'],
+  kasper: ['Где дыра в деньгах?', 'Потратил 50 000 на такси', 'Заведи копилку на отпуск'],
+  nori: ['Дай идею ролика', 'Что снимать на неделе?', 'Разбери мой канал'],
+  mira: ['Разбей мою цель на шаги', 'Поставь цель на месяц', 'Что горит по срокам?'],
+  vera: ['Не жирные ли у меня награды?', 'Сколько я заработал сегодня?'],
+  tio: ['Какая привычка мне нужна?', 'Почему я срываюсь?', 'Добавь привычку отдыха'],
+};
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+function BrainBadge({ provider, small }) {
+  if (!provider) return null;
+  return <span className="lrpg-mono" style={{ fontSize: small ? 8 : 9, color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: small ? '1px 5px' : '2px 6px', whiteSpace: 'nowrap' }}>{PROVIDER_LABEL[provider] || provider}</span>;
+}
+
+function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, talkToNpc, askMentor, undoMentorReceipt, approveMentorDecision, recordMeeting }) {
+  useCouncilCss();
   const council = normalizeCouncil(state.council);
   const [view, setView] = useState('hall');
   const [topic, setTopic] = useState('');
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  const [joining, setJoining] = useState([]);
-  const [typingWho, setTypingWho] = useState(null);
-  const [meeting, setMeeting] = useState(null);
-  const due = councilDue(state.council);
-  const pending = council.pending;
+  const [arrived, setArrived] = useState({});
+  const [speaking, setSpeaking] = useState(null);
+  const [typing, setTyping] = useState(null);
+  const [lines, setLines] = useState([]);
+  const [decisions, setDecisions] = useState([]);
+  const [meetTopic, setMeetTopic] = useState('');
+  const scrollRef = useRef(null);
   const npcId = view.startsWith('npc:') ? view.slice(4) : null;
   const npc = COUNCIL_NPCS.find(n => n.id === npcId);
   const dm = npc ? (council.chats[npc.id] || []) : [];
-  const room = council.room || [];
+  const pending = council.pending;
+  const npcById = Object.fromEntries(COUNCIL_NPCS.map(n => [n.id, n]));
+  const hallPresent = Object.fromEntries(COUNCIL_NPCS.map(n => { const p = npcPresence(n.id); return [n.id, { arrived: p.here, sleep: !!p.sleep }]; }));
 
-  async function playLines(lines) {
-    for (const line of lines || []) {
-      setTypingWho(line.who);
-      await new Promise(r => setTimeout(r, 650 + Math.random() * 900));
-      setJoining(prev => [...prev, line]);
-      if (appendCouncilRoom) appendCouncilRoom([line]);
-      setTypingWho(null);
-      await new Promise(r => setTimeout(r, 280));
-    }
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [dm.length, lines.length, typing, busy, view]);
+  useEffect(() => { try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) {} }, [view]);
+
+  const push = (l) => setLines(prev => [...prev, { id: Math.random().toString(36).slice(2), ts: Date.now(), ...l }]);
+  async function say(id, payload, mode, transcript) {
+    setTyping(id);
+    const res = await askMentor(id, { тема: meetTopic || topic, стенограмма: (transcript || []).slice(-8).map(l => ({ кто: l.who === 'you' ? 'игрок' : (npcById[l.who] || {}).name || l.who, текст: l.text })), ...payload }, mode);
+    setTyping(null);
+    setSpeaking(id);
+    gameFeedback('BUTTON_PRESS');
+    const line = { who: id, text: res.text, provider: res.provider, failed: res.failed };
+    push(line);
+    setTimeout(() => setSpeaking(cur => (cur === id ? null : cur)), Math.min(4200, 900 + res.text.length * 28));
+    return { res, line };
   }
 
-  async function startRoom() {
-    const theme = topic.trim() || 'Встреча штаба';
-    setView('room'); setErr(null); setTypingWho(null);
-    setMeeting({ title: theme, at: Date.now() });
-    const divider = { id: 'meet-' + Date.now(), kind: 'meet', who: 'system', text: theme, ts: Date.now() };
-    setJoining([divider]);
-    if (appendCouncilRoom) appendCouncilRoom([divider]);
+  async function startMeeting() {
+    const theme = topic.trim() || 'Как идут дела у героя';
+    setMeetTopic(theme); setTopic('');
+    setView('room'); setErr(null); setLines([]); setDecisions([]); setArrived({}); setSpeaking(null); setTyping(null);
     setBusy(true);
-    const order = pickEnterOrder();
-    const aiP = sendCouncilChat(theme, null, 'open').catch(e => { setErr(e.message || String(e)); return []; });
-    let acc = [];
+    gameFeedback('SHEET_OPEN');
+    await wait(450);
+    const order = COUNCIL_NPCS.map(n => {
+      const pres = npcPresence(n.id);
+      const late = !pres.here || Math.random() < n.late;
+      return { n, pres, t: (n.id === 'kaylen' ? 0 : 300 + Math.random() * 700) + (late ? 1400 + Math.random() * 1200 : 0), late };
+    }).sort((x, y) => x.t - y.t);
+    let tPrev = 0;
+    const transcript = [];
     for (const step of order) {
-      setTypingWho(step.n.id);
-      await new Promise(r => setTimeout(r, Math.min(step.t, 1600)));
-      const line = { id: 'join-' + step.n.id + Date.now(), who: step.n.id, text: step.n.enter[Math.floor(Math.random() * step.n.enter.length)], kind: 'join', ts: Date.now() };
-      acc = [...acc, line];
-      setJoining(acc);
-      setTypingWho(null);
-      await new Promise(r => setTimeout(r, 220));
+      await wait(Math.max(160, step.t - tPrev));
+      tPrev = step.t;
+      setArrived(prev => ({ ...prev, [step.n.id]: true }));
+      gameFeedback('NAV');
+      const enter = step.pres.here ? step.n.enter[Math.floor(Math.random() * step.n.enter.length)] : `(${step.pres.status}) ${step.n.enter[0]}`;
+      const l = { who: step.n.id, text: enter, kind: 'join' };
+      push(l); transcript.push(l);
     }
-    const lines = await aiP;
-    await playLines(lines);
-    setTopic('');
-    setBusy(false);
-  }
-
-  async function sendRoom() {
-    if (!draft.trim() || busy) return;
-    const text = draft.trim(); setDraft(''); setBusy(true); setErr(null);
+    await wait(500);
     try {
-      const lines = await sendCouncilChat(text, null, 'talk');
-      await playLines(lines);
+      const open = await say('kaylen', { задача: 'открыть совет' }, 'open', transcript);
+      transcript.push(open.line);
+      const speakers = pickMeetingSpeakers(state, theme);
+      for (const id of speakers) {
+        await wait(350);
+        const r = await say(id, {}, 'meeting', transcript);
+        transcript.push(r.line);
+      }
+      await wait(400);
+      const close = await say('kaylen', { задача: 'подвести итог и предложить решения' }, 'close', transcript);
+      transcript.push(close.line);
+      const dec = (close.res.decisions || []).map(d => ({ ...d, owner: NPC_POWERS[d.owner] ? d.owner : 'kaylen' }))
+        .filter(d => (NPC_POWERS[d.owner].types || []).includes(d.type) && (d.title || d.label)).slice(0, 3)
+        .map(d => ({ ...d, title: String(d.title || d.label).slice(0, 80), key: Math.random().toString(36).slice(2), status: 'new' }));
+      setDecisions(dec);
+      recordMeeting(theme, transcript.filter(l => l.kind !== 'join'), close.res.text);
+      gameFeedback('ACHIEVEMENT_UNLOCK', { title: 'Совет завершён' });
     } catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
   }
 
-  async function sendDm() {
-    if (!draft.trim() || !npc || busy) return;
-    const text = draft.trim(); setDraft(''); setBusy(true); setErr(null);
+  async function talkInMeeting() {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setDraft(''); setBusy(true); setErr(null);
+    const mine = { who: 'you', text };
+    push(mine);
+    const transcript = [...lines, mine];
+    const first = detectNpcHandoff('none', text) || 'kaylen';
+    const others = pickMeetingSpeakers(state, text).filter(x => x !== first);
+    const responders = [first, ...(Math.random() < 0.55 && others[0] ? [others[0]] : [])];
     try {
-      const res = await talkToNpc(npc.id, text);
-      if (res && res.handoff) {
-        const dest = COUNCIL_NPCS.find(n => n.id === res.handoff);
-        setErr(dest ? ('Перейти к ' + dest.name + '? Жми карточку в зале — открою.') : null);
-        setTimeout(() => { setView('npc:' + res.handoff); setDraft(''); setErr(null); }, 700);
+      for (const id of responders) {
+        const r = await say(id, { игрок_сказал: text }, 'meeting', transcript);
+        transcript.push(r.line);
+        await wait(300);
       }
     } catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
   }
 
-  async function reco() {
-    setBusy(true); setErr(null);
-    try { await runCouncil(due || 'topic', topic); }
+  async function sendDm(textArg) {
+    const text = (textArg || draft).trim();
+    if (!text || !npc || busy) return;
+    setDraft(''); setBusy(true); setErr(null);
+    try { await talkToNpc(npc.id, text); }
     catch (e) { setErr(e.message || String(e)); }
     setBusy(false);
   }
 
+  const bubbleStyle = (mine) => ({
+    fontSize: 14, lineHeight: 1.45, padding: '9px 12px', borderRadius: mine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+    background: mine ? COLORS.text : COLORS.bgCard, color: mine ? COLORS.bg : COLORS.text,
+    border: mine ? 'none' : `1px solid ${COLORS.border}`, boxShadow: '0 1px 0 #e9e3d6',
+  });
+  const backBtn = (
+    <button className="lrpg-btn" onClick={() => { gameFeedback('MENU_CLOSE'); setView('hall'); setErr(null); }} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '8px 12px', color: COLORS.text, fontSize: 13, fontWeight: 600 }}>← Штаб</button>
+  );
+
+  // ---------- Совет за круглым столом ----------
   if (view === 'room') {
-    const shown = [...joining.filter(j => !room.some(r => r.kind === 'join' && r.who === j.who)), ...room];
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: 'calc(100dvh - 148px)', minHeight: 420 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100dvh - 150px)', minHeight: 460 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
-          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', color: COLORS.text, fontSize: 13 }}>← Зал</button>
-          <div style={{ fontSize: 14, fontWeight: 800 }}>Совет</div>
-          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 12, color: COLORS.textMuted }}>Выйти</button>
+          {backBtn}
+          <div style={{ textAlign: 'right', minWidth: 0 }}>
+            <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold }}>Совет наставников</div>
+            <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>{meetTopic}</div>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, minHeight: 52, marginBottom: 4 }}>
-          {COUNCIL_NPCS.filter(n => shown.some(m => m.who === n.id)).map((n, i) => (
-            <div key={n.id} style={{
-              width: 44, textAlign: 'center', animation: 'lrpg-npc-in .45s ease-out both', animationDelay: `${i * 40}ms`,
-            }}>
-              <div style={{
-                width: 40, height: 40, borderRadius: '50%', margin: '0 auto',
-                background: 'linear-gradient(180deg,#2a2540,#151822)',
-                border: typingWho === n.id ? '1px solid #2f6b6e' : '1px solid rgba(47,62,107,.45)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
-                animation: typingWho === n.id ? 'lrpg-pulse 1.1s ease-out infinite' : 'none',
-              }}>{n.emoji}</div>
-              <div style={{ fontSize: 9, color: typingWho === n.id ? '#2f6b6e' : COLORS.textMuted, marginTop: 2 }}>{n.name}</div>
-            </div>
-          ))}
+        <div className="lrpg-paper" style={{ overflow: 'hidden', flexShrink: 0 }}>
+          <RoundTable present={Object.fromEntries(Object.keys(arrived).map(id => [id, { arrived: true }]))} speaking={speaking} typing={typing} />
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 8 }}>
-          {shown.map(m => {
-            if (m.kind === 'meet') {
-              const tm = new Date(m.ts || Date.now()).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-              return (
-                <div key={m.id || m.ts} style={{ alignSelf: 'center', textAlign: 'center', margin: '10px 0', animation: 'lrpg-div .35s ease-out' }}>
-                  <div style={{ fontSize: 10, letterSpacing: 1, color: COLORS.textMuted, textTransform: 'uppercase' }}>встреча</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: '#1e2230' }}>{m.text}</div>
-                  <div style={{ fontSize: 11, color: '#2f6b6e', marginTop: 2 }}>{tm}</div>
-                </div>
-              );
-            }
-            const n = COUNCIL_NPCS.find(x => x.id === m.who);
+        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 9, paddingBottom: 6 }}>
+          {lines.map(m => {
+            const n = npcById[m.who];
             const mine = m.who === 'you';
+            if (m.kind === 'join') return (
+              <div key={m.id} className="lrpg-stagger" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: COLORS.textMuted }}>
+                <NpcPortrait id={m.who} size={22} blink={false} />
+                <span><b style={{ color: COLORS.text }}>{n?.name}</b> входит: «{m.text}»</span>
+              </div>
+            );
             return (
-              <div key={m.id || m.ts} style={{
-                alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%',
-                animation: 'lrpg-pop .32s cubic-bezier(.2,1.4,.4,1)',
-              }}>
-                {m.kind === 'join' && (
-                  <div style={{ fontSize: 10, color: COLORS.teal, marginBottom: 2 }}>вошёл в комнату</div>
-                )}
-                <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>{mine ? 'Ты' : `${n?.emoji || ''} ${n?.name || m.who}`}</div>
-                <div style={{
-                  fontSize: 13, padding: '8px 10px', borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                  background: mine ? 'linear-gradient(180deg,#5b54d6,#a4412a)' : 'rgba(255,255,255,0.07)',
-                  boxShadow: mine ? '0 6px 16px rgba(47,62,107,.25)' : 'none',
-                }}>{m.text}</div>
+              <div key={m.id} className="lrpg-stagger" style={{ display: 'flex', gap: 8, alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '92%', flexDirection: mine ? 'row-reverse' : 'row' }}>
+                {!mine && <NpcPortrait id={m.who} size={34} talking={speaking === m.who} />}
+                <div style={{ minWidth: 0 }}>
+                  {!mine && <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}><span style={{ fontSize: 12, fontWeight: 700 }}>{n?.name}</span><span style={{ fontSize: 11, color: COLORS.textMuted }}>{n?.role}</span><BrainBadge provider={m.provider} small /></div>}
+                  <div style={bubbleStyle(mine)}>{m.text}</div>
+                </div>
               </div>
             );
           })}
-          {typingWho && (
-            <div style={{ alignSelf: 'flex-start', animation: 'lrpg-pop .25s ease-out' }}>
-              <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>{(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).name} печатает</div>
-              <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderRadius: '14px 14px 14px 4px', background: 'rgba(255,255,255,0.07)' }}>
-                {[0,1,2].map(i => <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#2f6b6e', animation: `lrpg-dot 1s ${i*0.15}s infinite` }} />)}
+          {typing && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <NpcPortrait id={typing} size={34} />
+              <div style={{ ...bubbleStyle(false), display: 'flex', gap: 4, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: COLORS.textMuted, marginRight: 4 }}>{npcById[typing]?.name} думает</span>
+                {[0, 1, 2].map(i => <span key={i} className="cn-dot" style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.gold, animationDelay: `${i * 0.15}s` }} />)}
               </div>
             </div>
           )}
+          {decisions.length > 0 && (
+            <div className="lrpg-paper lrpg-stagger" style={{ padding: 12, borderColor: 'rgba(164,65,42,.45)' }}>
+              <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold }}>Решения совета</div>
+              <div className="lrpg-display" style={{ fontSize: 17, fontWeight: 700, margin: '2px 0 8px' }}>Утверди, и всё попадёт в разделы</div>
+              {decisions.map(d => (
+                <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0', borderTop: `1px dashed ${COLORS.borderLight}` }}>
+                  <NpcPortrait id={d.owner} size={30} blink={false} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>{ACTION_LABEL[d.type] || d.type} · {NPC_POWERS[d.owner].section}</div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, textDecoration: d.status === 'skip' ? 'line-through' : 'none' }}>{d.title}{d.amount ? ` — ${d.amount}` : ''}{d.target ? ` — ${d.target}` : ''}</div>
+                  </div>
+                  {d.status === 'new' ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="lrpg-btn" onClick={() => { approveMentorDecision(d); setDecisions(ds => ds.map(x => x.key === d.key ? { ...x, status: 'ok' } : x)); }} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 10, padding: '7px 10px', fontSize: 12, fontWeight: 700 }}>Утвердить</button>
+                      <button className="lrpg-btn" onClick={() => setDecisions(ds => ds.map(x => x.key === d.key ? { ...x, status: 'skip' } : x))} aria-label="Пропустить" style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '7px 9px', color: COLORS.textMuted }}><X size={14} /></button>
+                    </div>
+                  ) : (
+                    <span className="lrpg-mono" style={{ fontSize: 9, color: d.status === 'ok' ? COLORS.green : COLORS.textMuted }}>{d.status === 'ok' ? 'принято' : 'пропущено'}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
+        {err && <div style={{ fontSize: 12, color: COLORS.crimson }}>{err}</div>}
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <input className="lrpg-input" placeholder="Скажи совету что угодно" value={draft} onChange={e => setDraft(e.target.value)} />
-          <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={sendRoom}>➤</button>
+          <input className="lrpg-input" placeholder={busy ? 'Совет говорит…' : 'Скажи совету'} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') talkInMeeting(); }} />
+          <button className="lrpg-btn" disabled={busy} onClick={talkInMeeting} aria-label="Отправить" style={{ background: busy ? COLORS.bgCardAlt : COLORS.gold, color: '#fbf9f4', borderRadius: 10, padding: '0 16px', fontWeight: 700 }}><Send size={16} /></button>
         </div>
       </div>
     );
   }
 
+  // ---------- Личный разговор ----------
   if (npc) {
+    const bond = council.bonds[npc.id] || emptyNpcBond(npc.id);
+    const pres = npcPresence(npc.id);
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: 'calc(100dvh - 148px)', minHeight: 420 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, height: 'calc(100dvh - 150px)', minHeight: 460 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 13 }}>← Зал</button>
-          <button className="lrpg-btn" onClick={() => setView('hall')} style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '8px 12px', fontSize: 12, color: COLORS.textMuted }}>Выйти</button>
+          {backBtn}
+          <BrainBadge provider={NPC_BRAIN[npc.id]} />
         </div>
-        <div style={{ fontSize: 15, fontWeight: 800, flexShrink: 0 }}>{npc.emoji} {npc.name}</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted, flexShrink: 0 }}>{npc.role} · связь {(council.bonds[npc.id] || {}).affinity ?? 40}</div>
-        <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {dm.length === 0 && <div style={{ fontSize: 12, color: COLORS.textMuted }}>{npc.greet[0]}</div>}
-        {dm.map(m => (
-          <div key={m.ts} style={{ alignSelf: m.who === 'you' ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
-            <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: m.who === 'you' ? 'rgba(47,62,107,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
+        <div className="lrpg-paper" style={{ display: 'flex', gap: 12, alignItems: 'center', padding: 12, flexShrink: 0 }}>
+          <NpcPortrait id={npc.id} size={64} talking={busy} sleep={pres.sleep && !busy} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span className="lrpg-display" style={{ fontSize: 22, fontWeight: 700 }}>{npc.name}</span>
+              <span style={{ fontSize: 12, color: COLORS.textMuted }}>{npc.role}</span>
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.teal, marginTop: 1 }}>{busy ? 'печатает…' : pres.status}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+              <AffinityHearts value={bond.affinity} />
+              <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>{affinityWord(bond.affinity)}{bond.mood ? ' · ' + bond.mood : ''}</span>
+            </div>
           </div>
-        ))}
-        {busy && <div style={{ fontSize: 11, color: COLORS.textMuted }}>{npc.name} печатает…</div>}
         </div>
-        {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
+        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column', gap: 9 }}>
+          {dm.length === 0 && (
+            <div style={{ display: 'flex', gap: 8 }}><NpcPortrait id={npc.id} size={30} /><div style={bubbleStyle(false)}>{npcDailyLine(npc.id, state)} {npc.greet[0]}</div></div>
+          )}
+          {dm.map((m, i) => {
+            const mine = m.who === 'you';
+            if (m.kind === 'receipt') return (
+              <div key={m.ts + ':' + i} className="lrpg-stagger" style={{ alignSelf: 'flex-start', marginLeft: 38, maxWidth: '85%', background: 'rgba(63,122,74,.08)', border: `1px solid ${m.undone ? COLORS.border : 'rgba(63,122,74,.4)'}`, borderRadius: 12, padding: '9px 11px' }}>
+                <div className="lrpg-mono" style={{ fontSize: 8.5, color: m.undone ? COLORS.textMuted : COLORS.green }}>{m.undone ? 'Отменено' : `Добавлено в «${(NPC_POWERS[npc.id] || {}).section}»`}</div>
+                {m.items.map(it => <div key={it.id} style={{ fontSize: 13, fontWeight: 600, marginTop: 4, textDecoration: m.undone ? 'line-through' : 'none' }}>{ACTION_LABEL[it.type] || it.type}: {it.label}</div>)}
+                {!m.undone && <button className="lrpg-btn" onClick={() => undoMentorReceipt(npc.id, m.ts)} style={{ marginTop: 7, background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, color: COLORS.text }}>Отменить</button>}
+              </div>
+            );
+            if (m.kind === 'handoff') {
+              const to = npcById[m.to];
+              return (
+                <button key={m.ts + ':' + i} className="lrpg-btn" onClick={() => { gameFeedback('NAV'); setView('npc:' + m.to); }} style={{ alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 8, background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '6px 12px', fontSize: 13, fontWeight: 600, color: COLORS.text }}>
+                  {to && <NpcPortrait id={to.id} size={24} blink={false} />} Перейти к {to ? to.name : m.to} →
+                </button>
+              );
+            }
+            if (m.who === 'system') return <div key={m.ts + ':' + i} style={{ alignSelf: 'center', fontSize: 11.5, color: COLORS.textMuted }}>{m.text}</div>;
+            return (
+              <div key={m.ts + ':' + i} className="lrpg-stagger" style={{ display: 'flex', gap: 8, alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '88%', flexDirection: mine ? 'row-reverse' : 'row' }}>
+                {!mine && <NpcPortrait id={npc.id} size={30} blink={false} />}
+                <div style={{ minWidth: 0 }}>
+                  <div style={bubbleStyle(mine)}>{m.text}</div>
+                  {!mine && m.provider && <div style={{ marginTop: 3 }}><BrainBadge provider={m.provider} small /></div>}
+                </div>
+              </div>
+            );
+          })}
+          {busy && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <NpcPortrait id={npc.id} size={30} talking />
+              <div style={{ ...bubbleStyle(false), display: 'flex', gap: 4 }}>{[0, 1, 2].map(i => <span key={i} className="cn-dot" style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.gold, animationDelay: `${i * 0.15}s` }} />)}</div>
+            </div>
+          )}
+        </div>
+        {err && <div style={{ fontSize: 12, color: COLORS.crimson }}>{err}</div>}
+        <div className="lrpg-noscroll" style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 0 }}>
+          {(MENTOR_CHIPS[npc.id] || []).map(c => (
+            <button key={c} className="lrpg-btn" disabled={busy} onClick={() => sendDm(c)} style={{ flexShrink: 0, background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 999, padding: '6px 11px', fontSize: 12, fontWeight: 600, color: COLORS.text }}>{c}</button>
+          ))}
+        </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <input className="lrpg-input" placeholder={'Написать ' + npc.name} value={draft} onChange={e => setDraft(e.target.value)} />
-          <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={sendDm}>➤</button>
+          <input className="lrpg-input" placeholder={'Написать: ' + npc.name} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') sendDm(); }} />
+          <button className="lrpg-btn" disabled={busy} onClick={() => sendDm()} aria-label="Отправить" style={{ background: busy ? COLORS.bgCardAlt : COLORS.gold, color: '#fbf9f4', borderRadius: 10, padding: '0 16px', fontWeight: 700 }}><Send size={16} /></button>
         </div>
       </div>
     );
   }
 
+  // ---------- Штаб (зал) ----------
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <ScreenHeader title="Штаб Кайлена" icon={Users} />
-      <div style={{ fontSize: 11, color: COLORS.textMuted }}>Поговори с кем-то лично или собери всех в чат. Рекомендации штаба — отдельно.</div>
-      {COUNCIL_NPCS.map(n => {
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Совет наставников</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Штаб Кайлена</div>
+      </div>
+      <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden' }}>
+        <RoundTable present={hallPresent} onPick={(id) => { gameFeedback('MENU_OPEN'); setView('npc:' + id); setDraft(''); setErr(null); }} />
+        <div style={{ padding: '10px 12px 12px', borderTop: `1px solid ${COLORS.border}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <input className="lrpg-input" placeholder="Тема совета (необязательно)" value={topic} onChange={e => setTopic(e.target.value)} />
+          <button className="lrpg-btn ag-pulse" disabled={busy} onClick={startMeeting} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 12, padding: '12px 0', fontSize: 15, fontWeight: 700, boxShadow: '0 3px 0 #7a2e1c', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Users size={17} /> Собрать совет
+          </button>
+          <div style={{ fontSize: 12, color: COLORS.textMuted }}>Тапни по наставнику за столом или в списке, чтобы поговорить лично.</div>
+        </div>
+      </div>
+
+      {COUNCIL_NPCS.map((n, i) => {
         const b = council.bonds[n.id] || emptyNpcBond(n.id);
+        const pres = npcPresence(n.id);
+        const last = (council.chats[n.id] || []).filter(m => m.text && m.who !== 'system').slice(-1)[0];
         return (
-          <button key={n.id} className="lrpg-btn" onClick={() => { setView('npc:' + n.id); setDraft(''); setErr(null); }}
-            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: 14, background: 'rgba(255,255,255,0.04)', textAlign: 'left' }}>
-            <span><span style={{ fontSize: 16 }}>{n.emoji}</span> <b>{n.name}</b> · {n.role}</span>
-            <span style={{ fontSize: 10, color: COLORS.textMuted }}>{b.affinity}</span>
+          <button key={n.id} className="lrpg-btn lrpg-paper lrpg-stagger" onClick={() => { gameFeedback('MENU_OPEN'); setView('npc:' + n.id); setDraft(''); setErr(null); }} style={{ animationDelay: `${i * 40}ms`, display: 'flex', gap: 12, alignItems: 'flex-start', padding: 12, textAlign: 'left', color: COLORS.text }}>
+            <NpcPortrait id={n.id} size={52} sleep={pres.sleep} />
+            <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>{n.name}</span>
+                <span style={{ fontSize: 12, color: COLORS.textMuted }}>{n.role}</span>
+                <BrainBadge provider={NPC_BRAIN[n.id]} small />
+              </span>
+              <span style={{ fontSize: 11.5, color: pres.here ? COLORS.teal : COLORS.textMuted }}>{pres.here ? '● ' : '○ '}{pres.status}</span>
+              <span style={{ fontSize: 13.5, lineHeight: 1.35, color: '#3a3e4a', fontStyle: 'italic' }}>«{last && last.who !== 'you' ? String(last.text).slice(0, 90) : npcDailyLine(n.id, state)}»</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                <AffinityHearts value={b.affinity} />
+                <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>{(NPC_POWERS[n.id] || {}).section}</span>
+              </span>
+            </span>
           </button>
         );
       })}
-      <input className="lrpg-input" placeholder="Тема, если есть (необязательно)" value={topic} onChange={e => setTopic(e.target.value)} />
-      <button className="lrpg-btn lrpg-cta" disabled={busy} onClick={startRoom}>{busy ? 'Собираются…' : 'Собрать совет'}</button>
-      <button className="lrpg-btn" disabled={busy} onClick={reco} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Дать рекомендации</button>
-      {err && <div style={{ fontSize: 11, color: COLORS.crimson }}>{err}</div>}
+
       {pending && (
-        <HudCard style={{ padding: 12, border: `1px solid ${COLORS.gold}55` }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold, marginBottom: 8 }}>Рекомендации штаба</div>
+        <div className="lrpg-paper" style={{ padding: 12 }}>
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, marginBottom: 8 }}>Старые рекомендации штаба</div>
           <CouncilRecoView pending={pending} />
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button className="lrpg-btn lrpg-cta" onClick={acceptCouncil}>Принять</button>
-            <button className="lrpg-btn" onClick={dismissCouncil} style={{ background: COLORS.bgCardAlt, borderRadius: 999, padding: '8px 12px' }}>Отклонить</button>
+            <button className="lrpg-btn lrpg-btn-ghost" onClick={dismissCouncil} style={{ borderRadius: 12, padding: '8px 12px' }}>Отклонить</button>
           </div>
-        </HudCard>
+        </div>
       )}
     </div>
   );
@@ -5181,62 +5488,112 @@ function addYouTubeQuest(ch, metric, delta) {
     return { ...prev, quests, habits, nextOrder, chronicle };
   }
 
+  // Спросить конкретного наставника: у каждого свой ИИ-«мозг» (NPC_BRAIN), при сбое — следующий провайдер.
+  async function askMentor(npcId, payload, mode) {
+    const npc = COUNCIL_NPCS.find(n => n.id === npcId);
+    if (!npc) throw new Error('нет такого наставника');
+    const brain = NPC_BRAIN[npcId] || 'gemini';
+    const order = [brain, ...AI_DEFAULT_ORDER.filter(x => x !== brain)];
+    const sys = mentorSystemPrompt(npc, state, mode);
+    const mem = normalizeCouncil(state.council);
+    const body = {
+      вижу: mentorBrief(npcId, state),
+      память: (mem.facts || []).slice(0, 6).map(f => (f && f.text) || f),
+      ...payload,
+    };
+    LAST_AI_META.provider = null;
+    let raw;
+    try {
+      raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify(body).slice(0, 5200) }], 2, { taskType: mode === 'dm' ? 'CHAT' : 'COUNCIL', jsonMode: true, order });
+    } catch (e) {
+      return { text: npc.greet[Math.floor(Math.random() * npc.greet.length)], actions: [], decisions: [], provider: 'local', failed: true, error: e && e.message };
+    }
+    const data = parseMentorJson(raw);
+    return {
+      text: String(data.text || data.director || '').slice(0, 600) || '…',
+      mood: data.mood ? String(data.mood).slice(0, 20) : null,
+      actions: Array.isArray(data.actions) ? data.actions : [],
+      decisions: Array.isArray(data.decisions) ? data.decisions : [],
+      handoff: data.handoff && COUNCIL_NPCS.some(n => n.id === data.handoff) && data.handoff !== npcId ? data.handoff : null,
+      provider: LAST_AI_META.provider || brain,
+    };
+  }
+
+  function bumpBond(c, npcId, delta, mood) {
+    const bonds = { ...c.bonds };
+    const b = bonds[npcId] || emptyNpcBond(npcId);
+    bonds[npcId] = { ...b, affinity: Math.max(0, Math.min(100, (b.affinity || 40) + delta)), mood: mood || b.mood, lastSpoke: Date.now() };
+    return bonds;
+  }
+
   async function talkToNpc(npcId, text) {
     const npc = COUNCIL_NPCS.find(n => n.id === npcId);
-    if (!npc) return;
-    const hist = ((state.council && state.council.chats && state.council.chats[npcId]) || []).slice(-8).map(m => ({ who: m.who, text: m.text }));
-    const ctx = ContextManager.build('CHAT', state, { npc, bond: (state.council && state.council.bonds || {})[npcId] });
-    const domainHint = {
-      brum: 'Ты хозяин раздела Тренировки. Если игрок просит упражнения — каждое упражнение отдельный action (12 приседаний, 10 отжиманий, 8 подтягиваний, 10 минут бега). НЕ одну общую задачу «план тренировки». Привычки сна — type habit.',
-      kasper: 'Ты хозяин раздела Деньги. Можешь ставить задачи про учёт трат и долги. Не выдумывай баланс.',
-      nori: 'Ты хозяин YouTube. Можешь ставить задачи снять/смонтировать конкретный ролик.',
-      mira: 'Ты хозяйка целей. Дроби большие цели на маленькие задачи на сегодня.',
-      vera: 'Ты экономист наград. Следи чтобы задачи не были жирными за ерунду.',
-      kaylen: 'Ты директор. Режешь воду, ставишь приоритет.',
-      tio: 'Ты хранитель здоровья и восстановления.',
-    }[npc.id] || npc.domain;
-    const roster = COUNCIL_NPCS.map(n => n.name + ' (' + n.id + ') — ' + n.role + ': ' + n.domain).join('; ');
-    const sys = 'Ты ' + npc.name + ', ' + npc.role + ' с опытом больше 12 лет. ' + npc.vibe + ' Зона: ' + npc.domain + '. ' + domainHint + '\n'
-      + 'Коллеги: ' + roster + '\n'
-      + 'Говори только по своей зоне. Если вопрос чужой — своим характером отправь к коллеге и поставь handoff на его id. Не давай чужих советов.\n'
-      + 'Понимай с полуслова. Не повторяй старые фразы.\n'
-      + 'Задачи ставишь только в своей зоне, по одной action на действие.\n'
-      + 'ТОЛЬКО JSON: {"text":"живая реплика","handoff":null,"actions":[{"type":"quest|habit","title":"коротко"}]}';
-    const raw = await callClaudeAPIWithRetry(sys, [{ role: 'user', content: JSON.stringify({ ctx, история: hist, сейчас_игрок_сказал: text, активные_квесты: (state.quests||[]).filter(q=>q.status==='active').map(q=>q.title).slice(0,6) }) }], 2, { taskType: 'CHAT', jsonMode: true });
-    let data;
-    try { data = parseCouncilJson(raw); } catch { data = { text: String(raw).slice(0, 400), actions: [] }; }
-    let actions = Array.isArray(data.actions) ? data.actions : [];
-    const handoff = data.handoff || detectNpcHandoff(npc.id, text);
-    if (handoff && handoff !== npc.id) {
-      actions = actions.filter(a => a.type !== 'quest' && a.type !== 'habit' && a.type !== 'task');
-    }
-    const wantTask = /добав|задач|квест|план|запиш|постав/i.test(text);
-    if (npc.id === 'brum' && !(handoff && handoff !== npc.id)) {
-      const lastNpc = [...hist].reverse().find(m => m.who === 'brum' || m.who === npc.name);
-      const extracted = extractExerciseQuests((lastNpc && lastNpc.text ? lastNpc.text : '') + ' ' + text + ' ' + String(data.text || ''));
-      if (extracted.length) actions = extracted;
-    }
-    if (wantTask && !actions.length && !(handoff && handoff !== npc.id)) {
-      const parts = String(text).split(/,| и |;/).map(s => s.trim()).filter(s => s.length > 3 && s.length < 60);
-      actions = (parts.length >= 2 ? parts : [npc.id === 'brum' ? 'Тренировка сегодня' : text.slice(0, 50)]).map(title => ({ type: 'quest', title }));
-    }
-    const reply = String(data.text || raw).slice(0, 500);
+    if (!npc) return null;
+    const hist = ((state.council && state.council.chats && state.council.chats[npcId]) || []).slice(-10).map(m => ({ кто: m.who === 'you' ? 'игрок' : m.who === npcId ? npc.name : m.who, текст: m.text }));
     setState(prev => {
-      let next = prev;
-      next = applySpokenActions(next, actions, npc.name);
-      const c = normalizeCouncil(next.council);
-      const chat = [...(c.chats[npcId] || []), { who: 'you', text, ts: Date.now() }, { who: npcId, text: reply, ts: Date.now() + 1 }];
-      if (actions.length) chat.push({ who: npcId, text: '✓ в задачи: ' + actions.map(a => a.title || a.label).join(', '), ts: Date.now() + 2 });
-      const bonds = { ...c.bonds };
-      if (bonds[npcId]) bonds[npcId] = { ...bonds[npcId], lastSpoke: Date.now(), notes: [{ ts: Date.now(), text: text.slice(0, 80) }, ...(bonds[npcId].notes || [])].slice(0, 16) };
-      const chats = { ...c.chats, [npcId]: chat.slice(-40) };
-      if (handoff && handoff !== npcId) {
-        const other = COUNCIL_NPCS.find(n => n.id === handoff);
-        chats[handoff] = [...(chats[handoff] || []), { who: 'system', text: npc.name + ' направил тебя к ' + ((other && other.name) || handoff) + '.', ts: Date.now() }].slice(-40);
-      }
-      return { ...next, council: { ...c, chats, bonds } };
+      const c = normalizeCouncil(prev.council);
+      return { ...prev, council: { ...c, chats: { ...c.chats, [npcId]: [...(c.chats[npcId] || []), { who: 'you', text, ts: Date.now() }].slice(-60) } } };
     });
-    return { handoff: handoff && handoff !== npc.id ? handoff : null };
+    const res = await askMentor(npcId, { история: hist, игрок_пишет: text }, 'dm');
+    setState(prev => {
+      const applied = res.handoff ? { state: prev, receipt: [] } : applyMentorActions(prev, npcId, res.actions);
+      const next = applied.state;
+      const c = normalizeCouncil(next.council);
+      const msgs = [...(c.chats[npcId] || []), { who: npcId, text: res.text, ts: Date.now() + 1, provider: res.provider }];
+      if (applied.receipt.length) msgs.push({ who: npcId, kind: 'receipt', items: applied.receipt, ts: Date.now() + 2 });
+      const chats = { ...c.chats, [npcId]: msgs.slice(-60) };
+      if (res.handoff) {
+        const other = COUNCIL_NPCS.find(n => n.id === res.handoff);
+        chats[res.handoff] = [...(chats[res.handoff] || []), { who: 'system', text: `${npc.name} отправил(а) тебя сюда.`, ts: Date.now() + 3 }].slice(-60);
+        msgs.push({ who: 'system', kind: 'handoff', to: res.handoff, text: `Это к ${other ? other.name : res.handoff}`, ts: Date.now() + 3 });
+        chats[npcId] = msgs.slice(-60);
+      }
+      const bonds = bumpBond(c, npcId, 2, res.mood);
+      const facts = text.length > 18 ? [{ ts: Date.now(), text: `${npc.name} слышал: ${text.slice(0, 120)}` }, ...(c.facts || [])].slice(0, 80) : c.facts;
+      return { ...next, council: { ...c, chats, bonds, facts } };
+    });
+    if (res.actions && res.actions.length && !res.handoff) gameFeedback('ITEM_PLACE');
+    return res;
+  }
+
+  function undoMentorReceipt(npcId, ts) {
+    setState(prev => {
+      const c = normalizeCouncil(prev.council);
+      const msgs = c.chats[npcId] || [];
+      const m = msgs.find(x => x.ts === ts && x.kind === 'receipt');
+      if (!m || m.undone) return prev;
+      const next = undoMentorItems(prev, m.items);
+      const chats = { ...c.chats, [npcId]: msgs.map(x => (x === m ? { ...x, undone: true } : x)) };
+      return { ...next, council: { ...c, chats, bonds: bumpBond(c, npcId, -1) }, chronicle: pushChronicle(next.chronicle, 'SYSTEM', `Отменено: ${m.items.map(i => i.label).join(', ')}`) };
+    });
+    gameFeedback('MENU_CLOSE');
+  }
+
+  // Утвердить решение совета: правка уходит в раздел владельца решения.
+  function approveMentorDecision(decision) {
+    const owner = NPC_POWERS[decision.owner] ? decision.owner : 'kaylen';
+    let ok = false;
+    setState(prev => {
+      const applied = applyMentorActions(prev, owner, [decision]);
+      if (!applied.receipt.length) return prev;
+      ok = true;
+      const c = normalizeCouncil(applied.state.council);
+      return { ...applied.state, council: { ...c, bonds: bumpBond(c, owner, 3) } };
+    });
+    gameFeedback('ITEM_PLACE');
+    return true;
+  }
+
+  function recordMeeting(topic, lines, summary) {
+    setState(prev => {
+      const c = normalizeCouncil(prev.council);
+      let bonds = c.bonds;
+      const who = [...new Set(lines.map(l => l.who).filter(w => w && w !== 'you' && w !== 'system'))];
+      who.forEach(id => { bonds = bumpBond({ ...c, bonds }, id, 1); });
+      const meeting = { ts: Date.now(), slot: councilSlotNow(), topic, director: String(summary || '').slice(0, 400), lines: lines.filter(l => l.who !== 'system').slice(0, 12).map(l => ({ id: l.who, text: String(l.text || '').slice(0, 300) })), actions: [], memory: String(summary || topic || '').slice(0, 200) };
+      const facts = summary ? [{ ts: Date.now(), text: `Совет «${topic}»: ${String(summary).slice(0, 140)}` }, ...(c.facts || [])].slice(0, 80) : c.facts;
+      return { ...prev, council: { ...c, bonds, facts, meetings: [meeting, ...(c.meetings || [])].slice(0, 30), room: [...(c.room || []), ...lines].slice(-120) } };
+    });
   }
 
   async function sendCouncilChat(text, joinLines, mode) {
@@ -6002,7 +6359,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'council' && (
-                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} setCharacterTitle={setCharacterTitle} talkToNpc={talkToNpc} sendCouncilChat={sendCouncilChat} appendCouncilRoom={appendCouncilRoom} />
+                <CouncilTab state={state} energy={energy} runCouncil={runCouncil} acceptCouncil={acceptCouncil} dismissCouncil={dismissCouncil} talkToNpc={talkToNpc} askMentor={askMentor} undoMentorReceipt={undoMentorReceipt} approveMentorDecision={approveMentorDecision} recordMeeting={recordMeeting} />
               )}
               {subTab.profile === 'mentor' && <MentorTab state={state} />}
               {subTab.profile === 'events' && (
