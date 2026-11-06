@@ -123,12 +123,13 @@ import {
   Backpack, HandMetal, Package, Compass, Sunrise, Sunset, Layers, CalendarClock,
   Utensils, BedDouble, Smartphone, BookMarked, Save, AlertCircle,
   Download, Upload, Copy, ClipboardPaste, TrendingUp as TrendingUpIcon, PauseCircle,
-  Swords, Search, BarChart3, Youtube, User, Globe, RefreshCw, Eye,
+  Swords, Search, BarChart3, Youtube, User, Globe, RefreshCw, Eye, Sofa,
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
+import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
 // 14.0  Архитектура навигации: 5 разделов Home / Действия / Цели / Прогресс / Профиль.
 //      Финансы, Гараж, YouTube, Магазин, Инвентарь, Настройки убраны из нижнего меню
@@ -145,27 +146,32 @@ import {
 // 14.33 Светящиеся стадии, анимации дорог/узлов/окон, пороги 0/20/60.
 // 14.34 Умный порядок привычек (локально+ИИ), сильнее Mentor/Habit Engine.
 // 14.35 Fix: const для Habit prompts (чёрный экран).
-const APP_VERSION = '14.35';
+// 15.0  Редизайн «бумага + пиксель»: кремовая тема на всю игру (Fraunces/Manrope/JetBrains Mono, терракотовый акцент),
+//       главная — пиксельная комната на весь экран с живым Ташкентом за окном (время суток по часам, погода),
+//       обустройство комнаты за монеты (9 слотов, 27 предметов, превью, подсветка места, анимация установки),
+//       новые звуки (вкладки, установка, панели), переходы между экранами и появление карточек.
+const APP_VERSION = '15.0';
 
 const COLORS = {
-  bg: '#0B0F14',
-  bgCard: '#121826',
-  bgCardAlt: '#161D2E',
-  border: '#243044',
-  borderLight: '#33415C',
-  text: '#E8EEF8',
-  textMuted: '#8B97AD',
-  gold: '#F6C445',
-  goldSoft: 'rgba(246,196,69,0.16)',
-  teal: '#00E5FF',
-  tealSoft: 'rgba(0,229,255,0.16)',
-  crimson: '#FF6B6B',
-  crimsonSoft: 'rgba(255,107,107,0.16)',
-  violet: '#6C63FF',
-  violetSoft: 'rgba(108,99,255,0.18)',
-  orange: '#FF8A4C',
-  orangeSoft: 'rgba(255,138,76,0.16)',
-  green: '#4ADE80',
+  // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
+  bg: '#f2eee5',
+  bgCard: '#fbf9f4',
+  bgCardAlt: '#f3eee3',
+  border: '#e2dbcc',
+  borderLight: '#d6cdb9',
+  text: '#1e2230',
+  textMuted: '#6b6f7a',
+  gold: '#a4412a',
+  goldSoft: 'rgba(164,65,42,0.10)',
+  teal: '#2f6b6e',
+  tealSoft: 'rgba(47,107,110,0.12)',
+  crimson: '#b8432e',
+  crimsonSoft: 'rgba(184,67,46,0.12)',
+  violet: '#2f3e6b',
+  violetSoft: 'rgba(47,62,107,0.10)',
+  orange: '#b0761c',
+  orangeSoft: 'rgba(176,118,28,0.12)',
+  green: '#3f7a4a',
 };
 
 // ===================== FEEDBACK SYSTEM (motion / sfx / haptic / vfx) =====================
@@ -284,7 +290,30 @@ const SoundManager = {
       o.connect(g); g.connect(this.master || ctx.destination);
       o.start(now + delay); o.stop(now + delay + dur + 0.02);
     };
+    const noise = (dur, gain = 1, delay = 0, f0 = 800, f1 = 800) => {
+      const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.Q.value = 0.9;
+      bp.frequency.setValueAtTime(f0, now + delay);
+      bp.frequency.exponentialRampToValueAtTime(Math.max(40, f1), now + delay + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now + delay);
+      g.gain.exponentialRampToValueAtTime(vol * gain, now + delay + dur * 0.25);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + delay + dur);
+      src.connect(bp); bp.connect(g); g.connect(this.master || ctx.destination);
+      src.start(now + delay); src.stop(now + delay + dur + 0.02);
+    };
     const table = {
+      nav: () => { beep(620, 0.035, 'triangle', 0.32); beep(930, 0.045, 'sine', 0.22, 0.03); },
+      place: () => { beep(150, 0.1, 'sine', 0.9); beep(95, 0.14, 'triangle', 0.5, 0.02); noise(0.12, 0.4, 0, 900, 300); beep(880, 0.06, 'sine', 0.25, 0.12); },
+      sheet_open: () => noise(0.22, 0.32, 0, 380, 2400),
+      sheet_close: () => noise(0.18, 0.26, 0, 2200, 380),
+      page_turn: () => noise(0.14, 0.22, 0, 2600, 900),
       ui_click: () => beep(420, 0.05, 'triangle', 0.6),
       ui_back: () => beep(280, 0.06, 'triangle', 0.5),
       ui_open: () => { beep(360, 0.06, 'sine', 0.5); beep(520, 0.07, 'sine', 0.4, 0.05); },
@@ -320,6 +349,11 @@ const EVENT_MAP = {
   ERROR: { sound: 'error', haptic: 'error', vfx: 'error' },
   LOCKED: { sound: 'locked', haptic: 'light', vfx: 'error' },
   PURCHASE: { sound: 'purchase', haptic: 'medium', vfx: 'coins' },
+  NAV: { sound: 'nav', haptic: 'light' },
+  ITEM_PLACE: { sound: 'place', haptic: 'medium' },
+  SHEET_OPEN: { sound: 'sheet_open', haptic: 'light' },
+  SHEET_CLOSE: { sound: 'sheet_close', haptic: 'light' },
+  PAGE_TURN: { sound: 'page_turn', haptic: 'light' },
 };
 
 function gameFeedback(type, payload = {}) {
@@ -340,8 +374,8 @@ function FeedbackLayer() {
   useEffect(() => {
     const un = FeedbackBus.on(ev => {
       if (ev.vfx === 'error') setFlash({ c: 'rgba(255,80,80,0.18)', id: ev.at });
-      if (ev.vfx === 'level') setFlash({ c: 'rgba(108,99,255,0.22)', id: ev.at });
-      if (ev.vfx === 'achieve') setFlash({ c: 'rgba(246,196,69,0.16)', id: ev.at });
+      if (ev.vfx === 'level') setFlash({ c: 'rgba(47,62,107,0.22)', id: ev.at });
+      if (ev.vfx === 'achieve') setFlash({ c: 'rgba(164,65,42,0.16)', id: ev.at });
       const label = ev.type === 'QUEST_COMPLETE' ? `+${ev.payload.xp || 0} XP`
         : ev.type === 'XP_GAIN' ? `+${ev.payload.xp || 0} XP`
         : ev.type === 'COIN_GAIN' ? `+${ev.payload.coins || 0}`
@@ -350,7 +384,7 @@ function FeedbackLayer() {
         : null;
       if (label) setToasts(t => [...t.slice(-4), { id: ev.at + Math.random(), label, kind: ev.vfx }]);
       const n = FEEDBACK_PREFS.batterySaver ? 8 : (ev.vfx === 'level' ? 36 : ev.vfx === 'quest' ? 22 : 14);
-      const col = ev.vfx === 'coins' ? '#F6C445' : ev.vfx === 'level' ? '#C7C4FF' : ev.vfx === 'error' ? '#FF6B6B' : '#00E5FF';
+      const col = ev.vfx === 'coins' ? '#c48a2a' : ev.vfx === 'level' ? '#a4412a' : ev.vfx === 'error' ? '#FF6B6B' : '#2f6b6e';
       const cx = window.innerWidth / 2, cy = window.innerHeight * 0.42;
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -401,8 +435,8 @@ function FeedbackLayer() {
         {toasts.map(t => (
           <div key={t.id} style={{
             padding: '6px 12px', borderRadius: 999, fontSize: t.kind === 'level' ? 16 : 13, fontWeight: 800,
-            color: t.kind === 'coins' ? '#F6C445' : t.kind === 'level' ? '#fff' : '#7CFFC4',
-            background: 'rgba(10,14,22,0.55)', border: '1px solid rgba(108,99,255,0.35)',
+            color: t.kind === 'coins' ? '#c48a2a' : t.kind === 'level' ? '#fff' : '#5a9a6a',
+            background: 'rgba(251,249,244,0.55)', border: '1px solid rgba(47,62,107,0.35)',
             animation: 'lrpg-float-up 0.9s ease-out both',
           }}>{t.label}</div>
         ))}
@@ -429,7 +463,7 @@ function FeedbackSettingsCard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
         <span style={{ fontSize: 12 }}>Battery saver</span>
         <button className="lrpg-btn" onClick={() => { const n = !saver; setSaver(n); saveFeedbackPrefs({ batterySaver: n }); gameFeedback('BUTTON_PRESS'); }} style={{
-          background: saver ? COLORS.teal : COLORS.bgCardAlt, color: saver ? '#042018' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
+          background: saver ? COLORS.teal : COLORS.bgCardAlt, color: saver ? '#fbf9f4' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
         }}>{saver ? 'ON' : 'OFF'}</button>
       </div>
     </Card>
@@ -580,7 +614,7 @@ const MONTHLY_POOL = [
 ];
 
 const RARITY_COLOR = {
-  Common: '#9CA3AF', Rare: '#5B8DEF', Epic: '#A855F7', Legendary: COLORS.gold, Hidden: '#E0B0FF',
+  Common: '#8a8f9a', Rare: '#2f6b6e', Epic: '#a83e66', Legendary: COLORS.gold, Hidden: '#E0B0FF',
 };
 
 const EVENT_RARITY_WEIGHTS = [
@@ -1024,128 +1058,75 @@ const RPG_ITEM_POOL = [
 ];
 
 
-const ROOM_SLOTS = [
-  { key: 'rug', label: 'Ковёр' },
-  { key: 'lamp', label: 'Свет' },
-  { key: 'poster', label: 'Постер' },
-  { key: 'plant', label: 'Растение' },
-  { key: 'neon', label: 'Неон' },
-  { key: 'desk', label: 'Стол' },
-];
-const ROOM_CATALOG = [
-  { id: 'rug_plain', slot: 'rug', name: 'Серый ковёр', cost: 80, rarity: 'Common', tint: 'rgba(48,56,72,0.78)' },
-  { id: 'rug_wine', slot: 'rug', name: 'Бордовый ковёр', cost: 220, rarity: 'Rare', tint: 'rgba(110,32,48,0.8)' },
-  { id: 'rug_gold', slot: 'rug', name: 'Ковёр эмбера', cost: 640, rarity: 'Epic', tint: 'rgba(168,96,32,0.78)' },
-  { id: 'lamp_warm', slot: 'lamp', name: 'Тёплая лампа', cost: 140, rarity: 'Common', glow: 'rgba(255,176,72,0.32)' },
-  { id: 'lamp_cyan', slot: 'lamp', name: 'Циан-лампа', cost: 360, rarity: 'Rare', glow: 'rgba(0,229,255,0.26)' },
-  { id: 'lamp_club', slot: 'lamp', name: 'Клубный свет', cost: 880, rarity: 'Epic', glow: 'rgba(168,80,255,0.3)' },
-  { id: 'poster_goal', slot: 'poster', name: 'Постер цели', cost: 90, rarity: 'Common', tag: 'ЦЕЛЬ', col: '#6C63FF' },
-  { id: 'poster_live', slot: 'poster', name: 'Постер LIVE', cost: 200, rarity: 'Rare', tag: 'LIVE', col: '#FF4D6D' },
-  { id: 'poster_boss', slot: 'poster', name: 'Босс-постер', cost: 540, rarity: 'Epic', tag: 'BOSS', col: '#F6C445' },
-  { id: 'plant_ficus', slot: 'plant', name: 'Фикус', cost: 70, rarity: 'Common', scale: 1 },
-  { id: 'plant_palm', slot: 'plant', name: 'Пальма', cost: 260, rarity: 'Rare', scale: 1.28 },
-  { id: 'plant_cactus', slot: 'plant', name: 'Неоновый кактус', cost: 720, rarity: 'Epic', scale: 1.1, neon: true },
-  { id: 'neon_life', slot: 'neon', name: 'Вывеска LIFE', cost: 480, rarity: 'Rare', text: 'LIFE', col: '#00E5FF' },
-  { id: 'neon_go', slot: 'neon', name: 'Вывеска GO', cost: 1200, rarity: 'Legendary', text: 'GO', col: '#F6C445' },
-  { id: 'desk_wood', slot: 'desk', name: 'Деревянный стол', cost: 150, rarity: 'Common', wood: '#6B4A2B' },
-  { id: 'desk_glass', slot: 'desk', name: 'Стеклянный стол', cost: 420, rarity: 'Rare', wood: 'rgba(180,210,230,0.35)' },
-];
-function roomItemById(id) { return ROOM_CATALOG.find(x => x.id === id) || null; }
-function emptyRoom() {
-  return { owned: [], equipped: { rug: null, lamp: null, poster: null, plant: null, neon: null, desk: null }, placePulse: null };
-}
-function normalizeRoom(r) {
-  const d = emptyRoom();
-  if (!r || typeof r !== 'object') return d;
-  return { owned: Array.isArray(r.owned) ? r.owned : [], equipped: { ...d.equipped, ...(r.equipped || {}) }, placePulse: r.placePulse || null };
-}
+// Комната: каталог, слоты и пиксельная сцена живут в ./pixelRoom.jsx
 
-function RoomDecor({ room }) {
+function RoomShopPanel({ room, coins, buyRoomItem, equipRoomSlot, slot: slotProp, onSlotChange, compact }) {
   const r = normalizeRoom(room);
-  const eq = r.equipped;
-  const pulse = r.placePulse || {};
-  const pieces = [
-    { slot: 'lamp', it: roomItemById(eq.lamp) },
-    { slot: 'poster', it: roomItemById(eq.poster) },
-    { slot: 'neon', it: roomItemById(eq.neon) },
-    { slot: 'desk', it: roomItemById(eq.desk) },
-    { slot: 'plant', it: roomItemById(eq.plant) },
-    { slot: 'rug', it: roomItemById(eq.rug) },
-  ];
-  return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
-      {pieces.map(({ slot, it }) => {
-        if (!it) return null;
-        const just = pulse.slot === slot && pulse.id === it.id;
-        const pop = just ? 'lrpg-room-pop .55s cubic-bezier(.2,1.4,.3,1) both' : 'none';
-        if (slot === 'lamp') return (
-          <div key={it.id} style={{ position: 'absolute', left: '-8%', top: '-6%', width: '70%', height: '55%', background: `radial-gradient(ellipse at 20% 10%, ${it.glow} 0%, transparent 62%)`, animation: just ? 'lrpg-room-glow .8s ease-out both' : 'none' }} />
-        );
-        if (slot === 'poster') return (
-          <div key={it.id} style={{ position: 'absolute', right: '7%', top: '22%', width: 54, height: 72, borderRadius: 6, background: 'rgba(12,16,24,0.72)', border: `2px solid ${it.col || '#6C63FF'}`, boxShadow: `0 0 16px ${it.col || '#6C63FF'}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: it.col, fontSize: 9, fontWeight: 900, letterSpacing: 0.6, animation: pop }}>{it.tag}</div>
-        );
-        if (slot === 'neon') return (
-          <div key={it.id} style={{ position: 'absolute', left: '12%', top: '18%', fontSize: 18, fontWeight: 900, color: it.col, letterSpacing: 3, textShadow: `0 0 8px ${it.col}, 0 0 18px ${it.col}`, animation: pop }}>{it.text}</div>
-        );
-        if (slot === 'desk') return (
-          <div key={it.id} style={{ position: 'absolute', left: '8%', bottom: '18%', width: 78, height: 18, borderRadius: 4, background: it.wood, boxShadow: '0 6px 10px rgba(0,0,0,0.35)', animation: pop }} />
-        );
-        if (slot === 'plant') return (
-          <div key={it.id} style={{ position: 'absolute', right: '10%', bottom: '16%', transformOrigin: 'bottom center', animation: pop }}>
-            <div style={{ transform: `scale(${it.scale || 1})`, transformOrigin: 'bottom center' }}>
-              <div style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderRight: '10px solid transparent', borderBottom: `28px solid ${it.neon ? '#39FF88' : '#2F8F4E'}`, filter: it.neon ? 'drop-shadow(0 0 8px #39FF88)' : 'none', margin: '0 auto' }} />
-              <div style={{ width: 16, height: 10, background: '#6B3F24', borderRadius: '0 0 4px 4px', margin: '0 auto' }} />
-            </div>
-          </div>
-        );
-        return (
-          <div key={it.id} style={{ position: 'absolute', left: '16%', right: '16%', bottom: '7%', height: '11%' }}>
-            {just && <div style={{ position: 'absolute', inset: '-20%', borderRadius: '50%', background: 'radial-gradient(circle, rgba(255,255,255,.35), transparent 70%)', animation: 'lrpg-room-dust .6s ease-out both' }} />}
-            <div style={{ position: 'absolute', inset: 0, background: `radial-gradient(ellipse at center, ${it.tint} 0%, ${it.tint} 55%, transparent 78%)`, animation: pop }} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function RoomShopPanel({ room, coins, buyRoomItem, equipRoomSlot }) {
-  const r = normalizeRoom(room);
-  const [slot, setSlot] = useState('rug');
+  const [slotLocal, setSlotLocal] = useState('rug');
+  const slot = slotProp || slotLocal;
+  const setSlot = (k) => { gameFeedback('BUTTON_PRESS'); if (onSlotChange) onSlotChange(k); else setSlotLocal(k); };
   const list = ROOM_CATALOG.filter(i => i.slot === slot);
+  const buy = (it) => {
+    if ((coins || 0) < it.cost) { gameFeedback('LOCKED'); return; }
+    buyRoomItem(it);
+    gameFeedback('PURCHASE');
+  };
+  const toggle = (it, on) => {
+    equipRoomSlot(it.slot, on ? null : it.id);
+    gameFeedback(on ? 'MENU_CLOSE' : 'ITEM_PLACE');
+  };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontSize: 13, fontWeight: 800 }}>Комната</div>
-      <div style={{ fontSize: 11, color: COLORS.textMuted }}>Купил — сразу видно на Главной. Один предмет на слот.</div>
-      <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-        {ROOM_SLOTS.map(s => (
-          <button key={s.key} className="lrpg-btn" onClick={() => setSlot(s.key)} style={{
-            flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: slot === s.key ? COLORS.violet : COLORS.bgCardAlt,
-            color: slot === s.key ? '#fff' : COLORS.textMuted,
-          }}>{s.label}</button>
-        ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {!compact && (
+        <div>
+          <div className="lrpg-display" style={{ fontSize: 20, fontWeight: 700 }}>Комната</div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>Купи предмет — он сразу появится в комнате на Главной. В каждом месте стоит один предмет.</div>
+        </div>
+      )}
+      <div className="lrpg-noscroll" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+        {ROOM_SLOTS.map(s => {
+          const on = slot === s.key;
+          const has = !!r.equipped[s.key];
+          return (
+            <button key={s.key} className="lrpg-btn" onClick={() => setSlot(s.key)} style={{
+              flexShrink: 0, padding: '7px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+              background: on ? COLORS.text : COLORS.bgCard, color: on ? COLORS.bg : COLORS.text,
+              border: `1px solid ${on ? COLORS.text : COLORS.border}`, display: 'flex', alignItems: 'center', gap: 6,
+            }}>{s.label}{has && <span style={{ width: 6, height: 6, borderRadius: 3, background: on ? COLORS.bg : COLORS.gold }} />}</button>
+          );
+        })}
       </div>
-      {list.map(it => {
-        const owned = r.owned.includes(it.id);
-        const on = r.equipped[it.slot] === it.id;
-        return (
-          <div key={it.id} className="lrpg-glass" style={{ padding: '10px 12px', borderRadius: 14, display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 13 }}>{it.name}</div>
-              <div style={{ fontSize: 10, color: COLORS.textMuted }}>{it.rarity} · {it.cost}¢</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+        {list.map((it, i) => {
+          const owned = r.owned.includes(it.id);
+          const on = r.equipped[it.slot] === it.id;
+          const poor = (coins || 0) < it.cost;
+          return (
+            <div key={it.id} className="lrpg-paper lrpg-stagger" style={{ animationDelay: `${i * 45}ms`, padding: 10, display: 'flex', flexDirection: 'column', gap: 8, borderColor: on ? COLORS.gold : undefined, boxShadow: on ? `inset 0 0 0 1px ${COLORS.gold}` : undefined }}>
+              <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${COLORS.border}`, alignSelf: 'stretch', display: 'flex', justifyContent: 'center', background: '#d8cdb8' }}>
+                <RoomItemThumb it={it} />
+              </div>
+              <div style={{ minHeight: 34 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.2 }}>{it.name}</div>
+                <div className="lrpg-mono" style={{ fontSize: 9, color: ROOM_RARITY_COLOR[it.rarity] || COLORS.textMuted, marginTop: 3 }}>{ROOM_RARITY_RU[it.rarity] || it.rarity}</div>
+              </div>
+              {!owned ? (
+                <button className="lrpg-btn" onClick={() => buy(it)} style={{
+                  padding: '8px 10px', borderRadius: 10, fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  background: poor ? COLORS.bgCardAlt : COLORS.gold, color: poor ? COLORS.textMuted : '#fbf9f4',
+                  border: `1px solid ${poor ? COLORS.border : COLORS.gold}`,
+                }}><CoinsIcon size={13} /><span className="lrpg-num">{it.cost}</span></button>
+              ) : (
+                <button className="lrpg-btn" onClick={() => toggle(it, on)} style={{
+                  padding: '8px 10px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+                  background: on ? COLORS.bgCardAlt : COLORS.text, color: on ? COLORS.text : COLORS.bg,
+                  border: `1px solid ${on ? COLORS.border : COLORS.text}`,
+                }}>{on ? 'Убрать' : 'Поставить'}</button>
+              )}
             </div>
-            {!owned ? (
-              <button className="lrpg-btn lrpg-cta" disabled={coins < it.cost} onClick={() => buyRoomItem(it)} style={{ padding: '7px 12px', fontSize: 12, opacity: coins < it.cost ? 0.5 : 1 }}>Купить</button>
-            ) : (
-              <button className="lrpg-btn" onClick={() => equipRoomSlot(it.slot, on ? null : it.id)} style={{
-                padding: '7px 12px', fontSize: 12, borderRadius: 999,
-                background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#062018' : COLORS.text,
-              }}>{on ? 'Стоит' : 'Поставить'}</button>
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1208,12 +1189,12 @@ function buildWheel(dateKey) {
   const segs = [
     { id: 'c100', label: '100¢', kind: 'coins', amount: 100, color: '#C9A227' },
     { id: 'c150', label: '150¢', kind: 'coins', amount: 150, color: '#E0B84A' },
-    { id: 'tix', label: 'Билет', kind: 'ticket', amount: 1, color: '#00E5FF' },
+    { id: 'tix', label: 'Билет', kind: 'ticket', amount: 1, color: '#2f6b6e' },
     { id: 'c80', label: '80¢', kind: 'coins', amount: 80, color: '#8B7355' },
-    { id: 'com', label: 'Обычный', kind: 'item', rarity: 'Common', color: '#9CA3AF' },
-    { id: 'cry', label: 'Кристалл', kind: 'crystals', amount: 1, color: '#A855F7' },
-    { id: 'rare', label: 'Редкий', kind: 'item', rarity: 'Rare', color: '#5B8DEF' },
-    { id: 'epic', label: day === 0 ? 'Джекпот' : 'Эпик', kind: day === 0 ? 'jackpot' : 'item', rarity: 'Epic', color: '#C084FC' },
+    { id: 'com', label: 'Обычный', kind: 'item', rarity: 'Common', color: '#8a8f9a' },
+    { id: 'cry', label: 'Кристалл', kind: 'crystals', amount: 1, color: '#a83e66' },
+    { id: 'rare', label: 'Редкий', kind: 'item', rarity: 'Rare', color: '#2f6b6e' },
+    { id: 'epic', label: day === 0 ? 'Джекпот' : 'Эпик', kind: day === 0 ? 'jackpot' : 'item', rarity: 'Epic', color: '#a83e66' },
   ];
   if (rnd() > 0.5) segs[3] = { id: 'c40', label: '40¢', kind: 'coins', amount: 40, color: '#8B7355' };
   return { theme, segs };
@@ -1305,12 +1286,12 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
         <span style={{ color: COLORS.gold }}>монеты {state.coins}</span>
-        <span style={{ color: '#A855F7' }}>кристаллы {eco.crystals}</span>
-        <span style={{ color: '#00E5FF' }}>билеты {eco.tickets}</span>
+        <span style={{ color: '#a83e66' }}>кристаллы {eco.crystals}</span>
+        <span style={{ color: '#2f6b6e' }}>билеты {eco.tickets}</span>
       </div>
       <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
         {tabs.map(tb => (
-          <button key={tb.k} className="lrpg-btn" onClick={() => setSub(tb.k)} style={{ flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, background: sub === tb.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,.05)', color: '#fff' }}>{tb.l}</button>
+          <button key={tb.k} className="lrpg-btn" onClick={() => setSub(tb.k)} style={{ flexShrink: 0, padding: '6px 10px', borderRadius: 999, fontSize: 11, background: sub === tb.k ? 'linear-gradient(180deg,#b5654a,#a4412a)' : 'rgba(255,255,255,.05)', color: '#fff' }}>{tb.l}</button>
         ))}
       </div>
       {sub === 'room' && (
@@ -1320,8 +1301,8 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
         <>
           <div style={{ fontSize: 11, color: COLORS.textMuted }}>Витрина на {today}. Завтра другой набор.</div>
           {shop.map(it => (
-            <Card key={it.shopId || it.id} style={{ border: it.featured ? '1px solid #C084FC' : `1px solid ${COLORS.border}` }}>
-              {it.featured && <div style={{ fontSize: 10, color: '#C084FC', fontWeight: 800 }}>хит дня</div>}
+            <Card key={it.shopId || it.id} style={{ border: it.featured ? '1px solid #a83e66' : `1px solid ${COLORS.border}` }}>
+              {it.featured && <div style={{ fontSize: 10, color: '#a83e66', fontWeight: 800 }}>хит дня</div>}
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <div>
                   <div style={{ fontSize: 16 }}>{it.icon} <b>{it.title}</b></div>
@@ -1342,13 +1323,13 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
         <Card>
           <div style={{ fontSize: 13, fontWeight: 800, textAlign: 'center' }}>Колесо: {wheel.theme}</div>
           <div style={{ position: 'relative', width: 260, height: 260, margin: '12px auto 8px' }}>
-            <div style={{ position: 'absolute', left: '50%', top: -6, transform: 'translateX(-50%)', zIndex: 3, fontSize: 22, color: '#00E5FF' }}>▼</div>
+            <div style={{ position: 'absolute', left: '50%', top: -6, transform: 'translateX(-50%)', zIndex: 3, fontSize: 22, color: '#2f6b6e' }}>▼</div>
             <div style={{
               width: 260, height: 260, borderRadius: '50%',
               background: `conic-gradient(${wheel.segs.map((s, i) => `${s.color} ${i * 12.5}% ${(i + 1) * 12.5}%`).join(',')})`,
               transform: `rotate(${rot}deg)`,
               transition: spinning ? 'transform 4.2s cubic-bezier(.12,.7,.08,1)' : 'none',
-              border: '6px solid #1a1f2c', boxShadow: '0 0 24px rgba(108,99,255,.35)',
+              border: '6px solid #1a1f2c', boxShadow: '0 0 24px rgba(47,62,107,.35)',
               position: 'relative',
             }}>
               {wheel.segs.map((s, i) => {
@@ -1404,14 +1385,14 @@ function EconomyPanel({ state, ensureDailyShop, buyShopItem, rerollShopSlot, spi
               }}>📦</div>
             )}
             {chestPhase.step === 'burst' && (
-              <div style={{ position: 'absolute', width: 120, height: 120, borderRadius: '50%', background: 'radial-gradient(circle,#fff 0%,#C084FC 40%,transparent 70%)', animation: 'lrpg-chest-burst .65s ease-out' }} />
+              <div style={{ position: 'absolute', width: 120, height: 120, borderRadius: '50%', background: 'radial-gradient(circle,#fff 0%,#a83e66 40%,transparent 70%)', animation: 'lrpg-chest-burst .65s ease-out' }} />
             )}
           </div>
         </div>
       )}
       {(reveal || chestShow) && !chestPhase && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.72)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }} onClick={() => setReveal(null)}>
-          <div style={{ background: '#121826', borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, textAlign: 'center', animation: 'lrpg-pop .35s ease-out' }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: '#fbf9f4', borderRadius: 20, padding: 22, width: '100%', maxWidth: 320, textAlign: 'center', animation: 'lrpg-pop .35s ease-out' }} onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: 12, color: COLORS.textMuted }}>{chestShow ? 'Сундук открыт' : 'Приз колеса'}</div>
             <div style={{ fontSize: 42, margin: '10px 0', animation: 'lrpg-npc-in .45s ease-out' }}>{chestShow ? (eco.lastChest.icon || '📦') : '🎰'}</div>
             <div style={{ fontSize: 18, fontWeight: 800 }}>{chestShow ? eco.lastChest.title : (reveal && reveal.title)}</div>
@@ -2345,7 +2326,7 @@ function SubNav({ options, active, onChange }) {
         <button key={o.key} className="lrpg-btn" onClick={() => onChange(o.key)} style={{
           flex: 1, padding: '7px 0', borderRadius: 7, fontSize: 12, fontWeight: 700,
           background: active === o.key ? COLORS.violet : 'transparent',
-          color: active === o.key ? '#100E1C' : COLORS.textMuted,
+          color: active === o.key ? '#fbf9f4' : COLORS.textMuted,
         }}>{o.label}</button>
       ))}
     </div>
@@ -2368,8 +2349,8 @@ function CheckinForm({ initial, onSubmit }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: 11, color: COLORS.textMuted, display: 'flex', alignItems: 'center', gap: 4 }}><Croissant size={12} /> Завтракал?</span>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button className="lrpg-btn" onClick={() => setBreakfast(true)} style={{ background: breakfast ? COLORS.gold : COLORS.bgCardAlt, color: breakfast ? '#1a1305' : COLORS.textMuted, borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700 }}>Да</button>
-          <button className="lrpg-btn" onClick={() => setBreakfast(false)} style={{ background: !breakfast ? COLORS.gold : COLORS.bgCardAlt, color: !breakfast ? '#1a1305' : COLORS.textMuted, borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700 }}>Нет</button>
+          <button className="lrpg-btn" onClick={() => setBreakfast(true)} style={{ background: breakfast ? COLORS.gold : COLORS.bgCardAlt, color: breakfast ? '#fbf9f4' : COLORS.textMuted, borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700 }}>Да</button>
+          <button className="lrpg-btn" onClick={() => setBreakfast(false)} style={{ background: !breakfast ? COLORS.gold : COLORS.bgCardAlt, color: !breakfast ? '#fbf9f4' : COLORS.textMuted, borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700 }}>Нет</button>
         </div>
       </div>
       <div>
@@ -2388,7 +2369,7 @@ function CheckinForm({ initial, onSubmit }) {
         <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>Автотрекера шагов нет — вбей число из телефона вручную</div>
       </div>
       <button className="lrpg-btn" onClick={() => onSubmit({ sleepHours, breakfast, coffeeCups, waterGlasses, steps })}
-        style={{ background: COLORS.teal, color: '#0B1F1D', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13 }}>
+        style={{ background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13 }}>
         Сохранить чек-ин
       </button>
     </div>
@@ -2440,16 +2421,15 @@ function StatusStrip({ state, energy, weakestStat }) {
 // ===================== v14 NAV SHELL — 5 разделов =====================
 function PillTabs({ options, active, onChange }) {
   return (
-    <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+    <div className="lrpg-noscroll" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
       {options.map(o => {
         const on = active === o.key;
         return (
-          <button key={o.key} className="lrpg-btn" onClick={() => onChange(o.key)} style={{
-            flexShrink: 0, padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 700,
-            background: on ? 'linear-gradient(180deg, #8B85FF, #6C63FF)' : 'rgba(255,255,255,0.04)',
-            color: on ? '#fff' : COLORS.textMuted,
-            border: on ? `1px solid ${COLORS.violet}` : '1px solid rgba(255,255,255,0.08)',
-            boxShadow: on ? `0 0 14px ${COLORS.violet}55` : 'none',
+          <button key={o.key} className="lrpg-btn" onClick={() => { if (!on) gameFeedback('PAGE_TURN'); onChange(o.key); }} style={{
+            flexShrink: 0, padding: '8px 14px', borderRadius: 999, fontSize: 13, fontWeight: 700,
+            background: on ? COLORS.text : COLORS.bgCard,
+            color: on ? COLORS.bg : COLORS.text,
+            border: `1px solid ${on ? COLORS.text : COLORS.border}`,
           }}>{o.label}</button>
         );
       })}
@@ -2466,7 +2446,7 @@ function ScreenHeader({ title, icon: Icon, extra }) {
             <Icon size={14} color={COLORS.gold} />
           </span>
         )}
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#E8EEF8" }}>{title}</div>
+        <div className="lrpg-display" style={{ fontSize: 26, fontWeight: 700, color: COLORS.text, lineHeight: 1.1 }}>{title}</div>
       </div>
       {extra}
     </div>
@@ -2619,9 +2599,9 @@ function ActionsHub({
                 <div style={{ fontSize: 10, color: COLORS.teal, marginTop: 2 }}>{a.bonus}</div>
               </div>
               <button className="lrpg-btn" onClick={a.action} style={{
-                background: 'linear-gradient(180deg, #8B85FF, #6C63FF)', color: '#fff',
+                background: 'linear-gradient(180deg, #b5654a, #a4412a)', color: '#fff',
                 borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700, flexShrink: 0,
-                boxShadow: '0 0 12px rgba(108,99,255,0.4)',
+                boxShadow: '0 0 12px rgba(47,62,107,0.4)',
               }}>{a.kind === 'habit' ? 'Выполнить' : 'Начать'}</button>
             </div>
           ))}
@@ -2658,7 +2638,7 @@ function ActionsHub({
                   <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{p.hint} · {p.energy} энергии · +{p.xp} XP</div>
                 </div>
                 <button className="lrpg-btn" disabled={done} onClick={() => startPreset(p)} style={{
-                  background: done ? 'rgba(255,255,255,0.06)' : 'linear-gradient(180deg, #8B85FF, #6C63FF)',
+                  background: done ? 'rgba(255,255,255,0.06)' : 'linear-gradient(180deg, #b5654a, #a4412a)',
                   color: done ? COLORS.teal : '#fff', borderRadius: 999, padding: '7px 12px', fontSize: 11, fontWeight: 700,
                 }}>{done ? 'Готово' : 'Начать'}</button>
               </div>
@@ -2758,13 +2738,13 @@ function GoalsHub({ state, goals, showAddGoal, setShowAddGoal, addGoal, updateGo
 }
 
 const PROGRESS_STAT_META = [
-  { key: 'physical', label: 'Тело', color: '#FF6B9A', icon: Dumbbell },
-  { key: 'discipline', label: 'Дисциплина', color: '#7AA2FF', icon: ShieldCheck },
-  { key: 'knowledge', label: 'Знания', color: '#B388FF', icon: BookOpen },
+  { key: 'physical', label: 'Тело', color: '#a83e66', icon: Dumbbell },
+  { key: 'discipline', label: 'Дисциплина', color: '#4a6a9a', icon: ShieldCheck },
+  { key: 'knowledge', label: 'Знания', color: '#7a5a8a', icon: BookOpen },
   { key: 'focus', label: 'Фокус', color: '#3DDCFF', icon: Crosshair },
-  { key: 'finance', label: 'Финансы', color: '#4ADE80', icon: Wallet },
+  { key: 'finance', label: 'Финансы', color: '#3f7a4a', icon: Wallet },
   { key: 'career', label: 'Карьера', color: '#8B7CFF', icon: Briefcase },
-  { key: 'creator', label: 'Творец', color: '#C084FC', icon: Sparkles },
+  { key: 'creator', label: 'Творец', color: '#a83e66', icon: Sparkles },
   { key: 'social', label: 'Общение', color: '#F472B6', icon: Users },
   { key: 'mental', label: 'Разум', color: '#38BDF8', icon: Brain },
 ];
@@ -2803,26 +2783,26 @@ function StageThumb({ kind, active }) {
             </linearGradient>
             <radialGradient id="stFire" cx="32%" cy="58%" r="28%">
               <stop offset="0%" stopColor="#ffe08a" />
-              <stop offset="35%" stopColor="#ff8a4c" />
-              <stop offset="100%" stopColor="#ff8a4c" stopOpacity="0" />
+              <stop offset="35%" stopColor="#b0761c" />
+              <stop offset="100%" stopColor="#b0761c" stopOpacity="0" />
             </radialGradient>
             <filter id="stFireBlur"><feGaussianBlur stdDeviation="2.5" /></filter>
           </defs>
           <rect width="160" height="72" fill="url(#stWasteSky)" />
-          <circle cx="120" cy="18" r="1.5" fill="#F6C445" opacity="0.7" className="lrpg-star" />
-          <circle cx="140" cy="12" r="1" fill="#F6C445" opacity="0.5" className="lrpg-star" />
-          <circle cx="95" cy="22" r="0.8" fill="#F6C445" opacity="0.45" />
+          <circle cx="120" cy="18" r="1.5" fill="#c48a2a" opacity="0.7" className="lrpg-star" />
+          <circle cx="140" cy="12" r="1" fill="#c48a2a" opacity="0.5" className="lrpg-star" />
+          <circle cx="95" cy="22" r="0.8" fill="#c48a2a" opacity="0.45" />
           <path d="M0 48 C20 40 40 52 60 44 C80 36 100 50 120 42 C140 34 150 48 160 44 L160 72 L0 72 Z" fill="#1c1410" />
           <path d="M0 56 C25 50 50 60 75 52 C100 44 125 58 160 50 L160 72 L0 72 Z" fill="#2a1c14" />
           <path d="M10 50 L22 38 L28 52 Z" fill="#3a2a1c" opacity="0.7" />
           <path d="M70 48 L82 34 L90 50 Z" fill="#2e2218" opacity="0.6" />
           <ellipse cx="48" cy="50" rx="22" ry="10" fill="url(#stFire)" className="lrpg-fire-glow" />
-          <circle cx="48" cy="48" r="6" fill="#ffb347" filter="url(#stFireBlur)" className="lrpg-fire-core" />
+          <circle cx="48" cy="48" r="6" fill="#c48a2a" filter="url(#stFireBlur)" className="lrpg-fire-core" />
           <circle cx="48" cy="48" r="3.2" fill="#fff3c4" className="lrpg-fire-core" />
           <path d="M44 50 L48 60 L52 50" stroke="#5c3a20" strokeWidth="1.4" fill="none" />
           <path d="M100 58 L103 44 L106 58" stroke="#4a3828" strokeWidth="1.2" opacity="0.75" />
           <path d="M118 56 L120 46 L122 56" stroke="#4a3828" strokeWidth="1" opacity="0.55" />
-          <path d="M20 62 C35 58 50 64 65 60" stroke="#F6C445" strokeWidth="0.5" opacity="0.25" fill="none" />
+          <path d="M20 62 C35 58 50 64 65 60" stroke="#c48a2a" strokeWidth="0.5" opacity="0.25" fill="none" />
         </svg>
       </div>
     );
@@ -2837,29 +2817,29 @@ function StageThumb({ kind, active }) {
               <stop offset="100%" stopColor="#0a101c" />
             </linearGradient>
             <linearGradient id="stWin" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#ffe7a3" />
-              <stop offset="100%" stopColor="#F6C445" />
+              <stop offset="0%" stopColor="#e8c48a" />
+              <stop offset="100%" stopColor="#c48a2a" />
             </linearGradient>
             <filter id="stSetGlow"><feGaussianBlur stdDeviation="1.6" /></filter>
           </defs>
           <rect width="160" height="72" fill="url(#stSetSky)" />
-          <circle cx="130" cy="16" r="1.2" fill="#F6C445" opacity="0.6" className="lrpg-star" />
-          <circle cx="148" cy="10" r="0.9" fill="#F6C445" opacity="0.4" />
+          <circle cx="130" cy="16" r="1.2" fill="#c48a2a" opacity="0.6" className="lrpg-star" />
+          <circle cx="148" cy="10" r="0.9" fill="#c48a2a" opacity="0.4" />
           <path d="M0 50 L160 50 L160 72 L0 72 Z" fill="#152030" />
-          <path d="M0 50 L160 50" stroke="#F6C445" strokeWidth="0.8" opacity="0.35" />
+          <path d="M0 50 L160 50" stroke="#c48a2a" strokeWidth="0.8" opacity="0.35" />
           {/* houses */}
           <g filter="url(#stSetGlow)">
-            <path d="M18 50 L18 34 L30 26 L42 34 L42 50 Z" fill="#2a364c" stroke="#F6C445" strokeWidth="0.7" />
-            <path d="M55 50 L55 28 L72 18 L89 28 L89 50 Z" fill="#303c54" stroke="#F6C445" strokeWidth="0.9" />
-            <path d="M102 50 L102 36 L114 28 L126 36 L126 50 Z" fill="#2a364c" stroke="#F6C445" strokeWidth="0.7" />
+            <path d="M18 50 L18 34 L30 26 L42 34 L42 50 Z" fill="#2a364c" stroke="#c48a2a" strokeWidth="0.7" />
+            <path d="M55 50 L55 28 L72 18 L89 28 L89 50 Z" fill="#303c54" stroke="#c48a2a" strokeWidth="0.9" />
+            <path d="M102 50 L102 36 L114 28 L126 36 L126 50 Z" fill="#2a364c" stroke="#c48a2a" strokeWidth="0.7" />
           </g>
           <rect x="68" y="36" width="8" height="14" fill="url(#stWin)" opacity="0.85" className="lrpg-window" />
           <rect x="26" y="38" width="5" height="8" fill="url(#stWin)" opacity="0.7" className="lrpg-window" />
           <rect x="110" y="40" width="5" height="8" fill="url(#stWin)" opacity="0.7" className="lrpg-window" />
-          <circle cx="72" cy="24" r="2" fill="#F6C445" className="lrpg-pulse-dot" />
-          <path d="M10 50 Q40 46 72 50 Q110 54 150 50" stroke="#F6C445" strokeWidth="1" opacity="0.4" fill="none" className="lrpg-road-flow" />
-          <circle cx="40" cy="49" r="1.5" fill="#F6C445" opacity="0.8" className="lrpg-pulse-dot" />
-          <circle cx="120" cy="51" r="1.5" fill="#F6C445" opacity="0.8" className="lrpg-pulse-dot" />
+          <circle cx="72" cy="24" r="2" fill="#c48a2a" className="lrpg-pulse-dot" />
+          <path d="M10 50 Q40 46 72 50 Q110 54 150 50" stroke="#c48a2a" strokeWidth="1" opacity="0.4" fill="none" className="lrpg-road-flow" />
+          <circle cx="40" cy="49" r="1.5" fill="#c48a2a" opacity="0.8" className="lrpg-pulse-dot" />
+          <circle cx="120" cy="51" r="1.5" fill="#c48a2a" opacity="0.8" className="lrpg-pulse-dot" />
         </svg>
       </div>
     );
@@ -2875,35 +2855,35 @@ function StageThumb({ kind, active }) {
             <stop offset="100%" stopColor="#0c0a06" />
           </linearGradient>
           <radialGradient id="stCapAura" cx="50%" cy="40%" r="45%">
-            <stop offset="0%" stopColor="#F6C445" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#F6C445" stopOpacity="0" />
+            <stop offset="0%" stopColor="#c48a2a" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#c48a2a" stopOpacity="0" />
           </radialGradient>
           <linearGradient id="stCapGold" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ffe7a3" />
-            <stop offset="100%" stopColor="#F6C445" />
+            <stop offset="0%" stopColor="#e8c48a" />
+            <stop offset="100%" stopColor="#c48a2a" />
           </linearGradient>
           <filter id="stCapGlow"><feGaussianBlur stdDeviation="2.2" /></filter>
         </defs>
         <rect width="160" height="72" fill="url(#stCapSky)" />
         <ellipse cx="80" cy="36" rx="50" ry="28" fill="url(#stCapAura)" className="lrpg-capital-aura" />
-        <circle cx="20" cy="14" r="1.1" fill="#F6C445" opacity="0.7" className="lrpg-star" />
-        <circle cx="145" cy="12" r="1.3" fill="#F6C445" opacity="0.55" className="lrpg-star" />
-        <circle cx="100" cy="10" r="0.8" fill="#F6C445" opacity="0.5" />
+        <circle cx="20" cy="14" r="1.1" fill="#c48a2a" opacity="0.7" className="lrpg-star" />
+        <circle cx="145" cy="12" r="1.3" fill="#c48a2a" opacity="0.55" className="lrpg-star" />
+        <circle cx="100" cy="10" r="0.8" fill="#c48a2a" opacity="0.5" />
         <path d="M0 54 L160 54 L160 72 L0 72 Z" fill="#1a140c" />
         {/* side towers */}
-        <path d="M28 54 L28 36 L38 28 L48 36 L48 54 Z" fill="#2e2410" stroke="#F6C445" strokeWidth="0.7" />
-        <path d="M112 54 L112 36 L122 28 L132 36 L132 54 Z" fill="#2e2410" stroke="#F6C445" strokeWidth="0.7" />
+        <path d="M28 54 L28 36 L38 28 L48 36 L48 54 Z" fill="#2e2410" stroke="#c48a2a" strokeWidth="0.7" />
+        <path d="M112 54 L112 36 L122 28 L132 36 L132 54 Z" fill="#2e2410" stroke="#c48a2a" strokeWidth="0.7" />
         {/* main keep */}
         <g filter="url(#stCapGlow)">
-          <path d="M55 54 L55 30 L80 14 L105 30 L105 54 Z" fill="#3a2c14" stroke="#F6C445" strokeWidth="1.1" />
-          <path d="M80 14 L80 6" stroke="#F6C445" strokeWidth="1.6" />
-          <circle cx="80" cy="5" r="3" fill="#F6C445" className="lrpg-pulse-dot" />
+          <path d="M55 54 L55 30 L80 14 L105 30 L105 54 Z" fill="#3a2c14" stroke="#c48a2a" strokeWidth="1.1" />
+          <path d="M80 14 L80 6" stroke="#c48a2a" strokeWidth="1.6" />
+          <circle cx="80" cy="5" r="3" fill="#c48a2a" className="lrpg-pulse-dot" />
         </g>
         <rect x="74" y="38" width="12" height="16" fill="url(#stCapGold)" opacity="0.85" className="lrpg-window" />
         <rect x="34" y="42" width="5" height="8" fill="url(#stCapGold)" opacity="0.65" className="lrpg-window" />
         <rect x="120" y="42" width="5" height="8" fill="url(#stCapGold)" opacity="0.65" className="lrpg-window" />
-        <path d="M48 54 Q80 48 112 54" stroke="#F6C445" strokeWidth="1.2" opacity="0.5" fill="none" className="lrpg-road-flow" />
-        <circle cx="80" cy="52" r="2" fill="#ffe7a3" className="lrpg-pulse-dot" />
+        <path d="M48 54 Q80 48 112 54" stroke="#c48a2a" strokeWidth="1.2" opacity="0.5" fill="none" className="lrpg-road-flow" />
+        <circle cx="80" cy="52" r="2" fill="#e8c48a" className="lrpg-pulse-dot" />
       </svg>
     </div>
   );
@@ -2912,7 +2892,7 @@ function StageThumb({ kind, active }) {
 function ProgressWorldMap({ stats, selected, onSelect }) {
   const byKey = Object.fromEntries(WORLD_NODES.map(n => [n.key, n]));
   return (
-    <div className="lrpg-world-map" style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(246,196,69,0.4)', background: '#070b14', boxShadow: '0 0 24px rgba(246,196,69,0.12), inset 0 0 40px rgba(108,99,255,0.08)' }}>
+    <div className="lrpg-world-map" style={{ position: 'relative', borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(164,65,42,0.4)', background: '#070b14', boxShadow: '0 0 24px rgba(164,65,42,0.12), inset 0 0 40px rgba(47,62,107,0.08)' }}>
       <svg viewBox="0 0 360 210" width="100%" height="220" role="img" aria-label="Карта мира">
         <defs>
           <radialGradient id="wmSky" cx="50%" cy="35%" r="75%">
@@ -2926,20 +2906,20 @@ function ProgressWorldMap({ stats, selected, onSelect }) {
           </filter>
           <filter id="wmSoft"><feGaussianBlur stdDeviation="3" /></filter>
           <linearGradient id="wmRoad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#F6C445" stopOpacity="0.2" />
-            <stop offset="50%" stopColor="#ffe7a3" stopOpacity="1" />
-            <stop offset="100%" stopColor="#F6C445" stopOpacity="0.2" />
+            <stop offset="0%" stopColor="#c48a2a" stopOpacity="0.2" />
+            <stop offset="50%" stopColor="#e8c48a" stopOpacity="1" />
+            <stop offset="100%" stopColor="#c48a2a" stopOpacity="0.2" />
           </linearGradient>
         </defs>
         <rect width="360" height="210" fill="url(#wmSky)" />
         {/* soft aurora */}
-        <ellipse cx="180" cy="40" rx="120" ry="30" fill="#6C63FF" opacity="0.07" className="lrpg-map-aurora" />
+        <ellipse cx="180" cy="40" rx="120" ry="30" fill="#a4412a" opacity="0.07" className="lrpg-map-aurora" />
         {/* ground */}
         <path d="M0 150 C 40 132, 80 168, 130 150 C 180 132, 220 170, 280 146 C 320 132, 340 150, 360 142 L 360 210 L 0 210 Z" fill="#10141e" />
         <path d="M0 170 C 60 160, 120 180, 180 165 C 240 150, 300 175, 360 160 L 360 210 L 0 210 Z" fill="#0c1018" />
         {/* mountains near capital */}
         <path d="M210 118 L 248 46 L 286 118 Z" fill="#1c2438" opacity="0.95" />
-        <path d="M228 118 L 252 70 L 274 118 Z" fill="#243044" />
+        <path d="M228 118 L 252 70 L 274 118 Z" fill="#e2dbcc" />
         <path d="M240 118 L 252 88 L 264 118 Z" fill="#2e3a50" opacity="0.8" />
         {/* forest near knowledge */}
         <path d="M40 78 L 70 40 L 96 86 Z" fill="#1a2830" />
@@ -2951,10 +2931,10 @@ function ProgressWorldMap({ stats, selected, onSelect }) {
         <path d="M55 170 L70 162 L65 178 Z" fill="#2a2018" opacity="0.5" />
         <path d="M20 175 L35 168 L30 185 Z" fill="#221810" opacity="0.4" />
         {/* campfire glow at physical */}
-        <circle cx="62" cy="148" r="14" fill="#FF8A4C" opacity="0.14" className="lrpg-map-fire" filter="url(#wmSoft)" />
-        <circle cx="62" cy="148" r="6" fill="#ffb347" opacity="0.35" className="lrpg-map-fire" />
+        <circle cx="62" cy="148" r="14" fill="#b0761c" opacity="0.14" className="lrpg-map-fire" filter="url(#wmSoft)" />
+        <circle cx="62" cy="148" r="6" fill="#c48a2a" opacity="0.35" className="lrpg-map-fire" />
         {/* capital glow */}
-        <circle cx="248" cy="70" r="22" fill="#F6C445" opacity="0.12" className="lrpg-map-capital-glow" filter="url(#wmSoft)" />
+        <circle cx="248" cy="70" r="22" fill="#c48a2a" opacity="0.12" className="lrpg-map-capital-glow" filter="url(#wmSoft)" />
         {/* islands */}
         <ellipse cx="304" cy="172" rx="16" ry="7" fill="#1a2438" opacity="0.8" />
         <ellipse cx="318" cy="178" rx="9" ry="4.5" fill="#1a2438" opacity="0.55" />
@@ -2965,11 +2945,11 @@ function ProgressWorldMap({ stats, selected, onSelect }) {
           return (
             <g key={a + b}>
               <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
-                stroke={lit ? '#F6C445' : '#3a4258'} strokeWidth={lit ? 2.2 : 1.1}
+                stroke={lit ? '#c48a2a' : '#3a4258'} strokeWidth={lit ? 2.2 : 1.1}
                 strokeDasharray={lit ? '0' : '4 4'} opacity={lit ? 0.35 : 0.4} filter={lit ? 'url(#wmGlow)' : undefined} />
               {lit && (
                 <line x1={A.x} y1={A.y} x2={B.x} y2={B.y}
-                  stroke="#ffe7a3" strokeWidth="1.2" opacity="0.9"
+                  stroke="#e8c48a" strokeWidth="1.2" opacity="0.9"
                   strokeDasharray="6 14" className="lrpg-road-dash" filter="url(#wmGlow)" />
               )}
             </g>
@@ -2982,13 +2962,13 @@ function ProgressWorldMap({ stats, selected, onSelect }) {
           const r = n.kind === 'capital' ? 9 : 6;
           return (
             <g key={n.key} onClick={() => onSelect(n.key)} style={{ cursor: 'pointer' }} className={active ? 'lrpg-node-active' : 'lrpg-node'}>
-              {active && <circle cx={n.x} cy={n.y} r="18" fill="none" stroke="#F6C445" strokeWidth="1.2" opacity="0.85" className="lrpg-node-ring" />}
-              {active && <circle cx={n.x} cy={n.y} r="24" fill="none" stroke="#F6C445" strokeWidth="0.6" opacity="0.35" className="lrpg-node-ring-outer" />}
-              <circle cx={n.x} cy={n.y} r={r + 5} fill="#F6C445" opacity={val >= 20 ? 0.22 : 0.08} className="lrpg-node-halo" />
-              <circle cx={n.x} cy={n.y} r={r} fill={val >= 40 ? '#F6C445' : '#1a2030'} stroke="#F6C445" strokeWidth="1.6" filter={val >= 20 ? 'url(#wmGlow)' : undefined} />
+              {active && <circle cx={n.x} cy={n.y} r="18" fill="none" stroke="#c48a2a" strokeWidth="1.2" opacity="0.85" className="lrpg-node-ring" />}
+              {active && <circle cx={n.x} cy={n.y} r="24" fill="none" stroke="#c48a2a" strokeWidth="0.6" opacity="0.35" className="lrpg-node-ring-outer" />}
+              <circle cx={n.x} cy={n.y} r={r + 5} fill="#c48a2a" opacity={val >= 20 ? 0.22 : 0.08} className="lrpg-node-halo" />
+              <circle cx={n.x} cy={n.y} r={r} fill={val >= 40 ? '#c48a2a' : '#1a2030'} stroke="#c48a2a" strokeWidth="1.6" filter={val >= 20 ? 'url(#wmGlow)' : undefined} />
               {n.kind === 'capital' && <path d={`M${n.x - 4.5} ${n.y + 2.5} L${n.x} ${n.y - 7} L${n.x + 4.5} ${n.y + 2.5} Z`} fill="#1a1408" />}
               <text x={n.x} y={n.y - 14} textAnchor="middle" fill="#F6E7B2" fontSize="8.5" fontWeight="700">{n.name}</text>
-              <text x={n.x} y={n.y + 18} textAnchor="middle" fill="#8B97AD" fontSize="7">{TERRITORY_STAGES[stage]}</text>
+              <text x={n.x} y={n.y + 18} textAnchor="middle" fill="#6b6f7a" fontSize="7">{TERRITORY_STAGES[stage]}</text>
             </g>
           );
         })}
@@ -3036,7 +3016,7 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
             const active = selected === s.key || WORLD_NODES.some(n => n.key === s.key && n.key === selected);
             return (
               <button key={s.key} className="lrpg-btn" onClick={() => WORLD_NODES.some(n => n.key === s.key) && setSelected(s.key)} style={{
-                display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: active ? 'rgba(246,196,69,0.08)' : 'transparent',
+                display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: active ? 'rgba(164,65,42,0.08)' : 'transparent',
                 borderRadius: 8, padding: '3px 2px', marginBottom: 3,
               }}>
                 <Icon size={11} color={s.color} />
@@ -3054,10 +3034,10 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
           <div style={{ height: 196 }}>
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData} cx="50%" cy="52%" outerRadius="62%">
-                <PolarGrid stroke="rgba(246,196,69,0.25)" />
-                <PolarAngleAxis dataKey="stat" tick={{ fill: '#8B97AD', fontSize: 8 }} />
+                <PolarGrid stroke="rgba(164,65,42,0.25)" />
+                <PolarAngleAxis dataKey="stat" tick={{ fill: '#6b6f7a', fontSize: 8 }} />
                 <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                <Radar dataKey="value" stroke="#F6C445" fill="#F6C445" fillOpacity={0.28} />
+                <Radar dataKey="value" stroke="#c48a2a" fill="#c48a2a" fillOpacity={0.28} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
@@ -3073,14 +3053,14 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={historyData}>
               <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="day" tick={{ fill: '#8B97AD', fontSize: 9 }} axisLine={false} tickLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fill: '#8B97AD', fontSize: 9 }} axisLine={false} tickLine={false} width={24} />
-              <Tooltip contentStyle={{ background: '#121826', border: '1px solid #243044', fontSize: 11 }} />
-              <Line type="monotone" dataKey="Тело" stroke="#FF6B9A" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Дисциплина" stroke="#7AA2FF" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Знания" stroke="#B388FF" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Финансы" stroke="#4ADE80" strokeWidth={1.6} dot={false} />
-              <Line type="monotone" dataKey="Карьера" stroke="#F6C445" strokeWidth={1.6} dot={false} />
+              <XAxis dataKey="day" tick={{ fill: '#6b6f7a', fontSize: 9 }} axisLine={false} tickLine={false} />
+              <YAxis domain={[0, 100]} tick={{ fill: '#6b6f7a', fontSize: 9 }} axisLine={false} tickLine={false} width={24} />
+              <Tooltip contentStyle={{ background: '#fbf9f4', border: '1px solid #e2dbcc', fontSize: 11 }} />
+              <Line type="monotone" dataKey="Тело" stroke="#a83e66" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Дисциплина" stroke="#4a6a9a" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Знания" stroke="#7a5a8a" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Финансы" stroke="#3f7a4a" strokeWidth={1.6} dot={false} />
+              <Line type="monotone" dataKey="Карьера" stroke="#c48a2a" strokeWidth={1.6} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -3109,11 +3089,11 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
             return (
               <div key={st.title} className={"lrpg-glass lrpg-chamfer" + (current ? " lrpg-stage-current" : "")} style={{
                 borderRadius: 14, padding: 8, opacity: open ? 1 : 0.42,
-                border: current ? '1px solid rgba(246,196,69,0.85)' : '1px solid rgba(255,255,255,0.06)',
-                boxShadow: current ? '0 0 18px rgba(246,196,69,0.28)' : undefined,
+                border: current ? '1px solid rgba(164,65,42,0.85)' : '1px solid rgba(255,255,255,0.06)',
+                boxShadow: current ? '0 0 18px rgba(164,65,42,0.28)' : undefined,
                 transition: 'box-shadow .25s ease, border-color .25s ease, opacity .25s ease',
               }}>
-                <div style={{ borderRadius: 10, marginBottom: 6, overflow: 'hidden', border: current ? '1px solid rgba(246,196,69,0.45)' : '1px solid rgba(246,196,69,0.15)' }}>
+                <div style={{ borderRadius: 10, marginBottom: 6, overflow: 'hidden', border: current ? '1px solid rgba(164,65,42,0.45)' : '1px solid rgba(164,65,42,0.15)' }}>
                   <StageThumb kind={st.kind} active={open} />
                 </div>
                 <div style={{ fontSize: 10, fontWeight: 800 }}>{st.title}</div>
@@ -3538,11 +3518,11 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
               <div style={{
                 width: 40, height: 40, borderRadius: '50%', margin: '0 auto',
                 background: 'linear-gradient(180deg,#2a2540,#151822)',
-                border: typingWho === n.id ? '1px solid #00E5FF' : '1px solid rgba(108,99,255,.45)',
+                border: typingWho === n.id ? '1px solid #2f6b6e' : '1px solid rgba(47,62,107,.45)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
                 animation: typingWho === n.id ? 'lrpg-pulse 1.1s ease-out infinite' : 'none',
               }}>{n.emoji}</div>
-              <div style={{ fontSize: 9, color: typingWho === n.id ? '#00E5FF' : COLORS.textMuted, marginTop: 2 }}>{n.name}</div>
+              <div style={{ fontSize: 9, color: typingWho === n.id ? '#2f6b6e' : COLORS.textMuted, marginTop: 2 }}>{n.name}</div>
             </div>
           ))}
         </div>
@@ -3553,8 +3533,8 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
               return (
                 <div key={m.id || m.ts} style={{ alignSelf: 'center', textAlign: 'center', margin: '10px 0', animation: 'lrpg-div .35s ease-out' }}>
                   <div style={{ fontSize: 10, letterSpacing: 1, color: COLORS.textMuted, textTransform: 'uppercase' }}>встреча</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: '#E8EEF8' }}>{m.text}</div>
-                  <div style={{ fontSize: 11, color: '#00E5FF', marginTop: 2 }}>{tm}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: '#1e2230' }}>{m.text}</div>
+                  <div style={{ fontSize: 11, color: '#2f6b6e', marginTop: 2 }}>{tm}</div>
                 </div>
               );
             }
@@ -3571,8 +3551,8 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
                 <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>{mine ? 'Ты' : `${n?.emoji || ''} ${n?.name || m.who}`}</div>
                 <div style={{
                   fontSize: 13, padding: '8px 10px', borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                  background: mine ? 'linear-gradient(180deg,#5b54d6,#6C63FF)' : 'rgba(255,255,255,0.07)',
-                  boxShadow: mine ? '0 6px 16px rgba(108,99,255,.25)' : 'none',
+                  background: mine ? 'linear-gradient(180deg,#5b54d6,#a4412a)' : 'rgba(255,255,255,0.07)',
+                  boxShadow: mine ? '0 6px 16px rgba(47,62,107,.25)' : 'none',
                 }}>{m.text}</div>
               </div>
             );
@@ -3581,7 +3561,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
             <div style={{ alignSelf: 'flex-start', animation: 'lrpg-pop .25s ease-out' }}>
               <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 3 }}>{(COUNCIL_NPCS.find(n => n.id === typingWho) || {}).name} печатает</div>
               <div style={{ display: 'flex', gap: 4, padding: '8px 12px', borderRadius: '14px 14px 14px 4px', background: 'rgba(255,255,255,0.07)' }}>
-                {[0,1,2].map(i => <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#00E5FF', animation: `lrpg-dot 1s ${i*0.15}s infinite` }} />)}
+                {[0,1,2].map(i => <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#2f6b6e', animation: `lrpg-dot 1s ${i*0.15}s infinite` }} />)}
               </div>
             </div>
           )}
@@ -3608,7 +3588,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
         {dm.length === 0 && <div style={{ fontSize: 12, color: COLORS.textMuted }}>{npc.greet[0]}</div>}
         {dm.map(m => (
           <div key={m.ts} style={{ alignSelf: m.who === 'you' ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
-            <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: m.who === 'you' ? 'rgba(108,99,255,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
+            <div style={{ fontSize: 13, padding: '8px 10px', borderRadius: 12, background: m.who === 'you' ? 'rgba(47,62,107,0.25)' : 'rgba(255,255,255,0.06)' }}>{m.text}</div>
           </div>
         ))}
         {busy && <div style={{ fontSize: 11, color: COLORS.textMuted }}>{npc.name} печатает…</div>}
@@ -5445,20 +5425,21 @@ useEffect(() => {
 
   const TAB_HOME = { home: null, actions: 'all', goals: 'today', progress: 'stats', profile: 'hub' };
   function goMainTab(key) {
+    if (key !== tab) gameFeedback('NAV');
     setTab(key);
     const root = TAB_HOME[key];
     if (root != null) setSubTab(s => ({ ...s, [key]: root }));
   }
 
   return (
-    <div className="lrpg-root" style={{ background: `radial-gradient(ellipse at top, #171325 0%, ${COLORS.bg} 55%)`, minHeight: 640, color: COLORS.text, fontFamily: 'Inter, sans-serif', paddingBottom: 76, position: 'relative' }}>
+    <div className="lrpg-root" style={{ background: COLORS.bg, minHeight: '100vh', color: COLORS.text, fontFamily: "Manrope, system-ui, sans-serif", paddingBottom: 76, position: 'relative' }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Lora:wght@600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
         /* ===== LIFE RPG — design tokens ===== */
         .lrpg-root {
-          --gold: ${COLORS.gold}; --gold-soft: ${COLORS.goldSoft}; --gold-glow: rgba(217,165,75,0.55);
-          --violet: ${COLORS.violet}; --violet-soft: ${COLORS.violetSoft}; --violet-glow: rgba(139,124,216,0.5);
+          --gold: ${COLORS.gold}; --gold-soft: ${COLORS.goldSoft}; --gold-glow: rgba(164,65,42,0.55);
+          --violet: ${COLORS.violet}; --violet-soft: ${COLORS.violetSoft}; --violet-glow: rgba(47,62,107,0.5);
           --teal: ${COLORS.teal}; --crimson: ${COLORS.crimson};
           --ink: ${COLORS.text}; --ink-muted: ${COLORS.textMuted};
           --panel: ${COLORS.bgCard}; --panel-alt: ${COLORS.bgCardAlt}; --line: ${COLORS.border};
@@ -5499,7 +5480,7 @@ useEffect(() => {
         @keyframes lrpg-plane-fly { from { transform: translateX(0) scale(.42); } to { transform: translateX(160vw) scale(.42); } }
         @keyframes lrpg-npc-in { 0% { transform: translateY(18px) scale(.86); opacity: 0; } 70% { transform: translateY(-3px) scale(1.04); opacity: 1; } 100% { transform: translateY(0) scale(1); opacity: 1; } }
         @keyframes lrpg-dot { 0%,80%,100% { transform: translateY(0); opacity:.35 } 40% { transform: translateY(-4px); opacity:1 } }
-        @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(0,229,255,.45) } 50% { box-shadow: 0 0 0 6px rgba(0,229,255,0) } }
+        @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(47,107,110,.45) } 50% { box-shadow: 0 0 0 6px rgba(47,107,110,0) } }
         @keyframes lrpg-div { 0% { opacity:0; transform: scale(.94) } 100% { opacity:1; transform: scale(1) } }
         @keyframes lrpg-pop { 0% { transform: translateY(10px) scale(.92); opacity:0 } 100% { transform: translateY(0) scale(1); opacity:1 } }
         @keyframes lrpg-page {
@@ -5514,7 +5495,7 @@ useEffect(() => {
         }
         @keyframes lrpg-chest-shake { 0%,100% { transform: rotate(0) } 20% { transform: rotate(-12deg) scale(1.05) } 40% { transform: rotate(12deg) } 60% { transform: rotate(-8deg) } 80% { transform: rotate(8deg) } }
         @keyframes lrpg-chest-burst { 0% { transform: scale(.4); opacity:0 } 40% { opacity:1 } 100% { transform: scale(2.2); opacity:0 } }
-        @keyframes lrpg-chest-glow { 0%,100% { filter: drop-shadow(0 0 6px #C084FC) } 50% { filter: drop-shadow(0 0 22px #00E5FF) } }
+        @keyframes lrpg-chest-glow { 0%,100% { filter: drop-shadow(0 0 6px #a83e66) } 50% { filter: drop-shadow(0 0 22px #2f6b6e) } }
         @keyframes lrpg-npc-bubble { 0% { transform: translateX(-12px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
         @keyframes lrpg-npc-seat { 0% { transform: translateY(10px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
         @keyframes lrpg-cloud-a { 0% { transform: translate3d(-40%,0,0); } 100% { transform: translate3d(55%,0,0); } }
@@ -5525,18 +5506,18 @@ useEffect(() => {
         @keyframes lrpg-leaf { 0% { transform: translate(0,0) rotate(0deg); opacity:.0; } 10%{opacity:.55} 100% { transform: translate(40px, 70px) rotate(80deg); opacity:0; } }
         .lrpg-cta {
           border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 800; color: #fff;
-          background: linear-gradient(180deg, #8B85FF, #6C63FF);
-          box-shadow: 0 0 16px rgba(108,99,255,0.45);
+          background: linear-gradient(180deg, #b5654a, #a4412a);
+          box-shadow: 0 0 16px rgba(47,62,107,0.45);
         }
         .lrpg-cta-ok {
           border-radius: 999px; padding: 8px 14px; font-size: 12px; font-weight: 800; color: #042018;
-          background: linear-gradient(180deg, #7CFFC4, #4ADE80);
-          box-shadow: 0 0 16px rgba(74,222,128,0.35);
+          background: linear-gradient(180deg, #5a9a6a, #3f7a4a);
+          box-shadow: 0 0 16px rgba(63,122,74,0.35);
         }
         .lrpg-panel-neon {
-          background: linear-gradient(180deg, rgba(18,24,38,0.88), rgba(11,15,24,0.82));
-          border: 1px solid rgba(108,99,255,0.35);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(108,99,255,0.12);
+          background: linear-gradient(180deg, rgba(251,249,244,0.88), rgba(11,15,24,0.82));
+          border: 1px solid rgba(47,62,107,0.35);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(47,62,107,0.12);
           border-radius: 18px;
         }
         .lrpg-input { background: var(--panel-alt); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 8px 10px; font-size: 14px; width: 100%; box-shadow: inset 0 1px 4px rgba(0,0,0,0.35); }
@@ -5547,7 +5528,7 @@ useEffect(() => {
           position: relative;
           background:
             radial-gradient(120% 140% at 15% 0%, rgba(255,255,255,0.09), transparent 55%),
-            linear-gradient(160deg, rgba(36,32,58,0.92) 0%, rgba(14,12,22,0.92) 100%);
+            linear-gradient(160deg, rgba(251,249,244,0.92) 0%, rgba(14,12,22,0.92) 100%);
           border: 1px solid rgba(255,255,255,0.09);
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), inset 0 -12px 20px -14px rgba(0,0,0,0.7), 0 10px 26px -8px rgba(0,0,0,0.6);
           backdrop-filter: blur(14px);
@@ -5589,7 +5570,7 @@ useEffect(() => {
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), inset 0 -3px 6px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.35);
         }
         .lrpg-badge-icon-active {
-          background: radial-gradient(120% 130% at 30% 20%, rgba(217,165,75,0.45), transparent 60%), linear-gradient(160deg, rgba(217,165,75,0.18), rgba(0,0,0,0.25));
+          background: radial-gradient(120% 130% at 30% 20%, rgba(164,65,42,0.45), transparent 60%), linear-gradient(160deg, rgba(164,65,42,0.18), rgba(0,0,0,0.25));
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -3px 6px rgba(0,0,0,0.4), 0 0 10px var(--gold-glow);
         }
 
@@ -5605,12 +5586,12 @@ useEffect(() => {
         /* ===== Buttons ===== */
         .lrpg-btn-gold {
           background: linear-gradient(160deg, #ecc789, var(--gold) 45%, #a8792f); color: #1a1305;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 4px rgba(0,0,0,0.25), 0 3px 10px rgba(217,165,75,0.35);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 4px rgba(0,0,0,0.25), 0 3px 10px rgba(164,65,42,0.35);
           border: 1px solid rgba(255,255,255,0.25);
         }
         .lrpg-btn-violet {
           background: linear-gradient(160deg, #a99bea, var(--violet) 45%, #5c4fae); color: #100E1C;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -2px 4px rgba(0,0,0,0.25), 0 3px 10px rgba(139,124,216,0.35);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -2px 4px rgba(0,0,0,0.25), 0 3px 10px rgba(47,62,107,0.35);
           border: 1px solid rgba(255,255,255,0.2);
         }
         .lrpg-btn-ghost {
@@ -5624,21 +5605,79 @@ useEffect(() => {
           position: absolute; left: 50%; bottom: 6%; width: 62%; height: 15%; transform: translateX(-50%);
           background: radial-gradient(ellipse, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 72%); pointer-events: none;
         }
+
+        /* ===================== PAPER THEME — переопределения поверх старого UI-кита ===================== */
+        html, body { background: #f2eee5; }
+        .lrpg-root { -webkit-font-smoothing: antialiased; }
+        .lrpg-root, .lrpg-root button, .lrpg-root input, .lrpg-root textarea, .lrpg-root select { font-family: Manrope, system-ui, sans-serif; }
+        .lrpg-display { font-family: 'Fraunces', 'Lora', Georgia, serif !important; letter-spacing: 0 !important; }
+        .lrpg-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+        .lrpg-num { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+        .lrpg-root ::-webkit-scrollbar-thumb { background: #d6cdb9; }
+        .lrpg-noscroll { scrollbar-width: none; } .lrpg-noscroll::-webkit-scrollbar { display: none; }
+        .lrpg-paper { background: #fbf9f4; border: 1px solid #e2dbcc; border-radius: 14px; box-shadow: 0 1px 0 #e9e3d6; }
+        .lrpg-glass, .lrpg-card, .lrpg-panel-neon {
+          background: #fbf9f4 !important; border: 1px solid #e2dbcc !important;
+          box-shadow: 0 1px 0 #e9e3d6 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+        }
+        .lrpg-glass::before { display: none; }
+        .lrpg-btn { transition: transform .14s cubic-bezier(.2,.9,.3,1.3), filter .12s ease, box-shadow .12s ease, background-color .2s ease, color .2s ease; }
+        .lrpg-btn:active { transform: scale(0.95); filter: none; }
+        .lrpg-cta { background: #a4412a !important; color: #fbf9f4 !important; box-shadow: 0 2px 0 #7a2e1c !important; border-radius: 12px; }
+        .lrpg-cta-ok { background: #3f7a4a !important; color: #fbf9f4 !important; box-shadow: 0 2px 0 #2c5a35 !important; border-radius: 12px; }
+        .lrpg-btn-gold { background: #a4412a !important; color: #fbf9f4 !important; border: 1px solid #a4412a !important; box-shadow: 0 2px 0 #7a2e1c !important; }
+        .lrpg-btn-violet { background: #1e2230 !important; color: #f2eee5 !important; border: 1px solid #1e2230 !important; box-shadow: 0 2px 0 #0e1018 !important; }
+        .lrpg-btn-ghost { background: #fbf9f4 !important; color: #1e2230 !important; border: 1px solid #e2dbcc !important; box-shadow: none !important; }
+        .lrpg-input { background: #fbf9f4 !important; border: 1px solid #e2dbcc !important; color: #1e2230 !important; box-shadow: none !important; border-radius: 10px !important; }
+        .lrpg-input:focus { border-color: #a4412a !important; box-shadow: 0 0 0 3px rgba(164,65,42,.14) !important; }
+        .lrpg-chamfer { clip-path: none !important; border-radius: 14px; box-shadow: inset 0 0 0 1px #e2dbcc !important; }
+        .lrpg-divider { height: 0; background: none; border-top: 1px dashed #d6cdb9; }
+        .lrpg-divider::before { display: none; }
+        .lrpg-badge-icon { background: #f3eee3 !important; box-shadow: inset 0 0 0 1px #e2dbcc !important; }
+        .lrpg-badge-icon-active { background: rgba(164,65,42,.12) !important; box-shadow: inset 0 0 0 1px rgba(164,65,42,.45) !important; }
+        .lrpg-gauge-track { background: #e6e0d3 !important; box-shadow: none !important; }
+        .lrpg-gauge-fill::after, .lrpg-gauge-ticks { display: none; }
+        @keyframes lrpg-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(164,65,42,.35) } 50% { box-shadow: 0 0 0 6px rgba(164,65,42,0) } }
+        /* Переходы между экранами и появление карточек */
+        @keyframes lrpg-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        .lrpg-fade { animation: lrpg-fade-in .35s ease both; }
+        @keyframes lrpg-stagger-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+        .lrpg-stagger { animation: lrpg-stagger-in .42s cubic-bezier(.16,1,.3,1) both; }
+        .lrpg-page > div > * { animation: lrpg-stagger-in .45s cubic-bezier(.16,1,.3,1) both; }
+        .lrpg-page > div > *:nth-child(2) { animation-delay: .04s; } .lrpg-page > div > *:nth-child(3) { animation-delay: .08s; }
+        .lrpg-page > div > *:nth-child(4) { animation-delay: .12s; } .lrpg-page > div > *:nth-child(5) { animation-delay: .16s; }
+        .lrpg-page > div > *:nth-child(n+6) { animation-delay: .2s; }
+        @keyframes lrpg-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        @keyframes lrpg-sheet-down { from { transform: translateY(0); } to { transform: translateY(100%); } }
+        @keyframes lrpg-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+        .lrpg-sheet { animation: lrpg-sheet-up .42s cubic-bezier(.16,1,.3,1) both; }
+        .lrpg-sheet.closing { animation: lrpg-sheet-down .28s cubic-bezier(.5,0,.75,0) both; }
+        .lrpg-scrim { animation: lrpg-scrim-in .3s ease both; }
+        .lrpg-scrim.closing { animation: lrpg-scrim-in .28s ease reverse both; }
+        @keyframes lrpg-nav-ink { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+        .lrpg-nav-ink { transform-origin: center; animation: lrpg-nav-ink .32s cubic-bezier(.16,1,.3,1) both; }
+        @keyframes lrpg-icon-bounce { 0% { transform: translateY(0) } 35% { transform: translateY(-4px) scale(1.08) } 70% { transform: translateY(1px) } 100% { transform: none } }
+        .lrpg-icon-bounce { animation: lrpg-icon-bounce .45s cubic-bezier(.2,.9,.3,1.2) both; }
+        @keyframes lrpg-hud-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+        .lrpg-hud-in { animation: lrpg-hud-in .5s cubic-bezier(.16,1,.3,1) both; }
+        @keyframes lrpg-levelup { 0% { opacity: 0; transform: translate(-50%, -12px) scale(.9); } 15% { opacity: 1; transform: translate(-50%, 0) scale(1.03); } 25% { transform: translate(-50%,0) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -6px); } }
+        @media (prefers-reduced-motion: reduce) { .lrpg-root *, .lrpg-root *::before { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
       `}</style>
 
 
       {levelUpFlash && (
         <div style={{
-          position: 'fixed', top: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 50,
-          background: `linear-gradient(135deg, ${COLORS.gold}, #a8792f)`, color: '#1a1305',
-          padding: '14px 28px', borderRadius: 14, boxShadow: `0 0 40px ${COLORS.gold}88`,
-          fontFamily: 'Cinzel, serif', fontWeight: 700, fontSize: 18, textAlign: 'center',
+          position: 'fixed', top: 'calc(18px + env(safe-area-inset-top, 0px))', left: '50%', zIndex: 120,
+          background: '#fbf9f4', color: COLORS.text, border: `1px solid ${COLORS.border}`,
+          padding: '14px 26px 12px', borderRadius: 16, boxShadow: '0 12px 30px rgba(30,34,48,.18)', textAlign: 'center',
+          animation: 'lrpg-levelup 2.6s ease both', pointerEvents: 'none',
         }}>
-          ⚔ LEVEL UP — {levelUpFlash} уровень
+          <div className="lrpg-mono" style={{ fontSize: 10, color: COLORS.gold }}>Новый уровень</div>
+          <div className="lrpg-display" style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.1 }}>{levelUpFlash}</div>
         </div>
       )}
 
-      <div key={tab + ':' + (subTab[tab] || '')} className={tab === 'home' ? '' : 'lrpg-page'}>
+      <div key={tab + ':' + (subTab[tab] || '')} className={tab === 'home' ? 'lrpg-fade' : 'lrpg-page'}>
       {tab === 'home' ? (
         <HomeTab
           state={state} editingName={editingName}
@@ -5648,6 +5687,7 @@ useEffect(() => {
           energy={energy} todayCheckin={todayCheckin} setDailyCheckin={setDailyCheckin}
           setTab={setTab} setSubTab={setSubTab} openProfile={openProfile}
           setBodyProfile={setBodyProfile} logWeight={logWeight}
+          buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot}
         />
       ) : (
       <>
@@ -5803,33 +5843,27 @@ useEffect(() => {
       </div>
 
       <FeedbackLayer />
-      <div style={{
+      <nav aria-label="Разделы" style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40, display: 'flex',
-        background: 'linear-gradient(180deg, rgba(12,16,26,0.55), rgba(8,11,18,0.96))',
-        borderTop: '1px solid rgba(108,99,255,0.22)',
-        padding: '8px 8px calc(10px + env(safe-area-inset-bottom, 0px))', backdropFilter: 'blur(14px)',
+        background: '#f2eee5', borderTop: `1px solid ${COLORS.border}`,
+        padding: '6px 6px calc(8px + env(safe-area-inset-bottom, 0px))',
       }}>
         {TABS.map(t => {
           const Icon = t.icon;
           const active = tab === t.key;
           return (
-            <button key={t.key} className="lrpg-btn" onClick={() => goMainTab(t.key)} style={{
-              flex: 1, background: 'none', display: 'flex', flexDirection: 'column',
-              alignItems: 'center', gap: 4, color: active ? '#fff' : COLORS.textMuted, padding: '0',
+            <button key={t.key} className="lrpg-btn" onClick={() => goMainTab(t.key)} aria-current={active ? 'page' : undefined} style={{
+              flex: 1, background: 'none', display: 'flex', flexDirection: 'column', position: 'relative',
+              alignItems: 'center', gap: 3, padding: '6px 0 2px', minHeight: 52,
+              color: active ? COLORS.gold : '#4a4e5a',
             }}>
-              <span style={{
-                width: 42, height: 42, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: active ? 'linear-gradient(180deg, rgba(108,99,255,0.35), rgba(108,99,255,0.08))' : 'rgba(255,255,255,0.03)',
-                boxShadow: active ? '0 0 16px rgba(108,99,255,0.45), inset 0 0 0 1px rgba(140,160,255,0.45)' : 'inset 0 0 0 1px rgba(255,255,255,0.05)',
-                color: active ? '#C7C4FF' : COLORS.textMuted,
-              }}>
-                <Icon size={18} />
-              </span>
-              <span style={{ fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap', color: active ? '#C7C4FF' : COLORS.textMuted }}>{t.label}</span>
+              {active && <span className="lrpg-nav-ink" style={{ position: 'absolute', top: -7, left: '22%', right: '22%', height: 2, borderRadius: 2, background: COLORS.gold }} />}
+              <span key={active ? 'on' : 'off'} className={active ? 'lrpg-icon-bounce' : undefined} style={{ display: 'flex' }}><Icon size={21} strokeWidth={active ? 2.1 : 1.7} /></span>
+              <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, whiteSpace: 'nowrap' }}>{t.label}</span>
             </button>
           );
         })}
-      </div>
+      </nav>
     </div>
   );
 }
@@ -5942,35 +5976,41 @@ function ParamRow({ label, children }) {
 
 // ---- Верхняя строка HUD ----
 
-function CharacterStatusCard({ state, xpNeed, energy, hp, onOpenIdentity, onOpenCheckin }) {
+function PaperBar({ value, max, color, label }) {
+  const pct = Math.max(0, Math.min(100, max ? (value / max) * 100 : 0));
   return (
-    <button className="lrpg-btn lrpg-glass" onClick={onOpenIdentity} style={{
-      display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left',
-      borderRadius: 16, padding: '7px 10px 7px 7px', minWidth: 0, flex: 1,
-      border: '1px solid rgba(217,165,75,0.32)',
-      boxShadow: 'inset 0 0 0 1px rgba(217,165,75,0.12), 0 8px 18px rgba(0,0,0,0.35)',
-      background: 'linear-gradient(160deg, rgba(24,20,38,0.78), rgba(12,10,20,0.72))',
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ flex: 1, height: 4, borderRadius: 2, background: '#e6e0d3', overflow: 'hidden' }}>
+        <span style={{ display: 'block', width: pct + '%', height: '100%', borderRadius: 2, background: color, transition: 'width .6s cubic-bezier(.16,1,.3,1)' }} />
+      </span>
+      <span className="lrpg-num" aria-label={label} style={{ fontSize: 10, color: COLORS.text, width: 48, textAlign: 'right' }}>{Math.round(value)}/{max}</span>
+    </span>
+  );
+}
+
+function CharacterStatusCard({ state, xpNeed, energy, hp, onOpenIdentity, onOpenCheckin }) {
+  const c = state.character;
+  return (
+    <button className="lrpg-btn lrpg-paper lrpg-hud-in" onClick={() => { gameFeedback('MENU_OPEN'); onOpenIdentity(); }} style={{
+      display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', padding: '9px 11px', minWidth: 0, flex: 1, maxWidth: 270,
+      background: 'rgba(251,249,244,.96)', boxShadow: '0 2px 0 rgba(30,34,48,.06), 0 8px 20px rgba(30,34,48,.12)', color: COLORS.text,
     }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-        border: '1.5px solid rgba(217,165,75,0.55)', background: '#1a1628',
-      }}>
-        {state.character.photo
-          ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          : <User size={16} color={COLORS.textMuted} style={{ margin: 10 }} />}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="lrpg-display" style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          Lv.{state.character.level} {state.character.name}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
-          <MiniHudBar icon={HeartPulse} value={hp} max={100} colorFrom="#ff4d6d" colorTo="#ff9aa8" showValue />
-          <div onClick={e => { e.stopPropagation(); onOpenCheckin(); }}>
-            <MiniHudBar icon={Zap} value={energy} max={100} colorFrom="#3b82f6" colorTo="#67e8f9" showValue />
-          </div>
-          <MiniHudBar icon={Sparkles} value={state.character.xp} max={xpNeed} colorFrom="#f5c15d" colorTo="#ffe7a3" showValue />
-        </div>
-      </div>
+      <span style={{ width: 46, height: 46, borderRadius: 12, overflow: 'hidden', flexShrink: 0, background: '#e6e0d3', border: `1px solid ${COLORS.borderLight}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {c.photo
+          ? <img src={c.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          : <span className="lrpg-display" style={{ fontSize: 22, fontWeight: 700, color: COLORS.gold }}>{(c.name || 'Г').slice(0, 1)}</span>}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+          <span className="lrpg-display" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name || 'Герой'}</span>
+          <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, flexShrink: 0 }}>ур. {c.level}</span>
+        </span>
+        <PaperBar value={hp} max={100} color={COLORS.green} label="Здоровье" />
+        <span onClick={e => { e.stopPropagation(); gameFeedback('MENU_OPEN'); onOpenCheckin(); }} style={{ display: 'block' }}>
+          <PaperBar value={energy} max={100} color="#c48a2a" label="Энергия" />
+        </span>
+        <PaperBar value={c.xp} max={xpNeed} color={COLORS.gold} label="Опыт" />
+      </span>
     </button>
   );
 }
@@ -5981,26 +6021,43 @@ function CoinsTimeBlock({ coins, dayNumber, onOpenShop }) {
     const t = setInterval(() => setTimeStr(new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })), 30000);
     return () => clearInterval(t);
   }, []);
+  const shown = useCountUp(coins || 0);
+  const card = { background: 'rgba(251,249,244,.96)', border: `1px solid ${COLORS.border}`, boxShadow: '0 2px 0 rgba(30,34,48,.06), 0 8px 20px rgba(30,34,48,.12)' };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, flexShrink: 0 }}>
-      <button className="lrpg-btn" onClick={onOpenShop} style={{
-        display: 'flex', alignItems: 'center', gap: 5, borderRadius: 999, padding: '5px 8px',
-        background: 'linear-gradient(160deg, #3a2c14, #1c1608)',
-        border: `1px solid ${COLORS.gold}66`,
+    <div className="lrpg-hud-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0, animationDelay: '.06s' }}>
+      <button className="lrpg-btn" onClick={() => { gameFeedback('BUTTON_PRESS'); onOpenShop(); }} aria-label={`Монеты: ${coins}. Открыть магазин`} style={{
+        ...card, display: 'flex', alignItems: 'center', gap: 7, borderRadius: 12, padding: '8px 11px', color: COLORS.text,
       }}>
-        <CoinsIcon size={11} color={COLORS.gold} />
-        <span style={{ fontSize: 12, fontWeight: 800, color: COLORS.gold }}>{coins}</span>
-        <Plus size={11} color={COLORS.textMuted} />
+        <CoinsIcon size={15} color={COLORS.gold} />
+        <span className="lrpg-num" style={{ fontSize: 15, fontWeight: 700 }}>{shown}</span>
+        <Plus size={14} color={COLORS.gold} />
       </button>
-      <div style={{
-        borderRadius: 999, padding: '4px 9px', fontSize: 10, color: COLORS.textMuted,
-        display: 'flex', alignItems: 'center', gap: 4,
-        background: 'rgba(12,10,20,0.62)', border: '1px solid rgba(255,255,255,0.08)',
-      }}>
-        <Moon size={10} color={COLORS.violet} /> {timeStr} · День {dayNumber}
+      <div className="lrpg-num" style={{ ...card, borderRadius: 10, padding: '5px 10px', fontSize: 11, color: '#4a4e5a', display: 'flex', alignItems: 'center', gap: 5 }}>
+        {timeStr} · День {dayNumber}
       </div>
     </div>
   );
+}
+
+function useCountUp(target, ms = 650) {
+  const [val, setVal] = useState(target);
+  const prev = useRef(target);
+  useEffect(() => {
+    const from = prev.current;
+    prev.current = target;
+    if (from === target || FEEDBACK_PREFS.batterySaver) { setVal(target); return undefined; }
+    let raf = 0;
+    const t0 = performance.now();
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / ms);
+      const e = 1 - Math.pow(1 - k, 3);
+      setVal(Math.round(from + (target - from) * e));
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return val;
 }
 
 // ---- Левая рельса (постоянно видна, не drawer) ----
@@ -6019,9 +6076,9 @@ function HudCard({ children, style }) {
   return (
     <div style={{
       borderRadius: 16,
-      background: 'linear-gradient(165deg, rgba(18,16,32,0.72), rgba(10,9,18,0.66))',
-      border: '1px solid rgba(108,99,255,0.38)',
-      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(108,99,255,0.12)',
+      background: 'linear-gradient(165deg, rgba(251,249,244,0.72), rgba(10,9,18,0.66))',
+      border: '1px solid rgba(47,62,107,0.38)',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 0 18px rgba(47,62,107,0.12)',
       backdropFilter: 'blur(10px)',
       WebkitBackdropFilter: 'blur(10px)',
       ...style,
@@ -6052,30 +6109,30 @@ function LeftGameMenu({ setTab, setSubTab, onOpenParams }) {
 
 function RightStatsPanel({ body, currentWeight, onEdit }) {
   const rows = [
-    { icon: Ruler, label: 'Рост', value: body.heightCm ? `${body.heightCm} см` : '—' },
-    { icon: Scale, label: 'Вес', value: currentWeight ? `${currentWeight} кг` : '—' },
-    { icon: CalendarClock, label: 'Возраст', value: body.age ? `${body.age} лет` : '—' },
-    { icon: Users, label: 'Пол', value: body.sex === 'female' ? 'Женский' : 'Мужской' },
+    { label: 'Рост', value: body.heightCm ? `${body.heightCm} см` : '—' },
+    { label: 'Вес', value: currentWeight ? `${currentWeight} кг` : '—' },
+    { label: 'Возраст', value: body.age ? `${body.age} лет` : '—' },
+    { label: 'Пол', value: body.sex === 'female' ? 'Женский' : 'Мужской' },
   ];
   return (
-    <HudCard style={{ padding: '8px 10px 10px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontSize: 10, fontWeight: 800, color: COLORS.gold }}>Параметры</span>
-        <button className="lrpg-btn" onClick={onEdit} style={{ background: 'none', padding: 0 }}>
-          <Pencil size={11} color={COLORS.textMuted} />
+    <div className="lrpg-hud-in" style={{
+      background: 'rgba(251,249,244,.96)', border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: '10px 11px',
+      boxShadow: '0 2px 0 rgba(30,34,48,.06), 0 8px 20px rgba(30,34,48,.12)', display: 'flex', flexDirection: 'column', gap: 7, animationDelay: '.12s',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="lrpg-display" style={{ fontSize: 15, fontWeight: 700 }}>Параметры</span>
+        <button className="lrpg-btn" onClick={() => { gameFeedback('MENU_OPEN'); onEdit(); }} aria-label="Изменить параметры" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${COLORS.border}`, background: COLORS.bgCard, display: 'flex', alignItems: 'center', justifyContent: 'center', color: COLORS.text }}>
+          <Pencil size={12} />
         </button>
       </div>
-      {rows.map(r => {
-        const Icon = r.icon;
-        return (
-          <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0' }}>
-            <Icon size={11} color={COLORS.textMuted} />
-            <span style={{ fontSize: 10, color: COLORS.textMuted, flex: 1 }}>{r.label}</span>
-            <span style={{ fontSize: 10, fontWeight: 700 }}>{r.value}</span>
-          </div>
-        );
-      })}
-    </HudCard>
+      <div style={{ borderTop: `1px dashed ${COLORS.borderLight}` }} />
+      {rows.map(r => (
+        <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+          <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>{r.label}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.value}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -6112,7 +6169,7 @@ function DailyGoalsPanel({ state, setTab, setSubTab }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px',
-      borderRadius: 999, background: 'rgba(10,14,22,0.55)', border: '1px solid rgba(108,99,255,0.28)',
+      borderRadius: 999, background: 'rgba(251,249,244,0.55)', border: '1px solid rgba(47,62,107,0.28)',
     }}>
       <span style={{ fontSize: 9, fontWeight: 800, color: COLORS.teal, whiteSpace: 'nowrap' }}>{done}/4</span>
       {goals.map(g => (
@@ -6218,7 +6275,7 @@ function IdentityModal({ state, editingName, setEditingName, setCharacterName, s
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label className="lrpg-btn" style={{ position: 'relative', width: 56, height: 56, borderRadius: '50%', overflow: 'hidden', background: COLORS.bgCardAlt, border: `2px solid ${COLORS.gold}66`, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {state.character.photo ? <img src={state.character.photo} alt={state.character.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Camera size={20} color={COLORS.textMuted} />}
-          {uploadingPhoto && <div style={{ position: 'absolute', inset: 0, background: 'rgba(11,10,18,0.6)' }} />}
+          {uploadingPhoto && <div style={{ position: 'absolute', inset: 0, background: 'rgba(251,249,244,0.6)' }} />}
           <input type="file" accept="image/*" onChange={handlePhotoChange} style={{ display: 'none' }} />
         </label>
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -6262,7 +6319,7 @@ function ParamsModal({ body, currentWeight, setBodyProfile, logWeight, onClose }
         <div style={{ display: 'flex', gap: 6 }}>
           <input className="lrpg-input" type="number" min={0} value={weightDraft} onChange={e => setWeightDraft(e.target.value)} />
           <button className="lrpg-btn" disabled={!weightDraft} onClick={() => logWeight(Number(weightDraft))}
-            style={{ background: `linear-gradient(160deg, ${COLORS.teal}, #2a8f85)`, color: '#0B1F1D', borderRadius: 8, padding: '0 14px', fontSize: 13, fontWeight: 700, opacity: weightDraft ? 1 : 0.5 }}>✓</button>
+            style={{ background: `linear-gradient(160deg, ${COLORS.teal}, #2a8f85)`, color: '#fbf9f4', borderRadius: 8, padding: '0 14px', fontSize: 13, fontWeight: 700, opacity: weightDraft ? 1 : 0.5 }}>✓</button>
         </div>
       </ParamRow>
       <ParamRow label="Возраст">
@@ -6271,8 +6328,8 @@ function ParamsModal({ body, currentWeight, setBodyProfile, logWeight, onClose }
       </ParamRow>
       <ParamRow label="Пол">
         <div style={{ display: 'flex', gap: 6, background: 'rgba(0,0,0,0.3)', borderRadius: 8, padding: 3 }}>
-          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'male' })} style={{ flex: 1, background: body.sex === 'male' ? `linear-gradient(160deg, ${COLORS.violet}, #5f4fb8)` : 'transparent', color: body.sex === 'male' ? '#fff' : COLORS.textMuted, borderRadius: 6, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Мужской</button>
-          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'female' })} style={{ flex: 1, background: body.sex === 'female' ? `linear-gradient(160deg, ${COLORS.violet}, #5f4fb8)` : 'transparent', color: body.sex === 'female' ? '#fff' : COLORS.textMuted, borderRadius: 6, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Женский</button>
+          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'male' })} style={{ flex: 1, background: body.sex === 'male' ? `linear-gradient(160deg, ${COLORS.violet}, #2f3e6b)` : 'transparent', color: body.sex === 'male' ? '#fff' : COLORS.textMuted, borderRadius: 6, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Мужской</button>
+          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'female' })} style={{ flex: 1, background: body.sex === 'female' ? `linear-gradient(160deg, ${COLORS.violet}, #2f3e6b)` : 'transparent', color: body.sex === 'female' ? '#fff' : COLORS.textMuted, borderRadius: 6, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Женский</button>
         </div>
       </ParamRow>
       <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4, lineHeight: 1.5 }}>
@@ -6496,37 +6553,108 @@ function LivingBackground() {
   );
 }
 
-function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight }) {
+function RoomEditorSheet({ room, coins, buyRoomItem, equipRoomSlot, slot, setSlot, onClose }) {
+  const [closing, setClosing] = useState(false);
+  const close = () => { if (closing) return; gameFeedback('SHEET_CLOSE'); setClosing(true); setTimeout(onClose, 260); };
+  const shown = useCountUp(coins || 0);
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+      <div className={'lrpg-scrim' + (closing ? ' closing' : '')} onClick={close} style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(30,34,48,0) 0%, rgba(30,34,48,0) 34%, rgba(30,34,48,.28) 100%)' }} />
+      <div className={'lrpg-sheet' + (closing ? ' closing' : '')} role="dialog" aria-label="Обустройство комнаты" style={{
+        position: 'relative', background: COLORS.bg, borderTop: `1px solid ${COLORS.border}`, borderRadius: '20px 20px 0 0',
+        boxShadow: '0 -12px 30px rgba(30,34,48,.18)', maxHeight: '54%', display: 'flex', flexDirection: 'column',
+        padding: '8px 14px calc(12px + env(safe-area-inset-bottom, 0px))',
+      }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: COLORS.borderLight, margin: '0 auto 8px' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div>
+            <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Обустройство</div>
+            <div className="lrpg-display" style={{ fontSize: 21, fontWeight: 700, lineHeight: 1.1 }}>Твоя комната</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="lrpg-num" style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 15, fontWeight: 700, padding: '6px 10px', borderRadius: 10, border: `1px solid ${COLORS.border}`, background: COLORS.bgCard }}><CoinsIcon size={14} color={COLORS.gold} />{shown}</span>
+            <button className="lrpg-btn" onClick={close} aria-label="Закрыть" style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${COLORS.border}`, background: COLORS.bgCard, color: COLORS.text, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={16} /></button>
+          </div>
+        </div>
+        <div style={{ overflowY: 'auto', minHeight: 0 }}>
+          <RoomShopPanel room={room} coins={coins} buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot} slot={slot} onSlotChange={setSlot} compact />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight, buyRoomItem, equipRoomSlot }) {
   const [modal, setModal] = useState(null);
+  const [roomOpen, setRoomOpen] = useState(false);
+  const [roomSlot, setRoomSlot] = useState('rug');
+  const [time, setTime] = useState(() => sceneTime());
+  useEffect(() => {
+    const t = setInterval(() => setTime(sceneTime()), 60000);
+    return () => clearInterval(t);
+  }, []);
   const currentWeight = latestWeight(state.body);
   const dayNumber = state.firstOpenedAt
     ? Math.max(1, Math.floor((Date.now() - state.firstOpenedAt) / 86400000) + 1)
     : ((state.playLog || []).length || 1);
   const xpNeed = xpNeeded(state.character.level);
+  const tier = spriteIndexFor(currentWeight, state.body.heightCm);
+  const hScale = heightScaleFor(state.body.heightCm);
+  const weather = sceneClock().weather;
+  const openRoom = () => { gameFeedback('SHEET_OPEN'); setRoomOpen(true); };
+  const sceneRef = useRef(null);
+  const [box, setBox] = useState({ w: 390, h: 760 });
+  useEffect(() => {
+    const el = sceneRef.current;
+    if (!el) return undefined;
+    const upd = () => setBox({ w: el.clientWidth || 390, h: el.clientHeight || 760 });
+    upd();
+    window.addEventListener('resize', upd);
+    return () => window.removeEventListener('resize', upd);
+  }, []);
+  // Панель обустройства занимает ~54% снизу: приподнимаем сцену, чтобы выбранное место было видно.
+  const sceneShift = roomOpen ? Math.max(0, Math.min(box.h * 0.5, slotBottomPx(roomSlot, box.w, box.h) - box.h * 0.44)) : 0;
 
   return (
     <div style={{
-      position: 'fixed', left: 0, right: 0, top: 0, bottom: modal ? 0 : 62, zIndex: modal ? 70 : 5, overflow: 'hidden',
-      backgroundImage: `url(${roomBackgroundNow()})`,
-      backgroundSize: 'cover', backgroundPosition: 'center 78%', backgroundRepeat: 'no-repeat',
+      position: 'fixed', left: 0, right: 0, top: 0, bottom: modal ? 0 : 'calc(66px + env(safe-area-inset-bottom, 0px))', zIndex: modal ? 70 : 5, overflow: 'hidden',
+      background: '#d8cdb8',
     }}>
-      <RoomDecor room={state.room} />
-      <GameSceneCenter body={state.body} currentWeight={currentWeight} />
+      <div ref={sceneRef} style={{ position: 'absolute', inset: 0, transform: `translateY(${-sceneShift}px)`, transition: 'transform .55s cubic-bezier(.16,1,.3,1)' }}>
+        <PixelRoomScene room={state.room} tier={tier} heightScale={hScale} time={time} weather={weather} still={!!FEEDBACK_PREFS.batterySaver} highlight={roomOpen ? roomSlot : null} />
+      </div>
 
       <div style={{
-        position: 'absolute', zIndex: 3, left: 8, right: 8, top: 'calc(8px + env(safe-area-inset-top, 0px))',
-        display: 'flex', alignItems: 'flex-start', gap: 8,
+        position: 'absolute', zIndex: 3, left: 10, right: 10, top: 'calc(10px + env(safe-area-inset-top, 0px))',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8,
       }}>
         <CharacterStatusCard
           state={state} xpNeed={xpNeed} energy={energy} hp={state.stats.physical}
           onOpenIdentity={() => setModal('identity')} onOpenCheckin={() => setModal('checkin')}
         />
-        <CoinsTimeBlock coins={state.coins} dayNumber={dayNumber} onOpenShop={() => { setTab('profile'); setSubTab(s => ({ ...s, profile: 'shop' })); }} />
+        <CoinsTimeBlock coins={state.coins} dayNumber={dayNumber} onOpenShop={openRoom} />
       </div>
 
-      <div style={{ position: 'absolute', zIndex: 3, right: 8, top: 92, width: 128 }}>
-        <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
-      </div>
+      {!roomOpen && (
+        <div style={{ position: 'absolute', zIndex: 3, right: 10, top: 'calc(104px + env(safe-area-inset-top, 0px))', width: 132 }}>
+          <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
+        </div>
+      )}
+
+      {!roomOpen && (
+        <button className="lrpg-btn lrpg-hud-in" onClick={openRoom} style={{
+          position: 'absolute', zIndex: 3, left: 10, bottom: 12, display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 14px', borderRadius: 14, background: 'rgba(251,249,244,.96)', border: `1px solid ${COLORS.border}`,
+          boxShadow: '0 2px 0 rgba(30,34,48,.06), 0 8px 20px rgba(30,34,48,.14)', color: COLORS.text, fontSize: 13, fontWeight: 700, animationDelay: '.2s',
+        }}>
+          <Sofa size={17} color={COLORS.gold} /> Комната
+        </button>
+      )}
+
+      {roomOpen && (
+        <RoomEditorSheet room={state.room} coins={state.coins} buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot}
+          slot={roomSlot} setSlot={setRoomSlot} onClose={() => setRoomOpen(false)} />
+      )}
 
       {modal === 'identity' && (
         <IdentityModal state={state} editingName={editingName} setEditingName={setEditingName}
@@ -6593,7 +6721,7 @@ function QuestCard({ q, priority, completeQuest, postponeQuest, skipTarget, setS
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button className="lrpg-btn" onClick={() => completeQuest(q)} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+              <button className="lrpg-btn" onClick={() => completeQuest(q)} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                 <Check size={13} /> Готово
               </button>
               <button className="lrpg-btn" onClick={() => postponeQuest(q)} style={{ background: COLORS.bgCardAlt, color: COLORS.text, borderRadius: 8, padding: '7px 12px', fontSize: 12, border: `1px solid ${COLORS.border}` }}>Later</button>
@@ -6624,7 +6752,7 @@ function QuestsTab({ activeQuests, laterQuests, completeQuest, postponeQuest, sk
   const matches = q => !search || q.title.toLowerCase().includes(search);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <button className="lrpg-btn" onClick={() => setShowAddQuest(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
+      <button className="lrpg-btn" onClick={() => setShowAddQuest(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
         <Plus size={16} /> Новый квест
       </button>
 
@@ -6642,7 +6770,7 @@ function QuestsTab({ activeQuests, laterQuests, completeQuest, postponeQuest, sk
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
             <button className="lrpg-btn" onClick={() => { addQuest({ title: s.title, type: s.type || 'Daily', difficulty: 'Normal', stat: s.stat || STATS_DEF[0].key, secondaryStat: null, deadline: '' }); dismissEvolution(s.key); }}
-              style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700 }}>
+              style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700 }}>
               {s.direction === 'up' ? 'Создать на Normal' : 'Создать полегче'}
             </button>
             <button className="lrpg-btn" onClick={() => dismissEvolution(s.key)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '6px 10px', fontSize: 11 }}>Скрыть</button>
@@ -6739,7 +6867,7 @@ function AddQuestForm({ onSubmit, onCancel, characterLevel }) {
         <input className="lrpg-input" type="datetime-local" value={deadline} onChange={e => setDeadline(e.target.value)} />
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <button className="lrpg-btn" disabled={!title.trim()} onClick={() => onSubmit({ title: title.trim(), type, difficulty, stat, secondaryStat: secondaryStat || null, deadline, bossHP })}
-            style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
+            style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
             Создать
           </button>
           <button className="lrpg-btn" onClick={onCancel} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px', fontSize: 13, border: `1px solid ${COLORS.border}` }}>
@@ -6784,7 +6912,7 @@ function GoalProgressControl({ goal, updateGoalProgress }) {
       {confirming100 && (
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, background: COLORS.goldSoft, borderRadius: 8, padding: '6px 8px' }}>
           <span style={{ fontSize: 11, color: COLORS.gold }}>Отметить цель как полностью завершённую?</span>
-          <button className="lrpg-btn" onClick={() => { updateGoalProgress(goal.id, 100); setConfirming100(false); }} style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700 }}>Да</button>
+          <button className="lrpg-btn" onClick={() => { updateGoalProgress(goal.id, 100); setConfirming100(false); }} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700 }}>Да</button>
           <button className="lrpg-btn" onClick={() => { setDraft(goal.progress); setConfirming100(false); }} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 6, padding: '4px 10px', fontSize: 11, border: `1px solid ${COLORS.border}` }}>Отмена</button>
         </div>
       )}
@@ -6863,7 +6991,7 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <button className="lrpg-btn" onClick={() => setShowAddGoal(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
+      <button className="lrpg-btn" onClick={() => setShowAddGoal(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
         <Plus size={16} /> Новая цель
       </button>
       {abandonedGoals.map(g => (
@@ -6952,7 +7080,7 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
             {realityError[g.id] && (
               <div style={{ fontSize: 10, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 8, padding: '5px 8px', marginTop: 6 }}>
                 AI не ответил. Причина: {realityError[g.id]}
-                <button className="lrpg-btn" onClick={() => handleRealityCheck(g)} style={{ display: 'block', marginTop: 4, background: COLORS.violet, color: '#100E1C', borderRadius: 6, padding: '4px 8px', fontSize: 10, fontWeight: 700 }}>Повторить</button>
+                <button className="lrpg-btn" onClick={() => handleRealityCheck(g)} style={{ display: 'block', marginTop: 4, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '4px 8px', fontSize: 10, fontWeight: 700 }}>Повторить</button>
               </div>
             )}
             {realityResults[g.id] && (
@@ -6965,7 +7093,7 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
                     </div>
                     <div style={{ fontSize: 11, marginTop: 4 }}>{sc.pace}</div>
                     <div style={{ fontSize: 10, color: COLORS.crimson, marginTop: 2 }}>Риск: {sc.risks}</div>
-                    <button className="lrpg-btn" onClick={() => acceptScenario(g, sc)} style={{ marginTop: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 6, padding: '5px 10px', fontSize: 10, fontWeight: 700 }}>
+                    <button className="lrpg-btn" onClick={() => acceptScenario(g, sc)} style={{ marginTop: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '5px 10px', fontSize: 10, fontWeight: 700 }}>
                       Принять этот срок
                     </button>
                   </div>
@@ -6985,7 +7113,7 @@ function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgr
               <div style={{ marginTop: 6, fontSize: 10, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 8, padding: '6px 8px' }}>
                 <div>AI сейчас не ответил. Причина: {fallbackReason}</div>
                 <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  <button className="lrpg-btn" onClick={() => handleBreakdown(g)} style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700 }}>Повторить</button>
+                  <button className="lrpg-btn" onClick={() => handleBreakdown(g)} style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700 }}>Повторить</button>
                   <button className="lrpg-btn" onClick={() => useOfflinePlan(g)} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700, border: `1px solid ${COLORS.border}` }}>Взять простой план</button>
                 </div>
               </div>
@@ -7013,7 +7141,7 @@ function AddGoalForm({ onSubmit, onCancel }) {
         <input className="lrpg-input" type="date" value={deadline} onChange={e => setDeadline(e.target.value)} />
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
           <button className="lrpg-btn" disabled={!title.trim()} onClick={() => onSubmit({ title: title.trim(), description, sphere, deadline })}
-            style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
+            style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
             Создать
           </button>
           <button className="lrpg-btn" onClick={onCancel} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px', fontSize: 13, border: `1px solid ${COLORS.border}` }}>
@@ -7110,7 +7238,7 @@ function StatsTab({ stats, energy, todayCheckin, setDailyCheckin, chronicle, rec
           {CONSISTENCY_RANGES.map(r => (
             <button key={r.key} className="lrpg-btn" onClick={() => setConsistencyRange(r.key)} style={{
               flex: 1, background: consistencyRange === r.key ? COLORS.gold : COLORS.bgCardAlt,
-              color: consistencyRange === r.key ? '#1a1305' : COLORS.textMuted, borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700,
+              color: consistencyRange === r.key ? '#fbf9f4' : COLORS.textMuted, borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700,
             }}>{r.label}</button>
           ))}
         </div>
@@ -7146,7 +7274,7 @@ function StatsTab({ stats, energy, todayCheckin, setDailyCheckin, chronicle, rec
           <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>Снижает штрафы вдвое, если сейчас тяжело</div>
         </div>
         <button className="lrpg-btn" onClick={toggleRecoveryMode} style={{
-          background: recoveryMode ? COLORS.teal : COLORS.bgCardAlt, color: recoveryMode ? '#0B1F1D' : COLORS.textMuted,
+          background: recoveryMode ? COLORS.teal : COLORS.bgCardAlt, color: recoveryMode ? '#fbf9f4' : COLORS.textMuted,
           borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 700, border: `1px solid ${recoveryMode ? COLORS.teal : COLORS.border}`,
         }}>{recoveryMode ? 'Включён' : 'Выключен'}</button>
       </Card>
@@ -7260,12 +7388,12 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
         {shopTabs.map(([k, l]) => (
           <button key={k} className="lrpg-btn" onClick={() => setShopTab(k)} style={{
             flex: 1, padding: '7px 0', borderRadius: 8, fontWeight: 700, fontSize: 11,
-            background: shopTab === k ? COLORS.violet : COLORS.bgCardAlt, color: shopTab === k ? '#100E1C' : COLORS.textMuted,
+            background: shopTab === k ? COLORS.violet : COLORS.bgCardAlt, color: shopTab === k ? '#fbf9f4' : COLORS.textMuted,
           }}>{l}</button>
         ))}
       </div>
 
-      <button className="lrpg-btn" onClick={() => setShowAddReward(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
+      <button className="lrpg-btn" onClick={() => setShowAddReward(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
         <Plus size={16} /> Своя награда
       </button>
       {showAddReward && (
@@ -7278,7 +7406,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
             </select>
             <input className="lrpg-input" placeholder="Эмодзи-иконка (необязательно)" value={icon} onChange={e => setIcon(e.target.value)} maxLength={4} />
             <button className="lrpg-btn" disabled={!title.trim()} onClick={() => { addReward({ title: title.trim(), cost, category, icon }); setTitle(''); setCost(100); }}
-              style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
+              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
               Добавить
             </button>
           </div>
@@ -7301,12 +7429,12 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                 </div>
                 {owned ? (
                   <button className="lrpg-btn" onClick={() => equipCosmetic(item.type, equipped ? null : item.id)} style={{
-                    background: equipped ? COLORS.teal : COLORS.bgCardAlt, color: equipped ? '#0B1F1D' : COLORS.textMuted,
+                    background: equipped ? COLORS.teal : COLORS.bgCardAlt, color: equipped ? '#fbf9f4' : COLORS.textMuted,
                     borderRadius: 8, padding: '7px 12px', fontWeight: 700, fontSize: 11, border: equipped ? 'none' : `1px solid ${COLORS.border}`,
                   }}>{equipped ? 'Надето' : 'Надеть'}</button>
                 ) : (
                   <button className="lrpg-btn" disabled={coins < item.cost} onClick={() => buyCosmetic(item)} style={{
-                    background: coins >= item.cost ? COLORS.gold : COLORS.bgCardAlt, color: coins >= item.cost ? '#1a1305' : COLORS.textMuted,
+                    background: coins >= item.cost ? COLORS.gold : COLORS.bgCardAlt, color: coins >= item.cost ? '#fbf9f4' : COLORS.textMuted,
                     borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: coins >= item.cost ? 'none' : `1px solid ${COLORS.border}`,
                   }}>Купить</button>
                 )}
@@ -7332,7 +7460,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
               </button>
             )}
             <button className="lrpg-btn" disabled={coins < r.cost || r.enabled === false} onClick={() => buyReward(r)}
-              style={{ background: (coins >= r.cost && r.enabled !== false) ? COLORS.gold : COLORS.bgCardAlt, color: (coins >= r.cost && r.enabled !== false) ? '#1a1305' : COLORS.textMuted, borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: (coins >= r.cost && r.enabled !== false) ? 'none' : `1px solid ${COLORS.border}` }}>
+              style={{ background: (coins >= r.cost && r.enabled !== false) ? COLORS.gold : COLORS.bgCardAlt, color: (coins >= r.cost && r.enabled !== false) ? '#fbf9f4' : COLORS.textMuted, borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: (coins >= r.cost && r.enabled !== false) ? 'none' : `1px solid ${COLORS.border}` }}>
               Купить
             </button>
             <button className="lrpg-btn" onClick={() => deleteReward(r.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
@@ -7398,7 +7526,7 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
         {CHRONICLE_FILTER_GROUPS.map(g => (
           <button key={g.key} className="lrpg-btn" onClick={() => setFilterKey(g.key)} style={{
             flexShrink: 0, background: filterKey === g.key ? COLORS.violet : COLORS.bgCardAlt,
-            color: filterKey === g.key ? '#100E1C' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 700,
+            color: filterKey === g.key ? '#fbf9f4' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 700,
           }}>{g.label}</button>
         ))}
       </div>
@@ -7411,7 +7539,7 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
             <input className="lrpg-input" placeholder="Что произошло" value={newText} onChange={e => setNewText(e.target.value)} />
             <input className="lrpg-input" type="date" value={newDate} onChange={e => setNewDate(e.target.value)} max={todayStr()} />
             <button className="lrpg-btn" disabled={!newText.trim()} onClick={() => { addManualChronicleEntry(newText.trim(), newDate); setNewText(''); setShowAdd(false); }}
-              style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newText.trim() ? 1 : 0.5 }}>
+              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newText.trim() ? 1 : 0.5 }}>
               Добавить
             </button>
           </div>
@@ -7425,7 +7553,7 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
             {editingId === c.id ? (
               <div style={{ display: 'flex', gap: 6 }}>
                 <input className="lrpg-input" value={editText} onChange={e => setEditText(e.target.value)} autoFocus />
-                <button className="lrpg-btn" onClick={() => saveEdit(c.id)} style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 6, padding: '0 10px', fontSize: 12, fontWeight: 700 }}><Check size={13} /></button>
+                <button className="lrpg-btn" onClick={() => saveEdit(c.id)} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 6, padding: '0 10px', fontSize: 12, fontWeight: 700 }}><Check size={13} /></button>
               </div>
             ) : (
               <div style={{ fontSize: 13 }}>{c.text}{c.edited && <span style={{ fontSize: 10, color: COLORS.textMuted }}> (отредактировано)</span>}{c.isManual && <span style={{ fontSize: 10, color: COLORS.teal }}> · добавлено вручную</span>}</div>
@@ -7491,7 +7619,7 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
+      <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
         <Plus size={16} /> Новая привычка
       </button>
       <button className="lrpg-btn" disabled={suggestLoading} onClick={handleSuggest} style={{
@@ -7521,7 +7649,7 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
                   {s.title} <span style={{ color: COLORS.textMuted }}>({STAT_LABEL[s.stat]}{s.secondaryStat ? ` +${STAT_LABEL[s.secondaryStat]}` : ''})</span>
                 </div>
                 <button className="lrpg-btn" onClick={() => { addHabit({ title: s.title, stat: s.stat, secondaryStat: s.secondaryStat }); setSuggestions(list => list.filter((_, idx) => idx !== i)); }}
-                  style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 6, padding: '5px 10px', fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
+                  style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 6, padding: '5px 10px', fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
                   Добавить
                 </button>
               </div>
@@ -7552,7 +7680,7 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
               {STATS_DEF.filter(s => s.key !== stat).map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
             </select>
             <button className="lrpg-btn" disabled={!title.trim()} onClick={() => { addHabit({ title: title.trim(), stat, secondaryStat: secondaryStat || null }); setTitle(''); setSecondaryStat(''); setShowAdd(false); }}
-              style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
+              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
               Создать
             </button>
           </div>
@@ -7580,7 +7708,7 @@ function HabitsTab({ habits, addHabit, completeHabit, deleteHabit, aiContextStat
               </div>
               <div style={{ fontSize: 11, color: COLORS.textMuted }}>Best: {h.bestStreak}</div>
               <button className="lrpg-btn" disabled={doneToday} onClick={() => completeHabit(h)} style={{
-                marginLeft: 'auto', background: doneToday ? COLORS.bgCardAlt : COLORS.gold, color: doneToday ? COLORS.textMuted : '#1a1305',
+                marginLeft: 'auto', background: doneToday ? COLORS.bgCardAlt : COLORS.gold, color: doneToday ? COLORS.textMuted : '#fbf9f4',
                 borderRadius: 8, padding: '7px 14px', fontWeight: 700, fontSize: 12, border: doneToday ? `1px solid ${COLORS.border}` : 'none',
               }}>
                 {doneToday ? 'Сделано сегодня' : 'Отметить'}
@@ -7624,7 +7752,7 @@ function AddInlineForm({ fields, onSubmit, submitLabel = 'Добавить' }) {
           );
         })}
         <button className="lrpg-btn" disabled={!valid} onClick={() => onSubmit(values)}
-          style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
+          style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
           {submitLabel}
         </button>
       </div>
@@ -7715,7 +7843,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
             { key: 'simple', label: 'Простой долг' },
           ].map(o => (
             <button key={o.key} className="lrpg-btn" onClick={() => setLoanType(o.key)} style={{
-              flex: 1, minWidth: 90, background: loanType === o.key ? COLORS.violet : COLORS.bgCardAlt, color: loanType === o.key ? '#100E1C' : COLORS.textMuted,
+              flex: 1, minWidth: 90, background: loanType === o.key ? COLORS.violet : COLORS.bgCardAlt, color: loanType === o.key ? '#fbf9f4' : COLORS.textMuted,
               borderRadius: 8, padding: '7px 0', fontSize: 11, fontWeight: 700,
             }}>{o.label}</button>
           ))}
@@ -7772,7 +7900,7 @@ function AddDebtForm({ onSubmit, onCancel }) {
             paymentDueDay: isLoan && paymentDueDay ? Number(paymentDueDay) : null,
             dueDate: loanType === 'simple' && dueDate ? dueDate : null,
             loanType, addToBalance: loanType === 'simple' ? addToBalance : (alreadyPaidNum === 0),
-          })} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
+          })} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: valid ? 1 : 0.5 }}>
             Создать
           </button>
           <button className="lrpg-btn" onClick={onCancel} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px', fontSize: 13, border: `1px solid ${COLORS.border}` }}>
@@ -7858,7 +7986,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
         {tabs.map(tb => (
           <button key={tb.k} className="lrpg-btn" onClick={() => setFinNav(tb.k)} style={{
             flexShrink: 0, padding: '8px 10px', borderRadius: 999, fontSize: 11,
-            background: finNav === tb.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,.05)', color: '#fff',
+            background: finNav === tb.k ? 'linear-gradient(180deg,#b5654a,#a4412a)' : 'rgba(255,255,255,.05)', color: '#fff',
           }}>{tb.l}</button>
         ))}
       </div>
@@ -8188,11 +8316,11 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
         </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
           <button className="lrpg-btn" onClick={() => setBudgetMonthOffset(0)} style={{
-            flex: 1, background: budgetMonthOffset === 0 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 0 ? '#100E1C' : COLORS.textMuted,
+            flex: 1, background: budgetMonthOffset === 0 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 0 ? '#fbf9f4' : COLORS.textMuted,
             borderRadius: 8, padding: '6px 0', fontSize: 11, fontWeight: 700,
           }}>Этот месяц</button>
           <button className="lrpg-btn" onClick={() => setBudgetMonthOffset(1)} style={{
-            flex: 1, background: budgetMonthOffset === 1 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 1 ? '#100E1C' : COLORS.textMuted,
+            flex: 1, background: budgetMonthOffset === 1 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 1 ? '#fbf9f4' : COLORS.textMuted,
             borderRadius: 8, padding: '6px 0', fontSize: 11, fontWeight: 700,
           }}>Следующий месяц</button>
         </div>
@@ -8249,7 +8377,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
                 <button key={k} className="lrpg-btn" onClick={() => setTxType(k)} style={{
                   flex: 1, padding: '6px 0', borderRadius: 8, fontWeight: 700, fontSize: 12,
                   background: txType === k ? (k === 'income' ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
-                  color: txType === k ? '#0B1F1D' : COLORS.textMuted,
+                  color: txType === k ? '#fbf9f4' : COLORS.textMuted,
                 }}>{l}</button>
               ))}
             </div>
@@ -8344,7 +8472,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
             <input className="lrpg-input" type="number" min={0} placeholder="Сумма заказа" value={orderAmount}
               onChange={e => setOrderAmount(e.target.value)} />
             <button className="lrpg-btn" onClick={() => { logOrder(Number(orderAmount) || 0); setOrderAmount(''); }}
-              style={{ background: COLORS.teal, color: '#0B1F1D', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap' }}>
+              style={{ background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap' }}>
               + Заказ
             </button>
           </div>
@@ -8435,7 +8563,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
             {DEBT_STRATEGIES.map(s => (
               <button key={s.key} className="lrpg-btn" onClick={() => setDebtStrategy(s.key)} style={{
                 background: finance.strategy === s.key ? COLORS.gold : COLORS.bgCardAlt,
-                color: finance.strategy === s.key ? '#1a1305' : COLORS.textMuted,
+                color: finance.strategy === s.key ? '#fbf9f4' : COLORS.textMuted,
                 borderRadius: 999, padding: '5px 10px', fontSize: 11, fontWeight: 700,
                 border: `1px solid ${finance.strategy === s.key ? COLORS.gold : COLORS.border}`,
               }}>{s.label}</button>
@@ -8597,7 +8725,7 @@ function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTra
                     <input className="lrpg-input" type="number" min={0} placeholder="Отложить сумму" value={saveAmounts[g.id] || ''}
                       onChange={e => setSaveAmounts(v => ({ ...v, [g.id]: Number(e.target.value) }))} />
                     <button className="lrpg-btn" onClick={() => { contributeSaving(g.id, saveAmounts[g.id] || 0); setSaveAmounts(v => ({ ...v, [g.id]: '' })); }}
-                      style={{ background: COLORS.teal, color: '#0B1F1D', borderRadius: 8, padding: '0 14px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>
+                      style={{ background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '0 14px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>
                       Отложить
                     </button>
                   </div>
@@ -8831,7 +8959,7 @@ function MentorTab({ state }) {
           <div key={i} style={{
             alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '85%',
             background: m.role === 'user' ? COLORS.violet : COLORS.bgCard,
-            color: m.role === 'user' ? '#100E1C' : COLORS.text,
+            color: m.role === 'user' ? '#fbf9f4' : COLORS.text,
             border: m.role === 'user' ? 'none' : `1px solid ${COLORS.border}`,
             borderRadius: 12, padding: '8px 12px', fontSize: 13, lineHeight: 1.5,
           }}>
@@ -8842,7 +8970,7 @@ function MentorTab({ state }) {
         {lastError && !sending && (
           <div style={{ fontSize: 10, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 8, padding: '6px 10px' }}>
             <div>AI недоступен — переключился на офлайн-совет. Техническая причина: {lastError}</div>
-            <button className="lrpg-btn" onClick={retryLast} style={{ marginTop: 6, background: COLORS.violet, color: '#100E1C', borderRadius: 6, padding: '5px 10px', fontSize: 10, fontWeight: 700 }}>
+            <button className="lrpg-btn" onClick={retryLast} style={{ marginTop: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '5px 10px', fontSize: 10, fontWeight: 700 }}>
               Повторить запрос к AI
             </button>
           </div>
@@ -8853,7 +8981,7 @@ function MentorTab({ state }) {
         <input className="lrpg-input" placeholder="Напиши наставнику..." value={input}
           onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSend(); }} />
         <button className="lrpg-btn" disabled={sending || !input.trim()} onClick={handleSend} style={{
-          background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '0 16px', fontWeight: 700,
+          background: COLORS.violet, color: '#fbf9f4', borderRadius: 8, padding: '0 16px', fontWeight: 700,
           display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: sending || !input.trim() ? 0.5 : 1,
         }}>
           <Send size={15} />
@@ -8983,12 +9111,12 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
                 borderRadius: 12, padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'left',
                 transition: 'background 0.2s',
               }}>
-                <Icon size={16} color={lastLogged === e.id ? '#100E1C' : e.color} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: lastLogged === e.id ? '#100E1C' : COLORS.text }}>{e.label}</span>
-                <span style={{ fontSize: 10, color: lastLogged === e.id ? '#100E1C' : COLORS.textMuted }}>{desc}</span>
+                <Icon size={16} color={lastLogged === e.id ? '#fbf9f4' : e.color} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: lastLogged === e.id ? '#fbf9f4' : COLORS.text }}>{e.label}</span>
+                <span style={{ fontSize: 10, color: lastLogged === e.id ? '#fbf9f4' : COLORS.textMuted }}>{desc}</span>
               </button>
               {e.isCustom && (
-                <button className="lrpg-btn" onClick={() => deleteCustomEvent(e.id)} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(11,10,18,0.6)', borderRadius: 999, padding: 3 }}>
+                <button className="lrpg-btn" onClick={() => deleteCustomEvent(e.id)} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(251,249,244,0.6)', borderRadius: 999, padding: 3 }}>
                   <X size={10} color={COLORS.textMuted} />
                 </button>
               )}
@@ -9022,7 +9150,7 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
               {[-3, -2, -1, 1, 2, 3].map(d => (
                 <button key={d} className="lrpg-btn" onClick={() => setNewDelta(d)} style={{
                   flex: 1, background: newDelta === d ? (d > 0 ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
-                  color: newDelta === d ? '#100E1C' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
+                  color: newDelta === d ? '#fbf9f4' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
                 }}>{d > 0 ? `+${d}` : d}</button>
               ))}
             </div>
@@ -9048,7 +9176,7 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
                   {[-3, -2, -1, 1, 2, 3].map(d => (
                     <button key={d} className="lrpg-btn" onClick={() => setNewDelta2(d)} style={{
                       flex: 1, background: newDelta2 === d ? (d > 0 ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
-                      color: newDelta2 === d ? '#100E1C' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
+                      color: newDelta2 === d ? '#fbf9f4' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
                     }}>{d > 0 ? `+${d}` : d}</button>
                   ))}
                 </div>
@@ -9056,7 +9184,7 @@ function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEve
             )}
 
             <button className="lrpg-btn" disabled={!newTitle.trim()} onClick={handleCreate}
-              style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newTitle.trim() ? 1 : 0.5 }}>
+              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newTitle.trim() ? 1 : 0.5 }}>
               Создать
             </button>
           </div>
@@ -9185,7 +9313,7 @@ function YouTubeAiPretty({ text }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {blocks.map((b, idx) => {
-        if (b.type === 'h') return <div key={idx} style={{ fontSize: 13, fontWeight: 800, color: '#E8EEF8', marginTop: 4 }}>{b.text}</div>;
+        if (b.type === 'h') return <div key={idx} style={{ fontSize: 13, fontWeight: 800, color: '#1e2230', marginTop: 4 }}>{b.text}</div>;
         if (b.type === 'p') return <div key={idx} style={{ fontSize: 13, lineHeight: 1.45, color: COLORS.text }}>{b.text}</div>;
         if (b.type === 'ul') return (
           <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -9331,7 +9459,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
         {navItems.map(n => (
           <button key={n.k} className="lrpg-btn" onClick={() => setNav(n.k)} style={{
             flexShrink: 0, padding: '6px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: nav === n.k ? 'linear-gradient(180deg,#8B85FF,#6C63FF)' : 'rgba(255,255,255,0.04)',
+            background: nav === n.k ? 'linear-gradient(180deg,#b5654a,#a4412a)' : 'rgba(255,255,255,0.04)',
             color: nav === n.k ? '#fff' : COLORS.textMuted,
           }}>{n.l}</button>
         ))}
@@ -9394,15 +9522,15 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
                   <AreaChart data={series}>
                     <defs>
                       <linearGradient id="ytFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#8B85FF" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="#8B85FF" stopOpacity={0} />
+                        <stop offset="0%" stopColor="#b5654a" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="#b5654a" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
                     <XAxis dataKey="date" tick={{ fill: COLORS.textMuted, fontSize: 9 }} />
                     <YAxis tick={{ fill: COLORS.textMuted, fontSize: 9 }} width={32} />
                     <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} />
-                    <Area type="monotone" dataKey={metricKey} stroke="#8B85FF" fill="url(#ytFill)" strokeWidth={2} dot={false} connectNulls={false} />
+                    <Area type="monotone" dataKey={metricKey} stroke="#b5654a" fill="url(#ytFill)" strokeWidth={2} dot={false} connectNulls={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -9526,7 +9654,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
                     <b>{Math.round(Number(a.views || 0) / sum * 100)}%</b>
                   </div>
                   <div style={{ height: 6, borderRadius: 99, background: 'rgba(255,255,255,0.06)' }}>
-                    <div style={{ width: `${Math.min(100, Math.round(Number(a.views || 0) / sum * 100))}%`, height: '100%', borderRadius: 99, background: '#00E5FF' }} />
+                    <div style={{ width: `${Math.min(100, Math.round(Number(a.views || 0) / sum * 100))}%`, height: '100%', borderRadius: 99, background: '#2f6b6e' }} />
                   </div>
                 </div>
               ));
@@ -9655,7 +9783,7 @@ function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, de
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input className="lrpg-input" placeholder="@handle канала (например @mychannel)" value={handle} onChange={e => setHandle(e.target.value)} />
             <button className="lrpg-btn" disabled={!handle.trim() || busy === 'add'} onClick={addAuto}
-              style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: handle.trim() ? 1 : 0.5 }}>
+              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: handle.trim() ? 1 : 0.5 }}>
               {busy === 'add' ? 'Ищу...' : 'Найти и добавить'}
             </button>
             <div style={{ fontSize: 10, color: COLORS.textMuted, textAlign: 'center' }}>или без API — введи название и вноси цифры сам</div>
@@ -9734,7 +9862,7 @@ function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, de
                   value={(manual[ch.id] || {})[m.key] ?? ''} style={{ fontSize: 11, padding: '6px 6px' }}
                   onChange={e => setManual(v => ({ ...v, [ch.id]: { ...(v[ch.id] || {}), [m.key]: e.target.value } }))} />
               ))}
-              <button className="lrpg-btn" onClick={() => saveManual(ch)} style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12 }}><Check size={14} /></button>
+              <button className="lrpg-btn" onClick={() => saveManual(ch)} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12 }}><Check size={14} /></button>
             </div>
 
             <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '12px 0 4px' }}>Новый квест по каналу:</div>
@@ -9746,7 +9874,7 @@ function YouTubeTab({ youtube, quests, addYouTubeChannel, updateYouTubeStats, de
               <input className="lrpg-input" type="number" min={1} placeholder="+сколько" value={qd.delta} style={{ fontSize: 11, padding: '6px 6px' }}
                 onChange={e => setQuestDraft(v => ({ ...v, [ch.id]: { ...qd, delta: e.target.value } }))} />
               <button className="lrpg-btn" disabled={!Number(qd.delta)} onClick={() => { addYouTubeQuest(ch, qd.metric, Number(qd.delta)); setQuestDraft(v => ({ ...v, [ch.id]: { metric: qd.metric, delta: '' } })); }}
-                style={{ background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12, opacity: Number(qd.delta) ? 1 : 0.5 }}>Создать</button>
+                style={{ background: COLORS.violet, color: '#fbf9f4', borderRadius: 8, padding: '0 12px', fontWeight: 700, fontSize: 12, opacity: Number(qd.delta) ? 1 : 0.5 }}>Создать</button>
             </div>
 
             {chQuests.length > 0 && (
@@ -9810,7 +9938,7 @@ function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, s
             </div>
           )}
           <label className="lrpg-btn" style={{
-            position: 'absolute', bottom: 8, right: 8, background: 'rgba(11,10,18,0.75)', color: COLORS.gold,
+            position: 'absolute', bottom: 8, right: 8, background: 'rgba(251,249,244,0.75)', color: COLORS.gold,
             borderRadius: 999, padding: '6px 12px', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5,
           }}>
             <Camera size={13} /> {uploading ? 'Загрузка...' : garage.photo ? 'Заменить фото' : 'Добавить фото'}
@@ -9869,7 +9997,7 @@ function GarageTab({ garage, debts, taxiOrders, setGaragePhoto, setGarageName, s
               <button className="lrpg-btn" disabled={!expTitle.trim() || !expAmount} onClick={() => {
                 addGarageExpense(expTitle.trim(), Number(expAmount) || 0, expCategory);
                 setExpTitle(''); setExpAmount(''); setShowAddExpense(false);
-              }} style={{ background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: expTitle.trim() && expAmount ? 1 : 0.5 }}>
+              }} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: expTitle.trim() && expAmount ? 1 : 0.5 }}>
                 Добавить
               </button>
             </div>
@@ -10005,7 +10133,7 @@ function SaveManagerCard({ state, importSaveData, onExported }) {
         <div style={{ marginTop: 10 }}>
           <textarea readOnly value={exportJson} onClick={e => e.target.select()} className="lrpg-input" style={{ height: 90, fontSize: 10, fontFamily: 'monospace' }} />
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <button className="lrpg-btn" onClick={handleCopy} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+            <button className="lrpg-btn" onClick={handleCopy} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
               <Copy size={11} /> {copied ? 'Скопировано!' : 'Скопировать'}
             </button>
             <button className="lrpg-btn" onClick={handleDownload} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700 }}>Скачать файл</button>
@@ -10017,7 +10145,7 @@ function SaveManagerCard({ state, importSaveData, onExported }) {
       {showImport && (
         <div style={{ marginTop: 10 }}>
           <textarea placeholder="Вставь сюда сохранённый JSON..." value={importText} onChange={e => setImportText(e.target.value)} className="lrpg-input" style={{ height: 90, fontSize: 10, fontFamily: 'monospace' }} />
-          <button className="lrpg-btn" disabled={!importText.trim()} onClick={() => setConfirmingImport(true)} style={{ marginTop: 6, width: '100%', background: COLORS.violet, color: '#100E1C', borderRadius: 6, padding: '8px 0', fontSize: 12, fontWeight: 700, opacity: importText.trim() ? 1 : 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+          <button className="lrpg-btn" disabled={!importText.trim()} onClick={() => setConfirmingImport(true)} style={{ marginTop: 6, width: '100%', background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '8px 0', fontSize: 12, fontWeight: 700, opacity: importText.trim() ? 1 : 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
             <ClipboardPaste size={12} /> Загрузить
           </button>
           {confirmingImport && (
@@ -10067,7 +10195,7 @@ function AICenterCard() {
         {AI_PROVIDERS_META.map(p => {
           const on = configured.includes(p.id) || (health.configured || []).includes(p.id);
           return (
-            <span key={p.id} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: on ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.04)', color: on ? COLORS.green : COLORS.textMuted }}>
+            <span key={p.id} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: on ? 'rgba(63,122,74,0.15)' : 'rgba(255,255,255,0.04)', color: on ? COLORS.green : COLORS.textMuted }}>
               {on ? '🟢' : '⚪'} {p.name}
             </span>
           );
@@ -10132,7 +10260,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, resetProgressK
         <button className="lrpg-btn" disabled={manualSaving} onClick={handleManualSave} style={{
           marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           background: manualSaveResult === 'ok' ? COLORS.teal : manualSaveResult === 'fail' ? COLORS.crimson : COLORS.bgCardAlt,
-          color: manualSaveResult ? '#100E1C' : COLORS.text, border: `1px solid ${COLORS.border}`,
+          color: manualSaveResult ? '#fbf9f4' : COLORS.text, border: `1px solid ${COLORS.border}`,
           borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: manualSaving ? 0.6 : 1,
         }}>
           <Save size={13} /> {manualSaving ? 'Сохраняю...' : manualSaveResult === 'ok' ? 'Сохранено!' : manualSaveResult === 'fail' ? 'Не вышло — используй Экспорт' : 'Сохранить сейчас'}
@@ -10184,7 +10312,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, resetProgressK
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <button className="lrpg-btn" onClick={() => { resetProgressKeepLife && resetProgressKeepLife(); setConfirmingSoft(false); }} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Сбросить уровень и награды</button>
+            <button className="lrpg-btn" onClick={() => { resetProgressKeepLife && resetProgressKeepLife(); setConfirmingSoft(false); }} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Сбросить уровень и награды</button>
             <button className="lrpg-btn" onClick={() => setConfirmingSoft(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 10px' }}>Нет</button>
           </div>
         )}
@@ -10195,7 +10323,7 @@ function SettingsTab({ character, setCharacterName, resetAllData, resetProgressK
           </button>
         ) : (
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <button className="lrpg-btn" onClick={() => { resetFinance && resetFinance(); setConfirmingFin(false); }} style={{ flex: 1, background: COLORS.teal, color: '#042018', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Обнулить деньги и долги</button>
+            <button className="lrpg-btn" onClick={() => { resetFinance && resetFinance(); setConfirmingFin(false); }} style={{ flex: 1, background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Обнулить деньги и долги</button>
             <button className="lrpg-btn" onClick={() => setConfirmingFin(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 10px' }}>Нет</button>
           </div>
         )}
@@ -10368,7 +10496,7 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
           <input className="lrpg-input" type="number" min={0} value={pending.calories || ''} onChange={e => setPending(p => ({ ...p, calories: e.target.value === '' ? 0 : Number(e.target.value) }))} style={{ marginBottom: 6 }} />
           <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 8 }}>Б {pending.protein} г · Ж {pending.fat} г · У {pending.carbs} г</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="lrpg-btn" onClick={confirmPending} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12 }}>Добавить в дневник</button>
+            <button className="lrpg-btn" onClick={confirmPending} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12 }}>Добавить в дневник</button>
             <button className="lrpg-btn" onClick={() => setPending(null)} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
           </div>
         </div>
@@ -10383,7 +10511,7 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="lrpg-btn" disabled={loading} onClick={handlePhotoSubmit}
-              style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: loading ? 0.6 : 1 }}>
+              style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: loading ? 0.6 : 1 }}>
               {loading ? 'Смотрю...' : 'Посчитать (AI)'}
             </button>
             <button className="lrpg-btn" onClick={() => { setPhotoPreview(null); setPhotoNote(''); }} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
@@ -10397,7 +10525,7 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
             onKeyDown={e => e.key === 'Enter' && handleTextSubmit()} autoFocus />
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="lrpg-btn" disabled={loading || !textInput.trim()} onClick={handleTextSubmit}
-              style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: loading || !textInput.trim() ? 0.5 : 1 }}>
+              style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: loading || !textInput.trim() ? 0.5 : 1 }}>
               {loading ? 'Считаю...' : 'Посчитать (AI)'}
             </button>
             <button className="lrpg-btn" onClick={() => { setMode(null); setTextInput(''); }} style={{ background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
@@ -10413,7 +10541,7 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
             <button className="lrpg-btn" disabled={!manualTitle.trim() || !manualCal} onClick={() => {
               addFoodEntry({ title: manualTitle.trim(), calories: manualCal, source: 'manual' });
               setManualTitle(''); setManualCal(''); setMode(null);
-            }} style={{ flex: 1, background: COLORS.gold, color: '#1a1305', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: (!manualTitle.trim() || !manualCal) ? 0.5 : 1 }}>
+            }} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: (!manualTitle.trim() || !manualCal) ? 0.5 : 1 }}>
               Добавить
             </button>
             <button className="lrpg-btn" onClick={() => setMode(null)} style={{ background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: '8px 14px', fontSize: 12, color: COLORS.textMuted }}><X size={13} /></button>
@@ -10423,10 +10551,10 @@ function NutritionCard({ target, currentWeight, nutrition, addFoodEntry, deleteF
 
       {!pending && !photoPreview && !mode && (
         <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-          <button className="lrpg-btn" onClick={() => setMode('text')} style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+          <button className="lrpg-btn" onClick={() => setMode('text')} style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <MessageCircle size={13} /> Текстом
           </button>
-          <label className="lrpg-btn" style={{ flex: 1, background: COLORS.violet, color: '#100E1C', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+          <label className="lrpg-btn" style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
             <Camera size={13} /> Фото
             <input type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} style={{ display: 'none' }} />
           </label>
@@ -10542,8 +10670,8 @@ function BodyTab({ body, setBodyProfile, logWeight, nutrition, addFoodEntry, del
           <input className="lrpg-input" type="number" min={0} placeholder="Возраст" value={body.age || ''} onChange={e => setBodyProfile({ age: Number(e.target.value) || null })} />
         </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'male' })} style={{ flex: 1, background: body.sex === 'male' ? COLORS.violet : COLORS.bgCardAlt, color: body.sex === 'male' ? '#100E1C' : COLORS.textMuted, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Мужчина</button>
-          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'female' })} style={{ flex: 1, background: body.sex === 'female' ? COLORS.violet : COLORS.bgCardAlt, color: body.sex === 'female' ? '#100E1C' : COLORS.textMuted, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Женщина</button>
+          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'male' })} style={{ flex: 1, background: body.sex === 'male' ? COLORS.violet : COLORS.bgCardAlt, color: body.sex === 'male' ? '#fbf9f4' : COLORS.textMuted, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Мужчина</button>
+          <button className="lrpg-btn" onClick={() => setBodyProfile({ sex: 'female' })} style={{ flex: 1, background: body.sex === 'female' ? COLORS.violet : COLORS.bgCardAlt, color: body.sex === 'female' ? '#fbf9f4' : COLORS.textMuted, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700 }}>Женщина</button>
         </div>
         <select className="lrpg-input" value={body.activityLevel} onChange={e => setBodyProfile({ activityLevel: e.target.value })} style={{ marginBottom: 8 }}>
           {ACTIVITY_LEVELS.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
@@ -10556,7 +10684,7 @@ function BodyTab({ body, setBodyProfile, logWeight, nutrition, addFoodEntry, del
         <div style={{ display: 'flex', gap: 6 }}>
           <input className="lrpg-input" type="number" min={0} step={0.1} placeholder="Текущий вес, кг" value={weightInput} onChange={e => setWeightInput(e.target.value)} />
           <button className="lrpg-btn" disabled={!weightInput} onClick={() => { logWeight(Number(weightInput)); setWeightInput(''); }}
-            style={{ background: COLORS.teal, color: '#0B1F1D', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap', opacity: weightInput ? 1 : 0.5 }}>
+            style={{ background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap', opacity: weightInput ? 1 : 0.5 }}>
             Записать
           </button>
         </div>
@@ -10712,7 +10840,7 @@ function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSl
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{it.name}</div>
                   <div style={{ fontSize: 10, color: COLORS.textMuted }}>{ROOM_SLOTS.find(s => s.key === it.slot)?.label}</div>
                 </div>
-                <button className="lrpg-btn" onClick={() => equipRoomSlot && equipRoomSlot(it.slot, on ? null : it.id)} style={{ fontSize: 11, padding: '5px 10px', borderRadius: 999, background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#062018' : COLORS.text }}>{on ? 'Стоит' : 'Поставить'}</button>
+                <button className="lrpg-btn" onClick={() => equipRoomSlot && equipRoomSlot(it.slot, on ? null : it.id)} style={{ fontSize: 11, padding: '5px 10px', borderRadius: 999, background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#fbf9f4' : COLORS.text }}>{on ? 'Стоит' : 'Поставить'}</button>
               </div>
             );
           })}
