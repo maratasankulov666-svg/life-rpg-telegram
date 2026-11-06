@@ -14,12 +14,12 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | `src/App.jsx` | The whole game: logic, state, UI, all tabs. Theme = `COLORS` (paper palette) + the CSS block in `LifeRPG` ("PAPER THEME" overrides at its end) |
 | `src/actionsUI.jsx` | Game UI for the Actions section: `DayRoad`, `ActionTicket` (stamp «ГОТОВО»), `PixelIcon`/`StatTile`, `StreakFlame`/`FlameIcon` (8 flame tiers, `flameTier`), `ChestCeremony` (portal), `EnergyPips`, `TrainingSoon`; `STAT_RU`/`STAT_COLOR` |
 | `src/progressUI.jsx` | Progress section UI: `WorldMapPixel` (9 lands = 9 stats, 6 stages, fog, roads), `LANDS`, `stageOf`, `StageMini`, `HeroRankCard` (`rankOf`), `StatRow` |
-| `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts`, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
+| `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts` with IndexedDB clip cache, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
 | `src/telegramStorage.js` | Storage: Telegram DeviceStorage → localStorage fallback |
 | `src/main.jsx` | Entry point |
 | `api/ai.js` | AI router across several providers (Groq, Gemini, Grok, OpenRouter, Mistral, Cerebras, NVIDIA); keys come from env |
-| `api/tts.js` | Mentor voices: Gemini TTS (`GEMINI_API_KEY`, optional `GEMINI_TTS_MODEL`) → WAV base64 |
+| `api/tts.js` | Mentor voices, provider chain `TTS_PROVIDER_ORDER` (default azure → google → gemini): Azure Speech (`AZURE_SPEECH_KEY`+`AZURE_SPEECH_REGION`), Google Cloud TTS (`GOOGLE_TTS_API_KEY`, `GOOGLE_TTS_FAMILY=chirp` optional), Gemini TTS (`GEMINI_API_KEY`); per-mentor voice tables `AZURE`/`GOOGLE` |
 | `api/youtube*.js` | YouTube stats and OAuth |
 
 ## Map of `src/App.jsx` (line → what)
