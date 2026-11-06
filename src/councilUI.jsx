@@ -452,7 +452,7 @@ const DEVICE_TUNE = {
 const MALE_HINT = /(dmitr|pavel|yuri|maxim|ivan|alex|artem|boris|nikolai|male|муж|дмитр|павел|юр)/i;
 const FEMALE_HINT = /(milena|katya|svetlana|irina|dari|alena|elena|anna|female|жен|милен|ален|ирин|светл)/i;
 
-const VOICE_STATE = { gen: 0, chain: Promise.resolve(), ctx: null, current: null, aiBroken: false, cache: new Map() };
+const VOICE_STATE = { gen: 0, chain: Promise.resolve(), ctx: null, current: null, aiBroken: false, cache: new Map(), broken: new Set(), npcProvider: {} };
 
 function audioCtx() {
   if (VOICE_STATE.ctx) return VOICE_STATE.ctx;
@@ -493,17 +493,73 @@ function deviceSpeak(id, text, gen) {
   });
 }
 
+// Постоянный кэш озвучки (IndexedDB): одна и та же фраза озвучивается один раз — экономит лимиты.
+const IDB_NAME = 'liferpg-voices';
+const IDB_STORE = 'clips';
+let idbP = null;
+function idb() {
+  if (idbP) return idbP;
+  idbP = new Promise((resolve) => {
+    try {
+      if (typeof indexedDB === 'undefined') { resolve(null); return; }
+      const r = indexedDB.open(IDB_NAME, 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore(IDB_STORE); };
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+  return idbP;
+}
+async function idbGet(key) {
+  const db = await idb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(key);
+      rq.onsuccess = () => resolve(rq.result ? rq.result.buf : null);
+      rq.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+}
+async function idbPut(key, buf) {
+  const db = await idb();
+  if (!db) return;
+  try {
+    const st = db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE);
+    st.put({ buf, at: Date.now() }, key);
+    const cnt = st.count();
+    cnt.onsuccess = () => {
+      if (cnt.result <= 400) return;
+      const cur = st.openCursor();
+      let left = cnt.result - 360;
+      cur.onsuccess = () => { const c = cur.result; if (c && left > 0) { c.delete(); left -= 1; c.continue(); } };
+    };
+  } catch (e) {}
+}
+export const VOICE_STATS = { cached: 0, fetched: 0, provider: null };
+
 async function fetchAiVoice(id, text) {
-  const key = id + '|' + text;
+  // v2: у каждого наставника свой постоянный сервис — старые клипы (другие голоса) не используем.
+  const key = 'v2|' + id + '|' + text;
   if (VOICE_STATE.cache.has(key)) return VOICE_STATE.cache.get(key);
   const v = NPC_VOICE[id] || NPC_VOICE.vera;
   const p = (async () => {
-    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice: v.voice, style: v.style }) });
-    if (!r.ok) { const e = new Error('TTS ' + r.status); e.status = r.status; throw e; }
+    const stored = await idbGet(key);
+    if (stored) { VOICE_STATS.cached += 1; return stored; }
+    const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ npc: id, text, voice: v.voice, style: v.style }) });
+    if (!r.ok) {
+      const ej = await r.json().catch(() => ({}));
+      if (ej.provider) VOICE_STATE.npcProvider[id] = ej.provider;
+      const e = new Error('TTS ' + r.status); e.status = r.status; e.provider = ej.provider || null; throw e;
+    }
     const j = await r.json();
+    if (j.provider) VOICE_STATE.npcProvider[id] = j.provider;
     const bin = atob(j.audio);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    VOICE_STATS.fetched += 1; VOICE_STATS.provider = j.provider || null;
+    // Временную замену (у сервиса наставника нет ключа) не сохраняем навсегда — иначе голос «застрянет».
+    if (!j.substitute) idbPut(key, bytes.buffer.slice(0));
     return bytes.buffer;
   })();
   VOICE_STATE.cache.set(key, p);
@@ -539,7 +595,9 @@ export function speakLine(id, text, mode = 'ai', onFallback) {
   if (!text || mode === 'off' || typeof window === 'undefined') return;
   const gen = VOICE_STATE.gen;
   const clean = String(text).replace(/\s+/g, ' ').trim().slice(0, 420);
-  const useAi = mode === 'ai' && !VOICE_STATE.aiBroken;
+  // Если у сервиса ЭТОГО наставника кончился лимит — он говорит голосом телефона, остальные — своими.
+  const prov = VOICE_STATE.npcProvider[id];
+  const useAi = mode === 'ai' && !VOICE_STATE.aiBroken && !(prov && VOICE_STATE.broken.has(prov));
   const audioP = useAi ? fetchAiVoice(id, clean) : null;
   if (audioP) audioP.catch(() => {});
   VOICE_STATE.chain = VOICE_STATE.chain.then(async () => {
@@ -548,8 +606,10 @@ export function speakLine(id, text, mode = 'ai', onFallback) {
       try { await playBuffer(await audioP, gen); return; }
       catch (e) {
         if (e && (e.status === 503 || e.status === 429 || e.status === 502)) {
-          VOICE_STATE.aiBroken = true;
-          if (onFallback) onFallback(e.status === 429 ? 'лимит голосов Gemini на сегодня' : e.status === 503 ? 'на сервере нет ключа Gemini' : 'Gemini TTS не ответил');
+          const name = { google: 'Google', azure: 'Azure', gemini: 'Gemini' }[e.provider] || '';
+          if (e.status === 503 || !e.provider) VOICE_STATE.aiBroken = true;
+          else VOICE_STATE.broken.add(e.provider);
+          if (onFallback) onFallback(e.status === 429 ? `закончился лимит озвучки ${name}`.trim() : e.status === 503 ? 'на сервере нет ключа озвучки' : `сервис озвучки ${name} не ответил`.replace('  ', ' '));
         }
       }
     }
@@ -564,7 +624,7 @@ export function stopSpeaking() {
   try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) {}
 }
 export function voiceAiBroken() { return VOICE_STATE.aiBroken; }
-export function resetVoiceAi() { VOICE_STATE.aiBroken = false; }
+export function resetVoiceAi() { VOICE_STATE.aiBroken = false; VOICE_STATE.broken.clear(); }
 export const VOICE_MODES = ['off', 'ai', 'device'];
 export const VOICE_MODE_LABEL = { off: 'Голоса выкл.', ai: 'Голоса ИИ', device: 'Голос телефона' };
 

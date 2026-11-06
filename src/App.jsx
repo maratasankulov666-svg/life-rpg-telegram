@@ -179,7 +179,13 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       (Кайлен хриплый, Брум напористый, Каспер ленивый, Нори весёлая, Мира тревожная, Вера холодная, Тио мягкая),
 //       очередь без перебиваний с предзагрузкой, воспроизведение через WebAudio; при сбое/лимите — голос телефона
 //       с подбором мужского/женского; режимы «выкл / ИИ / телефон», голоса и в личных чатах.
-const APP_VERSION = '15.6';
+// 15.7  Озвучка с запасом: /api/tts перебирает Azure Speech → Google Cloud TTS → Gemini TTS (кто настроен, при лимите —
+//       следующий), отдельные голоса наставников для каждого сервиса; постоянный кэш озвучки в IndexedDB —
+//       повторяющиеся фразы не тратят лимит.
+// 15.8  У каждого наставника свой постоянный сервис озвучки (Кайлен/Каспер/Мира/Тио — Google, Брум/Нори/Вера — Azure),
+//       голос не меняется; при лимите сервиса только его наставники временно говорят голосом телефона.
+//       Распределение меняется переменной TTS_ASSIGN в Vercel.
+const APP_VERSION = '15.8';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -3792,7 +3798,7 @@ function CouncilTab({ state, energy, runCouncil, acceptCouncil, dismissCouncil, 
   };
   const voice = (id, text) => {
     if (voiceRef.current === 'off') return;
-    speakLine(id, text, voiceRef.current, (why) => setVoiceNote(`Голоса ИИ недоступны (${why}) — говорю голосом телефона.`));
+    speakLine(id, text, voiceRef.current, (why) => setVoiceNote(`Озвучка: ${why} — эти наставники пока говорят голосом телефона.`));
   };
   const cycleVoice = () => {
     unlockVoices();
