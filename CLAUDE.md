@@ -17,6 +17,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | `src/profileUI.jsx` | Profile UI: `HeroPaperDoll` (pixel hero + 7 equipment slots by rarity), `GearIcon`, `Medal`, `AchievementBoard`, `AchievementToast` (portal banner), `SectionTile`, `TitleSheet`, `RARITY_TONE` |
 | `src/financeUI.jsx` | Finance UI ("treasury"): `TreasuryScene`, `DebtBossSprite`/`HpBar`/`DamagePop`, `PiggyJar`, `WeekBars`, `GradeBadge`, `QuickEntrySheet` (bottom-sheet entry for expense/income/taxi order), `CatIcon`/`CatBadge`/`CAT_COLOR`, `fmtMoney` |
 | `src/creatorUI.jsx` | YouTube UI ("creator studio"): `StudioScene`, `PlayPlaque`, `SUB_MILESTONES`/`milestoneInfo`, `RhythmDots`, `StageTrack`, `fmtCompact` |
+| `src/shopUI.jsx` | Shop UI ("Vera's shop"): `ShopScene` (counter + Vera portrait + speech), `DailyLoginStrip`, `ItemTile`, `MiniChest`, `ReceiptModal` (paid stamp), `PrizeModal`, `RAR` |
 | `src/progressUI.jsx` | Progress section UI: `WorldMapPixel` (9 lands = 9 stats, 6 stages, fog, roads), `LANDS`, `stageOf`, `StageMini`, `HeroRankCard` (`rankOf`), `StatRow` |
 | `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts`, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
@@ -33,7 +34,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 - 549–700 Random events, equipment tiers, `economistPayout`
 - 704–990 Finance: debts, `computeNetWorth`, `financialHealth`, `financeMonthSummary`; YouTube helpers (852–925)
 - `RoomShopPanel` (room furniture shop, paper style), economy: crystals/tickets, shop, wheel of fortune
-- 1303 `EconomyPanel`; 1469 `applyCoinLedger`
+- 1303 economy helpers (`buildDailyShop`, `buildWheel`, `grantWheelPrize`); `applyCoinLedger`
 - 1459–1505 Backups and cloud payload
 - 1547 `xpNeeded`, 1550 `computeEnergy`
 - 1531–1640 Loans/amortization, `migrateFinance`
@@ -61,7 +62,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | 7568 | QuestsTab (+QuestCard 6546) | 9643 | MentorTab |
 | — | (GoalsTab removed; see GoalsHub) | 9802 | WorldTab |
 | 8031 | StatsTab | 9877 | EventsTab |
-| 8134 | ShopTab | 9219 | YouTubeHQ (+`parseAiIdeas`, `ytWeekStart`; YouTubeTab merged in; rewards via `onCreatorAction` stage/publish) |
+| 8134 | ShopTab (+`DAILY_LOGIN_TABLE`, `SHOP_CHESTS`, `FORGE_RATE`, `COSMETIC_LOOK`; EconomyPanel merged in) | 9219 | YouTubeHQ (+`parseAiIdeas`, `ytWeekStart`; YouTubeTab merged in; rewards via `onCreatorAction` stage/publish) |
 | 8313 | ChronicleTab | 10709 | GarageTab |
 | 8397 | HabitsTab | 11031 | SettingsTab (+SaveManager 9945, AICenter 10040) |
 | 8723 | FinanceTab (+`financeScore`, `DEBT_TACTICS`) | 11430 | BodyTab (+NutritionCard 10249) |
