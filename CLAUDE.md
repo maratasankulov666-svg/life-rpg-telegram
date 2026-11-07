@@ -20,6 +20,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | `src/shopUI.jsx` | Shop UI ("Vera's shop"): `ShopScene` (counter + Vera portrait + speech), `DailyLoginStrip`, `ItemTile`, `MiniChest`, `ReceiptModal` (paid stamp), `PrizeModal`, `RAR` |
 | `src/lifeUI.jsx` | Life events + chronicle UI: `DayScale` (good/bad scale), `ActivityHeatmap` (weeks × days, tap to filter), `WeekBalance` |
 | `src/settingsUI.jsx` | Settings UI: `SaveCrystal`, `Toggle`, `HoldButton` (press-and-hold confirm), `SettingsSection` (accordion) |
+| `src/homeUI.jsx` | Home HUD: `DayBoard` (route progress + next steps with quick complete), `HeroBubble` (tap-hero lines with action), `MentorNote` (Kaylen's daily line) |
 | `src/progressUI.jsx` | Progress section UI: `WorldMapPixel` (9 lands = 9 stats, 6 stages, fog, roads), `LANDS`, `stageOf`, `StageMini`, `HeroRankCard` (`rankOf`), `StatRow` |
 | `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts`, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
@@ -56,7 +57,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 **Main screen / HUD** — 5837
 - `PlayerCharacter` 5867, `GameModal` 5911, `LeftGameMenu` 6032, `RightStatsPanel` 6053, `DailyGoalsPanel` 6103, `GameSceneCenter` 6136, `BottomGameNav` 6170
 - Modals: `IdentityModal` 6201, `ParamsModal` 6253, `CheckinModal` 6285
-- Background: `WeatherCanvas` 6416, `LivingBackground` 6463; `HomeTab` 6499
+- Background: `WeatherCanvas` 6416, `LivingBackground` 6463; `HomeTab` 6499 (day board from `state.dayRoute`, `heroLines`, greeting once per session)
 
 **Tabs**
 | Line | Tab | Line | Tab |

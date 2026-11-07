@@ -137,6 +137,7 @@ import { StudioScene, PlayPlaque, RhythmDots, StageTrack, SUB_MILESTONES, milest
 import { ShopScene, DailyLoginStrip, ItemTile, MiniChest, ReceiptModal, PrizeModal, useShopCss, RAR } from './shopUI.jsx';
 import { DayScale, ActivityHeatmap, WeekBalance, useLifeCss } from './lifeUI.jsx';
 import { SaveCrystal, Toggle, HoldButton, SettingsSection, useSettingsCss } from './settingsUI.jsx';
+import { DayBoard, HeroBubble, MentorNote, useHomeCss } from './homeUI.jsx';
 import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
@@ -219,7 +220,10 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 // 16.6  Настройки = меню игры: кристалл сохранения, разделы-аккордеон; авто-копии раз в день и перед сбросом/импортом
 //       (три последние, с откатом), импорт из файла, сброс только удержанием, вибрация вкл/выкл, спокойный режим
 //       глушит анимации, понятные описания сложности, ползунок свободных часов, ИИ-ядро, «Что нового».
-const APP_VERSION = '16.6';
+// 16.7  Живая Главная: доска дня (маршрут до сундука и два ближайших шага — выполняются прямо с главной, «Сундук
+//       ждёт!»), герой разговаривает по тапу (приветствие по времени суток, сон, сундук, следующий шаг, серия, цель —
+//       с кнопкой перехода), записка Кайлена с дневной фразой (тап — в штаб). Панель роста/веса убрана с главной.
+const APP_VERSION = '16.7';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -6935,7 +6939,7 @@ useEffect(() => {
           energy={energy} todayCheckin={todayCheckin} setDailyCheckin={setDailyCheckin}
           setTab={setTab} setSubTab={setSubTab} openProfile={openProfile}
           setBodyProfile={setBodyProfile} logWeight={logWeight}
-          buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot}
+          buyRoomItem={buyRoomItem} equipRoomSlot={equipRoomSlot} completeHabit={completeHabit} completeQuest={completeQuest}
         />
       ) : (
       <>
@@ -7887,7 +7891,7 @@ function RoomEditorSheet({ room, coins, buyRoomItem, equipRoomSlot, slot, setSlo
   );
 }
 
-function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight, buyRoomItem, equipRoomSlot }) {
+function HomeTab({ state, editingName, setEditingName, setCharacterName, setCharacterTitle, setCharacterPhoto, unlockedAchievements, energy, todayCheckin, setDailyCheckin, setTab, setSubTab, openProfile, setBodyProfile, logWeight, buyRoomItem, equipRoomSlot, completeHabit, completeQuest }) {
   const [modal, setModal] = useState(null);
   const [roomOpen, setRoomOpen] = useState(false);
   const [roomSlot, setRoomSlot] = useState('rug');
@@ -7919,6 +7923,50 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
   // Панель обустройства занимает ~54% снизу: приподнимаем сцену, чтобы выбранное место было видно.
   const sceneShift = roomOpen ? Math.max(0, Math.min(box.h * 0.5, slotBottomPx(roomSlot, box.w, box.h) - box.h * 0.44)) : 0;
 
+  // Доска дня: маршрут из state.dayRoute и два ближайших шага (привычки раньше квестов).
+  const today = todayStr();
+  const route = state.dayRoute && state.dayRoute.date === today ? state.dayRoute : null;
+  const routeKeys = route ? route.ids : [];
+  const routeDoneN = routeKeys.filter(k => routeItemDone(state, k, today)).length;
+  const habitRank = new Map(orderHabitsForDay(state.habits || [], { today }).map((h, i) => [h.id, i]));
+  const nextItems = routeKeys.filter(k => !routeItemDone(state, k, today)).map(k => {
+    const id = k.slice(2);
+    if (k[0] === 'h') { const h = state.habits.find(x => x.id === id); return h ? { key: k, title: h.title, stat: h.stat, kind: 'habit', rank: habitRank.get(h.id) ?? 0, onDo: () => completeHabit(h) } : null; }
+    const q = state.quests.find(x => x.id === id); return q ? { key: k, title: q.title, stat: q.stat || 'quest', kind: 'quest', rank: 1000, onDo: () => completeQuest(q) } : null;
+  }).filter(Boolean).sort((a, b) => a.rank - b.rank);
+  const chestState = route && routeKeys.length && routeDoneN >= routeKeys.length ? (route.chestClaimed ? 'claimed' : 'ready') : null;
+  const goActions = () => { gameFeedback('NAV'); setTab('actions'); setSubTab(st => ({ ...st, actions: 'all' })); };
+
+  // Реплики героя: по тапу перебираются, первая — приветствие при входе.
+  const heroLines = (() => {
+    const h = new Date().getHours();
+    const name = state.character.name || 'Герой';
+    const lines = [];
+    lines.push({ text: h < 6 ? 'Ночь на дворе… Может, уже спать?' : h < 11 ? `Доброе утро, ${name}! Новый маршрут ждёт.` : h < 17 ? 'День в разгаре. Чем займёмся?' : h < 22 ? 'Вечер. Давай доделаем день красиво.' : 'Поздно. Завтра будет новый маршрут.' });
+    if (!todayCheckin && h >= 6) lines.push({ text: 'Как спалось? Отметь сон — посчитаю энергию.', act: () => setModal('checkin'), actLabel: 'Отметить' });
+    if (chestState === 'ready') lines.push({ text: 'Маршрут пройден — сундук дня готов!', act: goActions, actLabel: 'Открыть' });
+    if (nextItems[0]) lines.push({ text: `Следующий шаг: «${nextItems[0].title}». Сделаем?`, act: goActions, actLabel: 'К заданиям' });
+    if (energy < 35) lines.push({ text: 'Энергии мало. Вода, прогулка и сон — и я снова в строю.' });
+    if (topStreak > 0) lines.push({ text: `Серия ${topStreak} дн. — «${flameTier(topStreak).name}». Не роняем!` });
+    const goal = (state.goals || []).filter(g => g.progress < 100 && g.deadline).sort((a, b) => new Date(a.deadline) - new Date(b.deadline))[0];
+    if (goal) lines.push({ text: `Помню про «${goal.title}» — там ${goal.progress}%.`, act: () => { setTab('goals'); }, actLabel: 'К целям' });
+    lines.push({ text: `Уровень ${state.character.level}. До следующего ${Math.max(0, xpNeed - state.character.xp)} XP.` });
+    return lines;
+  })();
+  const [lineIdx, setLineIdx] = useState(0);
+  const [bubble, setBubble] = useState(null);
+  useEffect(() => {
+    const k = 'liferpg_home_greet';
+    let seen = null; try { seen = sessionStorage.getItem(k); } catch (e) { seen = '1'; }
+    if (seen) return undefined;
+    const t = setTimeout(() => { setBubble(heroLines[0]); try { sessionStorage.setItem(k, '1'); } catch (e) { /* без хранилища */ } }, 900);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const tapHero = () => {
+    const next = (lineIdx + 1) % heroLines.length;
+    setLineIdx(next); setBubble(heroLines[next]); gameFeedback('BUTTON_PRESS');
+  };
+
   return (
     <div style={{
       position: 'fixed', left: 0, right: 0, top: 0, bottom: modal ? 0 : 'calc(66px + env(safe-area-inset-bottom, 0px))', zIndex: modal ? 70 : 5, overflow: 'hidden',
@@ -7940,8 +7988,19 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
       </div>
 
       {!roomOpen && (
-        <div style={{ position: 'absolute', zIndex: 3, right: 10, top: 'calc(104px + env(safe-area-inset-top, 0px))', width: 132 }}>
-          <RightStatsPanel body={state.body} currentWeight={currentWeight} onEdit={() => setModal('params')} />
+        <div style={{ position: 'absolute', zIndex: 3, right: 10, top: 'calc(104px + env(safe-area-inset-top, 0px))', width: 172 }}>
+          <DayBoard done={routeDoneN} total={routeKeys.length} items={nextItems.slice(0, 2)} chest={chestState} onOpen={goActions} onChest={goActions} />
+        </div>
+      )}
+
+      {!roomOpen && !modal && (
+        <button type="button" aria-label="Поговорить с героем" onClick={tapHero} style={{ position: 'absolute', zIndex: 2, left: '28%', right: '28%', top: '52%', bottom: 70, background: 'transparent', border: 'none', cursor: 'pointer' }} />
+      )}
+      {!roomOpen && bubble && <HeroBubble text={bubble.text} onClose={() => setBubble(null)} onAct={bubble.act ? () => { setBubble(null); bubble.act(); } : null} actLabel={bubble.actLabel} />}
+
+      {!roomOpen && (
+        <div style={{ position: 'absolute', zIndex: 3, left: 10, bottom: 66 }}>
+          <MentorNote id="kaylen" name="Кайлен" line={npcDailyLine('kaylen', state)} onOpen={() => { gameFeedback('NAV'); openProfile('council'); }} />
         </div>
       )}
 
@@ -11385,6 +11444,7 @@ function TelegramDiagnosticsCard() {
 }
 
 const WHATS_NEW = [
+  { v: '16.7', t: 'Живая Главная: доска дня с шагами прямо с главной, герой говорит по тапу, записка от Кайлена' },
   { v: '16.6', t: 'Настройки — меню игры: кристалл сохранения, авто-копии с откатом, сброс удержанием, вибрация, спокойный режим' },
   { v: '16.5', t: 'События жизни — дневник дня с весами и «днями без…», хроника с картой активности и главами' },
   { v: '16.4', t: 'Лавка Веры: ежедневка, чеки, колесо и сундуки, образ в профиле, коллекции и кузница' },
