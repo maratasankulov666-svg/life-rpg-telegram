@@ -22,6 +22,8 @@ export const RARITY_THEMES = {
   frost: { p: ['#bfe8ff', '#ffffff', '#7ac7f0'], bg: 'radial-gradient(120% 90% at 50% 0%, #f2fbff 0%, #e2f3fb 60%, #d3ebf6 100%)' },
   nature: { p: ['#9fd07a', '#f6e38a', '#5fa35a'], bg: 'radial-gradient(120% 90% at 50% 100%, #e4f3d6 0%, #f1f7e8 60%, #fbfbf2 100%)' },
   autumn: { p: ['#e2702a', '#f6b04a', '#a4412a'], bg: 'radial-gradient(120% 90% at 50% 0%, #fde6cf 0%, #fbeee0 60%, #f7e2c8 100%)' },
+  ocean: { p: ['#3ad0e0', '#bff8ff', '#2a8aff'], bg: 'radial-gradient(120% 90% at 50% 0%, #e6fbff 0%, #d8f1f6 55%, #c6e6f0 100%)' },
+  storm: { p: ['#7ab0ff', '#ffe86a', '#ffffff'], bg: 'radial-gradient(120% 90% at 50% 0%, #eef2ff 0%, #e0e6f6 55%, #d0d8ee 100%)' },
   holo: { p: ['#7a5af0', '#f07ad0', '#5ad0f0', '#f0e05a'], bg: 'linear-gradient(135deg, #f6f0ff 0%, #ffeefa 35%, #eefbff 70%, #fffbe8 100%)' },
 };
 

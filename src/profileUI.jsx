@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { PAPER, PixelIcon } from './actionsUI.jsx';
 import { RarityCard, RarityLabel, RarityBurst, rarityRank, useRarityCss } from './rarityFX.jsx';
 import { AuraArt } from './artFX.jsx';
+import { TitlePlate } from './revealFX.jsx';
 
 const FONT = "'Manrope', system-ui, -apple-system, sans-serif";
 export const RARITY_TONE = {
@@ -92,7 +93,7 @@ function HeroSprite({ tint = {}, height = 150 }) {
  * Карточка героя-«кукла»: герой в центре, вокруг 7 слотов экипировки.
  * slots: [{ slot, label, theme, tier: { roman, rarity, label }, value, next: { roman, min } | null, statLabel }]
  */
-export function HeroPaperDoll({ slots, onSlot, active, aura }) {
+export function HeroPaperDoll({ slots, onSlot, active, aura, onInspect }) {
   useProfileCss();
   const left = ['helmet', 'armor', 'gloves', 'weapon'];
   const right = ['accessory', 'artifact', 'shoes'];
@@ -136,6 +137,7 @@ export function HeroPaperDoll({ slots, onSlot, active, aura }) {
               {sel.next ? `Растёт от «${sel.statLabel}»: ${sel.value} → ${sel.next.min} до уровня ${sel.next.roman}` : `«${sel.statLabel}» ${sel.value} — максимум`}
             </div>
           </div>
+          {onInspect && <button type="button" className="lrpg-btn" onClick={() => onInspect(sel)} style={{ flexShrink: 0, minHeight: 36, padding: '6px 10px', borderRadius: 9, background: PAPER.ink, color: '#fbf9f4', border: 'none', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }}>Осмотреть</button>}
         </div>
       )}
     </div>
@@ -272,12 +274,14 @@ export function TitleSheet({ titles, current, onPick, onClose }) {
         <div style={{ fontSize: 12.5, color: PAPER.muted, marginBottom: 10 }}>Титулы дают достижения. Выбранный виден на карточке и на главной.</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <button className="lrpg-btn" onClick={() => onPick(null)} style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 10, background: !current ? PAPER.ink : PAPER.card, color: !current ? PAPER.bg : PAPER.muted, border: `1px solid ${PAPER.line}`, fontSize: 14, fontWeight: 600, fontFamily: 'inherit' }}>Без титула</button>
-          {titles.map(t => {
+          {[...titles].sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity)).map(t => {
             const tone = RARITY_TONE[t.rarity] || RARITY_TONE.Common;
             const on = current === t.label;
+            const big = rarityRank(t.rarity) >= 3;
             return (
-              <button key={t.id} className="lrpg-btn" onClick={() => onPick(t.label)} style={{ textAlign: 'left', padding: '10px 12px', borderRadius: 10, background: on ? tone.c : PAPER.card, color: on ? '#fbf9f4' : PAPER.ink, border: `1px solid ${on ? tone.c : PAPER.line}`, fontSize: 14, fontWeight: 700, display: 'flex', justifyContent: 'space-between', fontFamily: 'inherit' }}>
-                <span>«{t.label}»</span><span className="lrpg-mono" style={{ fontSize: 8.5, color: on ? '#fbf9f4' : tone.c, alignSelf: 'center' }}>{tone.ru}</span>
+              <button key={t.id} type="button" className="lrpg-btn" onClick={() => onPick(t.label)} aria-pressed={on} style={{ padding: '6px 4px 2px', borderRadius: 12, background: big ? '#16131f' : PAPER.card, border: `2px solid ${on ? tone.c : big ? '#2a2638' : PAPER.line}`, display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'inherit', overflow: 'hidden' }}>
+                <TitlePlate text={t.label} rarity={t.rarity} theme={t.theme} width={230} />
+                <span className="lrpg-mono" style={{ fontSize: 8, color: on ? tone.c : big ? '#a49eb6' : PAPER.muted, margin: '-4px 0 4px' }}>{on ? '✓ выбран · ' : ''}{tone.ru}</span>
               </button>
             );
           })}

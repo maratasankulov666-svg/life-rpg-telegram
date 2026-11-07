@@ -139,6 +139,7 @@ import { DayScale, ActivityHeatmap, WeekBalance, useLifeCss } from './lifeUI.jsx
 import { SaveCrystal, Toggle, HoldButton, SettingsSection, useSettingsCss } from './settingsUI.jsx';
 import { DayBoard, HeroBubble, MentorNote, useHomeCss } from './homeUI.jsx';
 import { RarityCard, RarityLabel, RarityIcon, RarityBurst, rarityRank, rarityMeta, RARITY_META } from './rarityFX.jsx';
+import { RevealCeremony, CardViewer, TitlePlate } from './revealFX.jsx';
 import { AvatarFrame, AuraArt, AuraGroup, ItemArt } from './artFX.jsx';
 import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
@@ -235,7 +236,11 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       предметы (мифические Драконьи доспехи с волной по чешуе, перо феникса, плащ пустоты, солнечный венец,
 //       ледяное сердце, росток, корона пути), тематические рамки аватара (неон, «Подводный мир» с рыбками и
 //       пузырями, «Драконья оправа» с дыханием огня) и ауры героя (искры, пламя феникса, пустота, призрачный дракон).
-const APP_VERSION = '16.9';
+// 17.0 — премиальные редкости в игре: коллекционные карты легендарок и мифов с крыльями, гербом и существом
+//       на орбите; церемонии раскрытия со своим сценарием и музыкой у семи тем (небо, космос, дракон, глубины,
+//       лёд, роща/осень, буря); живые таблички титулов; снаряжение со стихиями и мифическим V уровнем;
+//       новые легендарные и мифические предметы и достижения.
+const APP_VERSION = '17.0';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -759,14 +764,15 @@ const TERRITORIES = [
 
 const TERRITORY_STAGES = ['Пустошь', 'Поселение', 'Городок', 'Город', 'Столица', 'Легендарные земли'];
 
+// Снаряжение: у каждого слота своя стихия (fx) и облик на каждом уровне — от простого до мифического.
 const EQUIPMENT_SLOTS = [
-  { slot: 'weapon', label: 'Оружие', theme: 'Меч Дисциплины', statKey: 'discipline', icon: Sword },
-  { slot: 'armor', label: 'Броня', theme: 'Доспех Тела', statKey: 'physical', icon: Shirt },
-  { slot: 'helmet', label: 'Шлем', theme: 'Шлем Фокуса', statKey: 'focus', icon: Package },
-  { slot: 'gloves', label: 'Перчатки', theme: 'Перчатки Мастера', statKey: 'creator', icon: HandMetal },
-  { slot: 'shoes', label: 'Обувь', theme: 'Сапоги Карьериста', statKey: 'career', icon: Footprints },
-  { slot: 'accessory', label: 'Аксессуар', theme: 'Амулет Общения', statKey: 'social', icon: Gem },
-  { slot: 'artifact', label: 'Артефакт', theme: 'Свиток Знаний', statKey: 'knowledge', icon: BookOpen },
+  { slot: 'weapon', label: 'Оружие', theme: 'Меч Дисциплины', statKey: 'discipline', icon: Sword, fx: 'fire', emoji: '⚔️', names: ['Деревянный меч', 'Стальной клинок', 'Меч Дисциплины', 'Меч Пламени', 'Клинок Дракона'] },
+  { slot: 'armor', label: 'Броня', theme: 'Доспех Тела', statKey: 'physical', icon: Shirt, fx: 'gold', emoji: '🛡️', names: ['Стёганка', 'Кольчуга', 'Доспех Тела', 'Доспех Рассвета', 'Доспех Солнца'] },
+  { slot: 'helmet', label: 'Шлем', theme: 'Шлем Фокуса', statKey: 'focus', icon: Package, fx: 'holo', emoji: '👑', names: ['Капюшон', 'Шлем стража', 'Шлем Фокуса', 'Венец Звездочёта', 'Корона Пустоты'] },
+  { slot: 'gloves', label: 'Перчатки', theme: 'Перчатки Мастера', statKey: 'creator', icon: HandMetal, fx: 'storm', emoji: '🧤', names: ['Кожаные перчатки', 'Перчатки ремесленника', 'Перчатки Мастера', 'Перчатки Бури', 'Длани Громовержца'] },
+  { slot: 'shoes', label: 'Обувь', theme: 'Сапоги Карьериста', statKey: 'career', icon: Footprints, fx: 'nature', emoji: '👢', names: ['Сандалии', 'Сапоги путника', 'Сапоги Карьериста', 'Сапоги Лесного духа', 'Поступь Мирового древа'] },
+  { slot: 'accessory', label: 'Аксессуар', theme: 'Амулет Общения', statKey: 'social', icon: Gem, fx: 'ocean', emoji: '📿', names: ['Шнурок с бусиной', 'Амулет друга', 'Амулет Общения', 'Жемчуг Прилива', 'Слеза Левиафана'] },
+  { slot: 'artifact', label: 'Артефакт', theme: 'Свиток Знаний', statKey: 'knowledge', icon: BookOpen, fx: 'frost', emoji: '🔮', names: ['Свиток', 'Книга знаний', 'Свиток Знаний', 'Кристалл Вечной зимы', 'Сердце Ледяного феникса'] },
 ];
 
 const EQUIPMENT_TIERS = [
@@ -774,6 +780,7 @@ const EQUIPMENT_TIERS = [
   { roman: 'II', label: 'Опытный', rarity: 'Rare', min: 30 },
   { roman: 'III', label: 'Мастер', rarity: 'Epic', min: 60 },
   { roman: 'IV', label: 'Легенда', rarity: 'Legendary', min: 85 },
+  { roman: 'V', label: 'Миф', rarity: 'Mythic', min: 97 },
 ];
 
 function equipmentTierFor(value) {
@@ -842,8 +849,19 @@ const ACHIEVEMENTS = [
   achDef('room3', 'Новосёл', 'Обставь комнату: 3 предмета', 'Common', 25, 20, 'world', 'creator', 3, s => normalizeRoom(s.room).owned.length),
   achDef('council1', 'Голос совета', 'Проведи первый совет наставников', 'Common', 25, 20, 'world', 'social', 1, s => ((s.council && s.council.meetings) || []).length),
   achDef('council10', 'Свой в штабе', 'Проведи 10 советов', 'Rare', 80, 60, 'world', 'social', 10, s => ((s.council && s.council.meetings) || []).length),
+  achDef('lvl35', 'Владыка бури', 'Достигни 35 уровня', 'Legendary', 250, 200, 'path', 'discipline', 35, s => s.character.level),
+  achDef('days365', 'Год героя', '365 дней в игре', 'Mythic', 500, 400, 'path', 'mental', 365, daysInGame),
+  achDef('quest250', 'Гроза дел', 'Заверши 250 квестов', 'Legendary', 250, 180, 'deeds', 'quest', 250, doneQuests),
+  achDef('quest500', 'Буревестник', 'Заверши 500 квестов', 'Mythic', 450, 350, 'deeds', 'quest', 500, doneQuests),
+  achDef('goal20', 'Мировое древо', 'Заверши 20 целей', 'Mythic', 450, 350, 'deeds', 'career', 20, doneGoals),
+  achDef('streak60', 'Ледяная воля', 'Серия 60 дней в привычке', 'Legendary', 220, 160, 'habit', 'focus', 60, bestStreak),
+  achDef('coins10000', 'Повелитель приливов', 'Заработай 10 000 монет за всё время', 'Legendary', 250, 0, 'wealth', 'finance', 10000, s => s.coinsEarnedAllTime || 0),
+  achDef('chest50', 'Сокровища глубин', 'Открой 50 сундуков дня', 'Legendary', 200, 150, 'world', 'finance', 50, s => (s.counters && s.counters.chests) || 0),
+  achDef('council50', 'Мудрость севера', 'Проведи 50 советов', 'Legendary', 220, 160, 'world', 'social', 50, s => ((s.council && s.council.meetings) || []).length),
 ];
-ACHIEVEMENTS.forEach(a => { if (a.id === 'debt_free') a.theme = 'gold'; if (a.id === 'goal5') { a.rarity = 'Legendary'; a.theme = 'nature'; } });
+// Тема легендарных и мифических достижений: определяет рамку, церемонию и табличку титула.
+const ACH_THEME = { debt_free: 'gold', goal5: 'nature', lvl50: 'holo', days100: 'gold', streak100: 'fire', lvl35: 'storm', days365: 'gold', quest250: 'storm', quest500: 'storm', goal20: 'nature', streak60: 'frost', coins10000: 'ocean', chest50: 'ocean', council50: 'frost' };
+ACHIEVEMENTS.forEach(a => { if (ACH_THEME[a.id]) a.theme = ACH_THEME[a.id]; if (a.id === 'goal5') a.rarity = 'Legendary'; });
 // Лимитированные достижения месяца: получить можно только в этом календарном месяце.
 const RU_MONTH_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const SEASON_THEME = ['frost', 'frost', 'nature', 'nature', 'nature', 'gold', 'fire', 'fire', 'gold', 'autumn', 'autumn', 'frost'];
@@ -1213,6 +1231,26 @@ const RPG_ITEM_POOL = [
   { id: 'wooden-shard', title: 'Деревянный осколок', rarity: 'Common', category: 'fragment', icon: '🪵', cost: 50, currency: 'coins' },
   { id: 'spark-vial', title: 'Колба искры', rarity: 'Common', category: 'consumable', icon: '🧪', cost: 110, currency: 'coins' },
   { id: 'night-runner', title: 'Ночной бегун', rarity: 'Rare', category: 'equipment', icon: '🌙', cost: 490, currency: 'coins', collection: 'discipline' },
+  // 17.0: новые темы — Глубины, Буря, Роща — и больше легендарок и мифов
+  { id: 'sea-glass', title: 'Морское стекло', rarity: 'Rare', category: 'accessory', icon: '🫧', cost: 400, currency: 'coins', collection: 'ocean', lore: 'Волны отшлифовали его до гладкости.' },
+  { id: 'static-ring', title: 'Кольцо статики', rarity: 'Epic', category: 'accessory', icon: '💍', cost: 1500, currency: 'coins', collection: 'storm', lore: 'Чуть покалывает пальцы перед важным делом.' },
+  { id: 'acorn-charm', title: 'Жёлудь-оберег', rarity: 'Rare', category: 'accessory', icon: '🌰', cost: 380, currency: 'coins', collection: 'grove', lore: 'Из маленького вырастает дуб.' },
+  { id: 'tide-pearl', title: 'Жемчужина прилива', rarity: 'Legendary', theme: 'ocean', category: 'accessory', icon: '🐚', cost: 8, currency: 'crystals', collection: 'ocean', effect: 'Спокойствие глубины в любой суете', lore: 'Растёт по слою за каждый тихий день.' },
+  { id: 'abyss-compass', title: 'Компас бездны', rarity: 'Legendary', theme: 'ocean', category: 'artifact', icon: '🧭', cost: 9, currency: 'crystals', collection: 'ocean', effect: 'Указывает путь, когда не видно дна', lore: 'Стрелка смотрит туда, где ты нужнее.' },
+  { id: 'storm-gauntlet', title: 'Перчатка бури', rarity: 'Legendary', theme: 'storm', category: 'equipment', icon: '⚡', cost: 9, currency: 'crystals', collection: 'storm', effect: 'Один удар — одно сделанное дело', lore: 'Искрит, когда ты откладываешь.' },
+  { id: 'thunder-drum', title: 'Барабан грома', rarity: 'Legendary', theme: 'storm', category: 'artifact', icon: '🥁', cost: 8, currency: 'crystals', collection: 'storm', effect: 'Задаёт ритм всей неделе', lore: 'Его слышно даже сквозь лень.' },
+  { id: 'grove-bow', title: 'Лук рощи', rarity: 'Legendary', theme: 'nature', category: 'weapon', icon: '🏹', cost: 8, currency: 'crystals', collection: 'grove', effect: 'Бьёт точно в цель, если цель живая', lore: 'Тетива сплетена из весенних побегов.' },
+  { id: 'maple-lantern', title: 'Фонарь листопада', rarity: 'Legendary', theme: 'autumn', category: 'artifact', icon: '🏮', cost: 8, currency: 'crystals', collection: 'grove', effect: 'Светит в самые тёмные вечера', lore: 'Внутри кружат клёновые листья.' },
+  { id: 'frost-blade', title: 'Клинок вечной зимы', rarity: 'Legendary', theme: 'frost', category: 'weapon', icon: '🗡️', cost: 9, currency: 'crystals', collection: 'focus', effect: 'Холодный расчёт в горячий момент', lore: 'Не тупится и не тает.' },
+  { id: 'sun-aegis', title: 'Эгида солнца', rarity: 'Legendary', theme: 'gold', category: 'armor', icon: '🛡️', cost: 10, currency: 'crystals', collection: 'wealth', effect: 'Отражает импульсивные траты', lore: 'Отполирована до блеска честным трудом.' },
+  { id: 'star-map', title: 'Звёздная карта', rarity: 'Legendary', theme: 'void', category: 'artifact', icon: '🗺️', cost: 9, currency: 'crystals', collection: 'void', effect: 'Показывает дорогу между целями', lore: 'Созвездия складываются в твои планы.' },
+  { id: 'ember-boots', title: 'Сапоги пепла', rarity: 'Legendary', theme: 'fire', category: 'equipment', icon: '👢', cost: 8, currency: 'crystals', collection: 'warrior', effect: 'Каждый шаг оставляет огненный след', lore: 'Не гаснут после срыва.' },
+  { id: 'leviathan-trident', title: 'Трезубец Левиафана', rarity: 'Mythic', theme: 'ocean', category: 'weapon', icon: '🔱', cost: 30, currency: 'crystals', collection: 'relic', effect: 'Повелевает приливами — и твоими привычками', lore: 'Мифическая реликвия глубин: только из эпических сундуков.' },
+  { id: 'thunder-hammer', title: 'Молот громовержца', rarity: 'Mythic', theme: 'storm', category: 'weapon', icon: '🔨', cost: 30, currency: 'crystals', collection: 'relic', effect: 'Удар, после которого откладывать нечего', lore: 'Мифическая реликвия бури: только из эпических сундуков.' },
+  { id: 'galaxy-heart', title: 'Сердце галактики', rarity: 'Mythic', theme: 'holo', category: 'artifact', icon: '🌌', cost: 30, currency: 'crystals', collection: 'relic', effect: 'Внутри бьётся целая вселенная', lore: 'Мифическая реликвия космоса: только из эпических сундуков.' },
+  { id: 'world-tree-staff', title: 'Посох мирового древа', rarity: 'Mythic', theme: 'nature', category: 'weapon', icon: '🌳', cost: 30, currency: 'crystals', collection: 'relic', effect: 'Где ступает — там прорастает', lore: 'Мифическая реликвия рощи: только из эпических сундуков.' },
+  { id: 'ice-phoenix', title: 'Ледяной феникс', rarity: 'Mythic', theme: 'frost', category: 'artifact', icon: '🕊️', cost: 30, currency: 'crystals', collection: 'relic', effect: 'Возрождается из любого холода', lore: 'Мифическая реликвия севера: только из эпических сундуков.' },
+  { id: 'seraph-wings', title: 'Крылья серафима', rarity: 'Mythic', theme: 'gold', category: 'armor', icon: '🪽', cost: 30, currency: 'crystals', collection: 'relic', effect: 'Поднимают над любой усталостью', lore: 'Мифическая реликвия небес: только из эпических сундуков.' },
   { id: 'ledger-seal', title: 'Печать учёта', rarity: 'Rare', category: 'badge', icon: '📒', cost: 300, currency: 'coins', collection: 'wealth' },
 ];
 
@@ -2060,6 +2098,7 @@ function defaultState() {
     coinTransactions: [], // {id,type:'earn'|'spend'|'refund'|'adjustment',amount,source,sourceId,title,timestamp}
     cosmetics: { unlocked: [], equipped: { frame: null, background: null, title: null, nameColor: null } },
     room: { owned: [], equipped: { rug: null, lamp: null, poster: null, plant: null, neon: null, desk: null } },
+    gearSeen: null,
     lastRefundAt: null, // раздел 14 ТЗ — ограничение: один refund за период
     lastPurchase: null, // {id,rewardId,title,cost,ts,isCustom} — для Refund
     dailyCheckin: null,
@@ -4558,12 +4597,18 @@ function achievementItems(state) {
   });
 }
 
+// Карточка снаряжения для просмотра и церемонии.
+function gearCard(s) {
+  return { id: `gear_${s.slot}_${s.tierIdx}`, title: s.theme, icon: s.icon, rarity: s.tier.rarity, theme: s.fx, sub: `Снаряжение · ${s.label} ${s.tier.roman}`, effect: `${s.label} · растёт от «${s.statLabel}»: ${s.value}`, lore: s.next ? `Следующий облик — при «${s.statLabel}» ${s.next.min}.` : 'Высший облик. Дальше — только легенды о тебе.' };
+}
+
 function equipmentSlotsView(stats) {
   return EQUIPMENT_SLOTS.map(s => {
     const value = Math.round(stats[s.statKey] || 0);
     const tier = equipmentTierFor(value);
-    const next = EQUIPMENT_TIERS[EQUIPMENT_TIERS.indexOf(tier) + 1] || null;
-    return { slot: s.slot, label: s.label, theme: s.theme, tier, next, value, statLabel: STAT_LABEL[s.statKey] || s.statKey };
+    const tierIdx = EQUIPMENT_TIERS.indexOf(tier);
+    const next = EQUIPMENT_TIERS[tierIdx + 1] || null;
+    return { slot: s.slot, label: s.label, theme: (s.names && s.names[tierIdx]) || s.theme, fx: s.fx, icon: s.emoji, tierIdx, tier, next, value, statLabel: STAT_LABEL[s.statKey] || s.statKey };
   });
 }
 
@@ -4639,6 +4684,13 @@ function ProfileHub({
   const xpPct = Math.max(0, Math.min(100, (ch.xp / Math.max(1, xpNeed)) * 100));
   const legendary = slots.filter(s => s.tier.rarity !== 'Common').length;
   const fileRef = React.useRef(null);
+  const [card, setCard] = useState(null);
+  const titleList = [
+    ...got.map(a => ({ id: a.id, label: a.label, rarity: a.rarity, theme: a.theme })),
+    ...COSMETIC_CATALOG.filter(c => c.type === 'title' && ((state.cosmetics && state.cosmetics.unlocked) || []).includes(c.id)).map(c => ({ id: c.id, label: c.preview, rarity: c.rarity, theme: c.theme })),
+    ...(((state.council && state.council.grants && state.council.grants.titles) || []).map(t => ({ id: t.id, label: t.label, rarity: 'Rare' }))),
+  ].filter((t, i, arr) => arr.findIndex(x => x.label === t.label) === i);
+  const curTitle = titleList.find(t => t.label === ch.title) || { rarity: 'Rare' };
 
   async function onPhoto(e) {
     const file = e.target.files && e.target.files[0];
@@ -4663,9 +4715,11 @@ function ProfileHub({
               <Pencil size={14} color={COLORS.textMuted} />
             </button>
           )}
-          <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setTitles(true); }} style={{ marginTop: 4, background: ch.title ? COLORS.goldSoft : COLORS.bgCard, border: `1px dashed ${ch.title ? COLORS.gold : COLORS.border}`, color: ch.title ? COLORS.gold : COLORS.textMuted, borderRadius: 99, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
-            {ch.title ? `«${ch.title}»` : '+ выбрать титул'}
-          </button>
+          {ch.title ? (
+            <TitlePlate text={ch.title} rarity={curTitle.rarity} theme={curTitle.theme} width={250} label={`Титул «${ch.title}»: сменить`} onClick={() => { gameFeedback('SHEET_OPEN'); setTitles(true); }} style={{ marginTop: 2, marginLeft: -10 }} />
+          ) : (
+            <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setTitles(true); }} style={{ marginTop: 4, background: COLORS.bgCard, border: `1px dashed ${COLORS.border}`, color: COLORS.textMuted, borderRadius: 99, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>+ выбрать титул</button>
+          )}
         </div>
         <button className="lrpg-btn" onClick={() => go('settings')} aria-label="Настройки" style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 12, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <SettingsIcon size={18} color={COLORS.textMuted} />
@@ -4696,7 +4750,7 @@ function ProfileHub({
             </div>
           </div>
         </div>
-        <HeroPaperDoll slots={slots} active={slot} aura={cos.aura} onSlot={(k) => { gameFeedback('BUTTON_PRESS'); setSlot(k); }} />
+        <HeroPaperDoll slots={slots} active={slot} aura={cos.aura} onSlot={(k) => { gameFeedback('BUTTON_PRESS'); setSlot(k); }} onInspect={(s) => { gameFeedback('SHEET_OPEN'); setCard(gearCard(s)); }} />
         <div style={{ fontSize: 11.5, color: COLORS.textMuted, textAlign: 'center', marginTop: 8 }}>
           {slot ? 'Тапни слот ещё раз, чтобы закрыть' : `Экипировка растёт от реальных статов · улучшено ${legendary}/7. Тапни по слоту`}
         </div>
@@ -4753,13 +4807,10 @@ function ProfileHub({
       </div>
 
       {titles && (
-        <TitleSheet titles={[
-          ...got.map(a => ({ id: a.id, label: a.label, rarity: a.rarity })),
-          ...COSMETIC_CATALOG.filter(c => c.type === 'title' && ((state.cosmetics && state.cosmetics.unlocked) || []).includes(c.id)).map(c => ({ id: c.id, label: c.preview, rarity: c.rarity })),
-          ...(((state.council && state.council.grants && state.council.grants.titles) || []).map(t => ({ id: t.id, label: t.label, rarity: 'Rare' }))),
-        ].filter((t, i, arr) => arr.findIndex(x => x.label === t.label) === i)} current={ch.title}
+        <TitleSheet titles={titleList} current={ch.title}
           onPick={(t) => { setCharacterTitle(t); setTitles(false); gameFeedback('ITEM_PLACE'); }} onClose={() => setTitles(false)} />
       )}
+      {card && <CardViewer item={card} onClose={() => setCard(null)} />}
     </div>
   );
 }
@@ -4786,6 +4837,7 @@ export default function LifeRPG() {
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [goalFx, setGoalFx] = useState(null);
   const [achQueue, setAchQueue] = useState([]);
+  const [revealQ, setRevealQ] = useState([]);
   const [showAddReward, setShowAddReward] = useState(false);
   const [skipTarget, setSkipTarget] = useState(null);
   const [levelUpFlash, setLevelUpFlash] = useState(null);
@@ -6622,8 +6674,29 @@ function addYouTubeQuest(ch, metric, delta) {
         character, chronicle, unlockedAchievements: unlocked, unlockedSets, unlockedLevels,
       };
     });
-    if (toUnlock.length) setAchQueue(q => [...q, ...toUnlock.filter(a => !q.some(x => x.id === a.id)).map(a => ({ id: a.id, label: a.label, desc: a.desc, rarity: a.rarity, kind: a.kind, xp: a.xp, coins: a.coins, theme: a.theme, limited: a.limited }))]);
+    const small = toUnlock.filter(a => rarityRank(a.rarity) < 3), grand = toUnlock.filter(a => rarityRank(a.rarity) >= 3);
+    if (small.length) setAchQueue(q => [...q, ...small.filter(a => !q.some(x => x.id === a.id)).map(a => ({ id: a.id, label: a.label, desc: a.desc, rarity: a.rarity, kind: a.kind, xp: a.xp, coins: a.coins, theme: a.theme, limited: a.limited }))]);
+    // Легендарные и мифические достижения — целая церемония с медалью и новой табличкой титула.
+    if (grand.length) setRevealQ(q => [...q, ...grand.filter(a => !q.some(x => x.id === 'ach_' + a.id)).map(a => ({
+      id: 'ach_' + a.id, title: a.label, rarity: a.rarity, theme: a.theme, sub: a.limited ? `Лимит · ${a.limited}` : 'Достижение',
+      lore: `${a.desc} · +${a.xp} XP${a.coins ? ` · +${a.coins} монет` : ''}`, cta: 'Принять',
+      node: <Medal kind={a.kind} rarity={a.rarity} size={58} />,
+      extra: <div><div className="lrpg-mono" style={{ fontSize: 8.5, letterSpacing: '.18em', color: '#f6d08a', marginBottom: 2 }}>Новый титул</div><TitlePlate text={a.label} rarity={a.rarity} theme={a.theme} width={250} /></div>,
+    }))]);
   }, [loaded, state]);
+
+  // Снаряжение выросло до легендарного или мифического облика — церемония получения.
+  useEffect(() => {
+    if (!loaded || !state || !state.stats) return;
+    const slots = equipmentSlotsView(state.stats);
+    const cur = Object.fromEntries(slots.map(s => [s.slot, s.tierIdx]));
+    const seen = state.gearSeen;
+    if (!seen) { setState(prev => ({ ...prev, gearSeen: cur })); return; }
+    if (!slots.some(s => s.tierIdx !== (seen[s.slot] ?? 0))) return;
+    const ups = slots.filter(s => s.tierIdx > (seen[s.slot] ?? 0) && rarityRank(s.tier.rarity) >= 3);
+    if (ups.length) setRevealQ(q => [...q, ...ups.filter(s => !q.some(x => x.id === gearCard(s).id)).map(gearCard)]);
+    setState(prev => ({ ...prev, gearSeen: cur }));
+  }, [loaded, state && state.stats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Собранная коллекция предметов лавки: +2 кристалла один раз.
   useEffect(() => {
@@ -6951,6 +7024,9 @@ useEffect(() => {
       `}</style>
 
 
+      {revealQ.length > 0 && (
+        <RevealCeremony key={revealQ[0].id} item={revealQ[0]} extra={revealQ[0].extra} cta={revealQ[0].cta} sound={FEEDBACK_PREFS.sfxOn} onClose={() => { gameFeedback('REWARD_POP'); setRevealQ(q => q.slice(1)); }} />
+      )}
       {achQueue.length > 0 && (
         <AchievementToast key={achQueue[0].id} a={achQueue[0]} sound={(e) => gameFeedback(e)} onDone={() => setAchQueue(q => q.slice(1))} />
       )}
@@ -7081,7 +7157,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'inventory' && (
-                <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} councilGear={(state.council && state.council.grants && state.council.grants.gear) || []} room={state.room} equipRoomSlot={equipRoomSlot} />
+                <InventoryTab stats={state.stats} unlockedSets={state.unlockedSets} councilGear={(state.council && state.council.grants && state.council.grants.gear) || []} room={state.room} equipRoomSlot={equipRoomSlot} relics={normalizeEconomy(state.economy).inventory} />
               )}
               {subTab.profile === 'shop' && (
                 <ShopTab
@@ -8536,7 +8612,7 @@ const LIMITED_MONTHLY = [
   { title: 'Снежный шарф', icon: '🧣', rarity: 'Legendary', theme: 'frost', lore: 'Связан из первого снега года.' },
   { title: 'Сердце из стекла', icon: '💗', rarity: 'Legendary', theme: 'holo', lore: 'Хрупкое снаружи, крепкое внутри.' },
   { title: 'Подснежник', icon: '🌷', rarity: 'Legendary', theme: 'nature', lore: 'Пробивается сквозь лёд — как ты.' },
-  { title: 'Ветер перемен', icon: '🪁', rarity: 'Legendary', theme: 'frost', lore: 'Поднимает того, кто не стоит на месте.' },
+  { title: 'Ветер перемен', icon: '🪁', rarity: 'Legendary', theme: 'storm', lore: 'Поднимает того, кто не стоит на месте.' },
   { title: 'Цветущий урюк', icon: '🌸', rarity: 'Legendary', theme: 'nature', lore: 'Ташкентская весна в кармане.' },
   { title: 'Летнее солнце', icon: '🌞', rarity: 'Legendary', theme: 'gold', lore: 'Длинные дни — длинные серии.' },
   { title: 'Жаркий асфальт', icon: '🔥', rarity: 'Legendary', theme: 'fire', lore: 'Июльская смена на 40 градусах.' },
@@ -8558,13 +8634,14 @@ const SHOP_CHESTS = [
   { id: 'epic', title: 'Эпический', cost: 3, cur: 'crystals', odds: 'эпические предметы' },
 ];
 const FORGE_RATE = 20; // осколков за 1 кристалл
-const COLLECTION_RU = { discipline: 'Дисциплина', focus: 'Фокус', wealth: 'Богатство', warrior: 'Воин', creator: 'Творец', neon: 'Неон', void: 'Пустота', relic: 'Реликвии', other: 'Разное', limited: 'Лимитированные' };
+const COLLECTION_RU = { discipline: 'Дисциплина', focus: 'Фокус', wealth: 'Богатство', warrior: 'Воин', creator: 'Творец', neon: 'Неон', void: 'Пустота', relic: 'Реликвии', ocean: 'Глубины', storm: 'Буря', grove: 'Роща', other: 'Разное', limited: 'Лимитированные' };
 const REWARD_ICONS = ['🎁', '🎮', '🍔', '🎬', '😴', '☕', '🍰', '🛍️', '🎧', '📚', '🏖️', '🍕'];
 
 function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, buyRoomItem, equipRoomSlot, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled, state, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin, ensureDailyShop, forgeFragments }) {
   useShopCss();
   useEffect(() => { if (ensureDailyShop) ensureDailyShop(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [sub, setSub] = useState('showcase');
+  const [viewCard, setViewCard] = useState(null);
   const [title, setTitle] = useState('');
   const [cost, setCost] = useState(150);
   const [icon, setIcon] = useState('🎁');
@@ -8668,13 +8745,13 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr' }}>
             <ItemTile it={lim} big owned={owned.has(lim.id)} afford={afford(lim)}
-              onBuy={() => { buyShopItem(lim); gameFeedback('PURCHASE'); setPrize({ title: lim.title, icon: lim.icon, rarity: lim.rarity, theme: lim.theme, sub: `Лимит · ${lim.limited}` }); }} />
+              onBuy={() => { buyShopItem(lim); gameFeedback('PURCHASE'); setPrize({ title: lim.title, icon: lim.icon, rarity: lim.rarity, theme: lim.theme, lore: lim.lore, sub: `Лимит · ${lim.limited}` }); }} />
           </div>
           <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>Витрина дня</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
             {shop.map((it, i) => (
               <ItemTile key={it.shopId || it.id + i} it={it} big={!!it.featured} owned={owned.has(it.id)} afford={afford(it)}
-                onBuy={() => { buyShopItem(it); gameFeedback('PURCHASE'); setPrize({ title: it.title, icon: it.icon, rarity: it.rarity, theme: it.theme, art: it.id, sub: 'Куплено в лавке' }); }} />
+                onBuy={() => { buyShopItem(it); gameFeedback('PURCHASE'); setPrize({ title: it.title, icon: it.icon, rarity: it.rarity, theme: it.theme, art: it.id, lore: it.lore, sub: 'Куплено в лавке' }); }} />
             ))}
           </div>
           <button className="lrpg-btn" disabled={coins < 50 * Math.pow(2, eco.shopRerolls || 0)} onClick={() => { rerollShopSlot(); gameFeedback('PAGE_TURN'); }} style={{ ...smallBtn(), opacity: coins < 50 * Math.pow(2, eco.shopRerolls || 0) ? .5 : 1 }}>
@@ -8821,7 +8898,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                     const has = owned.has(it.id);
                     const r = RAR[it.rarity] || RAR.Common;
                     return (
-                      <div key={it.id} title={it.title} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div key={it.id} title={it.title} role={has ? 'button' : undefined} tabIndex={has ? 0 : undefined} onClick={has ? () => { gameFeedback('SHEET_OPEN'); setViewCard({ ...it, art: it.id }); } : undefined} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: has ? 'pointer' : 'default' }}>
                         <RarityIcon rarity={it.rarity} theme={it.theme} art={it.id} size={54} locked={!has}>{has ? it.icon : '?'}</RarityIcon>
                         <div style={{ fontSize: 9.5, color: has ? COLORS.text : COLORS.textMuted, lineHeight: 1.15, marginTop: 3 }}>{has ? it.title : r.ru}</div>
                       </div>
@@ -8835,12 +8912,13 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
         </>
       )}
 
+      {viewCard && <CardViewer item={viewCard} onClose={() => setViewCard(null)} />}
       {sub === 'collection' && ownedLimited.length > 0 && (
         <div className="lrpg-paper" style={{ padding: 12 }}>
           <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Лимитированные</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
             {ownedLimited.map(it => (
-              <div key={it.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+              <div key={it.id} role="button" tabIndex={0} onClick={() => { gameFeedback('SHEET_OPEN'); setViewCard(it); }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', cursor: 'pointer' }}>
                 <RarityIcon rarity={it.rarity} theme={it.theme} size={64} limited={it.limited}>{it.icon}</RarityIcon>
                 <div style={{ fontSize: 11, fontWeight: 700, marginTop: 4, lineHeight: 1.15 }}>{it.title}</div>
                 <div className="lrpg-mono" style={{ fontSize: 7.5, color: COLORS.textMuted }}>{it.limited}</div>
@@ -8880,9 +8958,9 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
       {prize && (() => {
         const w = prize.wheelAt && eco.lastWheel && (eco.lastWheel.ts || 0) >= prize.wheelAt && eco.lastWheel.item;
         const shown = w ? { ...prize, title: w.title, icon: w.icon, rarity: w.rarity, theme: w.theme, art: w.id, sub: w.dup ? `Колесо · повтор → осколки` : prize.sub } : prize;
-        return <PrizeModal title={shown.title} icon={shown.icon} rarity={shown.rarity} theme={shown.theme} art={shown.art} sub={shown.sub} onClose={() => setPrize(null)} />;
+        return <PrizeModal title={shown.title} icon={shown.icon} rarity={shown.rarity} theme={shown.theme} art={shown.art} sub={shown.sub} lore={shown.lore} sound={FEEDBACK_PREFS.sfxOn} onClose={() => setPrize(null)} />;
       })()}
-      {chestDone && <PrizeModal key={eco.lastChest.ts} chest={chestAt && SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle) ? SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle).id : 'wood'} title={eco.lastChest.title} icon={eco.lastChest.icon} rarity={eco.lastChest.rarity} theme={eco.lastChest.theme} art={eco.lastChest.id} sub={eco.lastChest.dup ? 'Повтор → +2 осколка' : 'Из сундука'} onClose={() => { setChestAt(null); gameFeedback('REWARD_POP'); }} />}
+      {chestDone && <PrizeModal key={eco.lastChest.ts} chest={chestAt && SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle) ? SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle).id : 'wood'} title={eco.lastChest.title} icon={eco.lastChest.icon} rarity={eco.lastChest.rarity} theme={eco.lastChest.theme} art={eco.lastChest.id} sub={eco.lastChest.dup ? 'Повтор → +2 осколка' : 'Из сундука'} lore={(RPG_ITEM_POOL.find(i => i.id === eco.lastChest.id) || {}).lore} sound={FEEDBACK_PREFS.sfxOn} onClose={() => { setChestAt(null); gameFeedback('REWARD_POP'); }} />}
     </div>
   );
 }
@@ -11541,6 +11619,7 @@ function TelegramDiagnosticsCard() {
 }
 
 const WHATS_NEW = [
+  { v: '17.0', t: 'Раскрытие как у мифических скинов: свой сценарий и музыка у каждой темы, живые таблички титулов, снаряжение со стихиями и мифическим V уровнем, 6 новых мифов и 10 легендарок' },
   { v: '16.9', t: 'Нарисованные анимированные легендарки и мифические Драконьи доспехи, рамки «Подводный мир» и «Драконья оправа», ауры героя — в профиле и в комнате' },
   { v: '16.8', t: 'Редкость по-настоящему: от простой рамки до золотых и мифических карточек с частицами; лимитки месяца и лимитированные достижения' },
   { v: '16.7', t: 'Живая Главная: доска дня с шагами прямо с главной, герой говорит по тапу, записка от Кайлена' },
@@ -12240,9 +12319,11 @@ function CalendarTab({ playLog, firstOpenedAt }) {
   );
 }
 
-function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSlot }) {
+function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSlot, relics = [] }) {
   useProfileCss();
   const [slot, setSlot] = useState(null);
+  const [card, setCard] = useState(null);
+  const relicList = [...relics].sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity));
   const slots = equipmentSlotsView(stats);
   const r = normalizeRoom(room);
   return (
@@ -12252,7 +12333,7 @@ function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSl
         <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Инвентарь</div>
       </div>
       <div className="lrpg-paper" style={{ padding: 12 }}>
-        <HeroPaperDoll slots={slots} active={slot} onSlot={(k) => { gameFeedback('BUTTON_PRESS'); setSlot(k); }} />
+        <HeroPaperDoll slots={slots} active={slot} onSlot={(k) => { gameFeedback('BUTTON_PRESS'); setSlot(k); }} onInspect={(s) => { gameFeedback('SHEET_OPEN'); setCard(gearCard(s)); }} />
         <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
           {EQUIPMENT_TIERS.map(t => (
             <span key={t.roman} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: COLORS.textMuted }}>
@@ -12261,6 +12342,24 @@ function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSl
           ))}
         </div>
       </div>
+
+      {relicList.length > 0 && (
+        <div className="lrpg-paper" style={{ padding: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+            <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Реликвии</span>
+            <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>тапни, чтобы рассмотреть</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
+            {relicList.map(it => (
+              <div key={it.id} role="button" tabIndex={0} onClick={() => { gameFeedback('SHEET_OPEN'); setCard({ ...it, art: it.id }); }} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', cursor: 'pointer' }}>
+                <RarityIcon rarity={it.rarity} theme={it.theme} art={it.id} size={56} limited={it.limited}>{it.icon}</RarityIcon>
+                <div style={{ fontSize: 10, lineHeight: 1.15, marginTop: 3 }}>{it.title}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {card && <CardViewer item={card} onClose={() => setCard(null)} />}
 
       <div>
         <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Комплекты</div>

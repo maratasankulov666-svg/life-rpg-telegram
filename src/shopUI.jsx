@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { PAPER } from './actionsUI.jsx';
 import { NpcPortrait } from './councilUI.jsx';
 import { RarityCard, RarityLabel, RarityBurst, RarityIcon, rarityRank, RARITY_META } from './rarityFX.jsx';
+import { RevealCeremony } from './revealFX.jsx';
 
 const FONT = "'Manrope', system-ui, -apple-system, sans-serif";
 export const RAR = {
@@ -178,11 +179,13 @@ export function ReceiptModal({ reward, coinsLeft, onClose, sound }) {
 }
 
 /** Окно приза (колесо/сундук). */
-export function PrizeModal({ title, icon, rarity, sub, onClose, chest, theme, art }) {
+export function PrizeModal({ title, icon, rarity, sub, onClose, chest, theme, art, lore, sound = true }) {
   useShopCss();
   const r = RAR[rarity] || RAR.Rare;
   const [phase, setPhase] = useState(chest ? 'shake' : 'open');
   useEffect(() => { if (!chest) return undefined; const t = setTimeout(() => setPhase('open'), 900); return () => clearTimeout(t); }, [chest]);
+  // Раскрытие — общая церемония: у легендарных и мифических свой сценарий темы и музыка.
+  if (phase === 'open') return <RevealCeremony item={{ title, icon, rarity: rarity || 'Rare', theme, art, sub, lore }} sound={sound} onClose={onClose} />;
   const view = (
     <div role="dialog" aria-label="Приз" onClick={phase === 'open' ? onClose : undefined} style={{ position: 'fixed', inset: 0, zIndex: 215, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: FONT, overflow: 'hidden' }}>
       <div className="ag-scrim" style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 45%, #3d3a5a 0%, #1e2230 62%, #12141c 100%)' }} />
