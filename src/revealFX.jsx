@@ -3,7 +3,7 @@
 // и звуковой движок раскрытия (revealSfx). У каждой темы — своя рамка, крылья, герб, частицы, сценарий и музыка.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ItemArt, hasItemArt } from './artFX.jsx';
+import { ItemArt, hasItemArt, AvatarFrame, AuraArt, AuraGroup, FRAME_ART, AURA_ART } from './artFX.jsx';
 import { RarityIcon, RarityLabel, rarityRank, rarityMeta } from './rarityFX.jsx';
 
 // ---------- Темы ----------
@@ -47,6 +47,14 @@ const CSS = `
 @keyframes rvFlickT { 0%, 100% { opacity: 1; } 42% { opacity: .82; } 44% { opacity: 1; } 71% { opacity: .9; } }
 @keyframes rvZap { 0%, 100% { opacity: 1; } 8% { opacity: .5; } 10% { opacity: 1; } 52% { opacity: .7; } 53% { opacity: 1; } }
 @keyframes rvPupil { 50% { transform: scaleX(.4); } }
+@keyframes rvUp { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(-70px); opacity: 0; } }
+@keyframes rvDown { 0% { transform: translate(0, -10px); opacity: 0; } 15% { opacity: 1; } 50% { transform: translate(6px, 40px); } 100% { transform: translate(-4px, 90px); opacity: 0; } }
+@keyframes rvDrift { from { transform: translateX(0); } to { transform: translateX(-20px); } }
+.rv-up { animation: rvUp 3s ease-out infinite; }
+.rv-down { animation: rvDown 4.2s linear infinite; }
+.rv-tile { position: relative; overflow: hidden; border-radius: 14px; color: #f4efe6; isolation: isolate; }
+.rv-tile canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.rv-tile-rays { position: absolute; left: 22%; top: 50%; width: 360px; height: 360px; margin: -180px 0 0 -180px; border-radius: 50%; z-index: 0; pointer-events: none; opacity: .5; -webkit-mask: radial-gradient(circle, #000 8%, transparent 55%); mask: radial-gradient(circle, #000 8%, transparent 55%); animation: rvSpin 30s linear infinite; }
 .rv-spin { animation: rvSpin 22s linear infinite; transform-box: fill-box; transform-origin: center; }
 .rv-spinrev { animation: rvSpin 14s linear infinite reverse; transform-box: fill-box; transform-origin: center; }
 .rv-pulse { animation: rvPulse 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
@@ -887,4 +895,127 @@ export function CardViewer({ item, onClose }) {
     </div>
   );
   return typeof document !== 'undefined' ? createPortal(view, document.body) : view;
+}
+
+
+// ---------- Тематические рамки и ауры (косметика) ----------
+export const THEMED_FRAMES = { frame_holy: ['gold', 'Legendary'], frame_frost: ['frost', 'Legendary'], frame_grove: ['nature', 'Legendary'], frame_storm: ['storm', 'Mythic'], frame_cosmos: ['holo', 'Mythic'] };
+export const THEMED_AURAS = { aura_ocean: ['ocean', 'Legendary'], aura_frost: ['frost', 'Legendary'], aura_bloom: ['nature', 'Legendary'], aura_holy: ['gold', 'Legendary'], aura_storm: ['storm', 'Mythic'], aura_cosmos: ['holo', 'Mythic'] };
+/** Тема существующих нарисованных вещей — для премиальных плиток и карт. */
+export const COSMETIC_THEME = { frame_ocean: 'ocean', frame_dragon: 'fire', aura_fire: 'fire', aura_void: 'void', aura_dragon: 'fire', ...Object.fromEntries([...Object.entries(THEMED_FRAMES), ...Object.entries(THEMED_AURAS)].map(([k, [t]]) => [k, t])) };
+
+function frameRing(fam, ids, myth) {
+  const w = fam.wing === 'bat' ? wings(fam, ids, 50, 24, 44, 30) : wings(fam, ids, 50, 24, 46, 28, { n: 5, a0: -40, step: 15 });
+  return `<defs>${baseDefs(fam, ids)}<filter id="${ids}bb" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5"/></filter></defs>
+    <circle cx="50" cy="50" r="40" fill="${fam.c1}" opacity=".35" filter="url(#${ids}bb)" class="rv-pulse"/>
+    <g class="${fam.holo ? 'rv-hue' : ''}">${w}
+      <circle cx="50" cy="50" r="33" fill="none" stroke="url(#${ids}mg)" stroke-width="6"/>
+      <circle cx="50" cy="50" r="29.5" fill="none" stroke="${fam.line}" stroke-opacity=".7" stroke-width=".8"/>
+      <circle cx="50" cy="50" r="36.5" fill="none" stroke="url(#${ids}mg)" stroke-width="1.2" stroke-dasharray="2 3"/>
+      <circle cx="50" cy="50" r="33" fill="none" stroke="${fam.line}" stroke-width="2.4" stroke-dasharray="22 186" class="rv-run" filter="url(#${ids}gl)"/>
+      ${[[17, 50], [83, 50]].map(([x, y]) => `<path d="M${x} ${y - 6} L${x + 4} ${y} L${x} ${y + 6} L${x - 4} ${y} Z" fill="url(#${ids}mg)"/><circle cx="${x}" cy="${y}" r="2.2" fill="url(#${ids}gem)" class="rv-pulse"/>`).join('')}
+      <path d="M50 80 L55 86 L50 92 L45 86 Z" fill="url(#${ids}mg)"/><circle cx="50" cy="86" r="2.4" fill="url(#${ids}gem)" class="rv-pulse"/>
+      <g transform="translate(50 ${fam.crest === 'halo' || fam.crest === 'crown' ? 19 : 15}) scale(.42)">${crest(fam, ids)}</g>
+    </g>
+    ${myth ? `<g>${[0, 1, 2].map(i => `<circle r="${2.2 - i * .5}" fill="${fam.pal[i] || '#fff'}" style="filter:drop-shadow(0 0 2px ${fam.c1})"><animateMotion dur="3.2s" begin="-${(i * .12).toFixed(2)}s" repeatCount="indefinite" path="M50 6 A44 44 0 1 1 49.9 6"/></circle>`).join('')}</g>` : ''}
+    ${[[10, 20], [90, 22], [8, 78], [92, 80], [30, 4], [70, 96]].map(([x, y], k) => spark(x, y, 2.6, fam.c1, k)).join('')}`;
+}
+/** Рамка аватара в стиле темы (для новых рамок). */
+export function ThemedFrame({ theme, rarity = 'Legendary', size = 72, children }) {
+  useRevealCss();
+  const ids = useUid(), fam = familyOf(theme, rarity);
+  return (
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <div style={{ position: 'absolute', inset: '21%', borderRadius: '50%', overflow: 'hidden', background: '#1e2230', boxShadow: `0 0 0 2px ${fam.c2}` }}>{children}</div>
+      <svg viewBox="0 0 100 100" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }} dangerouslySetInnerHTML={{ __html: frameRing(fam, ids, rarity === 'Mythic') }} />
+    </div>
+  );
+}
+
+function auraSVG(fam, ids, myth) {
+  const k = fam.sound, P = fam.pal;
+  const up = (n, shape) => Array.from({ length: n }, (_, i) => `<g class="rv-up" style="animation-delay:-${(i * .41).toFixed(2)}s;animation-duration:${(2.6 + (i % 4) * .5).toFixed(1)}s"><g transform="translate(${18 + (i * 37) % 64} ${150 - (i % 5) * 8})">${shape(i)}</g></g>`).join('');
+  const down = (n, shape) => Array.from({ length: n }, (_, i) => `<g class="rv-down" style="animation-delay:-${(i * .53).toFixed(2)}s"><g transform="translate(${14 + (i * 41) % 72} ${20 + (i % 4) * 10})">${shape(i)}</g></g>`).join('');
+  let fx = '';
+  if (k === 'holy') fx = `<g class="rv-spin" style="transform-origin:50px 70px;transform-box:view-box">${Array.from({ length: 12 }, (_, i) => `<path d="M50 70 L48.5 0 L51.5 0 Z" fill="${fam.c3}" opacity=".3" transform="rotate(${i * 30} 50 70)"/>`).join('')}</g>${down(8, (i) => `<ellipse rx="3.2" ry="1" fill="#fff4d2" transform="rotate(${i * 40})"/>`)}${up(8, (i) => `<path d="M0 -2 L.6 0 L0 2 L-.6 0 Z M-2 0 L2 0" stroke="${P[i % 3]}" stroke-width=".6" fill="${P[i % 3]}"/>`)}`;
+  else if (k === 'frost') fx = `${down(12, (i) => `<g stroke="#fff" stroke-width=".7" stroke-linecap="round" transform="scale(${(.7 + (i % 3) * .3).toFixed(1)})">${[0, 60, 120].map(a => `<path d="M-3 0 L3 0" transform="rotate(${a})"/>`).join('')}</g>`)}<g class="rv-spin" style="transform-origin:50px 95px;transform-box:view-box">${Array.from({ length: 8 }, (_, i) => `<path d="M50 ${46} l2 5 l-2 5 l-2 -5 Z" fill="#e8fbff" stroke="${fam.c1}" stroke-width=".4" opacity=".85" transform="rotate(${i * 45} 50 95)"/>`).join('')}</g>`;
+  else if (k === 'ocean') fx = `${up(12, (i) => `<circle r="${(1.4 + (i % 3) * .8).toFixed(1)}" fill="none" stroke="${P[i % 3]}" stroke-width=".7"/><circle cx="-.5" cy="-.5" r=".4" fill="#fff"/>`)}<g><path d="M-10 150 q6 -5 12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0" fill="none" stroke="${fam.c3}" stroke-width="1.6" opacity=".8"><animateTransform attributeName="transform" type="translate" values="0 0;-12 0" dur="1.4s" repeatCount="indefinite"/></path><path d="M-10 156 q6 -4 12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0" fill="none" stroke="${fam.c1}" stroke-width="1.2" opacity=".6"><animateTransform attributeName="transform" type="translate" values="-12 0;0 0" dur="2s" repeatCount="indefinite"/></path></g>`;
+  else if (k === 'storm') fx = `<g fill="#3a4468" stroke="${fam.c1}" stroke-width=".8" opacity=".85"><circle cx="38" cy="10" r="9"/><circle cx="52" cy="6" r="11"/><circle cx="64" cy="11" r="8"/><rect x="30" y="10" width="42" height="8" rx="4"/></g>${[[30, 14, 0], [66, 16, -.8], [50, 18, -1.5], [20, 60, -.4], [80, 70, -1.2]].map(([x, y, dl]) => `<path d="M${x} ${y} l-5 14 l5 0 l-4 14" stroke="#fff" stroke-width="1.3" fill="none" class="rv-zap" style="animation-delay:${dl}s;filter:drop-shadow(0 0 2px ${fam.c3})"/>`).join('')}${up(8, (i) => `<path d="M0 -2 L.6 0 L0 2 L-.6 0 Z" fill="${i % 2 ? fam.c3 : '#fff'}"/>`)}`;
+  else if (k === 'nature') fx = `${up(12, (i) => `<ellipse rx="2.6" ry="1.2" fill="${P[i % P.length]}" transform="rotate(${i * 35})"/>`)}<path d="M18 156 q8 -14 4 -26 M82 156 q-8 -14 -4 -26 M30 158 q2 -8 -4 -14 M70 158 q-2 -8 4 -14" stroke="#4a8a3a" stroke-width="1.4" fill="none"/>${[[22, 130], [78, 130], [26, 144], [74, 144]].map(([x, y], i) => `<ellipse cx="${x}" cy="${y}" rx="3.4" ry="1.6" fill="${fam.c1}" class="rv-pulse" style="animation-delay:-${i * .4}s" transform="rotate(${i % 2 ? 40 : -40} ${x} ${y})"/>`).join('')}`;
+  else if (k === 'cosmos') fx = `${Array.from({ length: 16 }, (_, i) => `<path d="M${10 + (i * 47) % 80} ${10 + (i * 29) % 140} m0 -2 l.6 2 l-.6 2 l-.6 -2 Z" fill="${P[i % P.length]}" class="rv-eye" style="animation-delay:-${(i * .3).toFixed(1)}s"/>`).join('')}${[[0, 3, P[4] || '#ffd86a'], [-2.4, 2.2, P[3] || '#9ae8ff']].map(([b, r, c]) => `<circle r="${r}" fill="${c}"><animateMotion dur="5s" begin="${b}s" repeatCount="indefinite" path="M8 90 A42 12 0 1 0 92 90 A42 12 0 1 0 8 90"/></circle>`).join('')}`;
+  else fx = `${Array.from({ length: 9 }, (_, i) => `<path d="M${22 + i * 7} 152 q-3 -10 0 -${16 + (i % 3) * 7} q3 10 0 ${16 + (i % 3) * 7} Z" fill="${i % 2 ? '#ffcf5a' : '#ff6a1a'}" class="rv-flick" style="animation-delay:-${(i * .13).toFixed(2)}s;animation-duration:${(.5 + (i % 3) * .15).toFixed(2)}s"/>`).join('')}${up(10, (i) => `<circle r="1.2" fill="${P[i % P.length]}"/>`)}`;
+  return `<defs><radialGradient id="${ids}ag"><stop offset="0" stop-color="${fam.c1}" stop-opacity=".55"/><stop offset=".6" stop-color="${fam.c1}" stop-opacity=".15"/><stop offset="1" stop-color="${fam.c1}" stop-opacity="0"/></radialGradient></defs>
+    <ellipse cx="50" cy="88" rx="38" ry="72" fill="url(#${ids}ag)" class="rv-pulse"/>
+    <ellipse cx="50" cy="152" rx="30" ry="5" fill="${fam.c1}" opacity=".35"/>
+    <ellipse cx="50" cy="152" rx="38" ry="7" fill="none" stroke="${fam.c1}" stroke-width="1.4" stroke-dasharray="6 4"><animate attributeName="stroke-dashoffset" values="0;-40" dur="3s" repeatCount="indefinite"/></ellipse>
+    ${fx}
+    ${myth ? `<ellipse cx="50" cy="90" rx="44" ry="12" fill="none" stroke="${fam.c3}" stroke-opacity=".5" stroke-width=".8" transform="rotate(-8 50 90)"/><g transform="rotate(-8 50 90)">${[0, 1, 2, 3].map(i => `<circle r="${(3 - i * .6).toFixed(1)}" fill="${i ? fam.pal[i % fam.pal.length] : '#fff'}" opacity="${(1 - i * .2).toFixed(1)}" style="filter:drop-shadow(0 0 2px ${fam.c1})"><animateMotion dur="3s" begin="-${(i * .1).toFixed(2)}s" repeatCount="indefinite" path="M6 90 A44 12 0 1 0 94 90 A44 12 0 1 0 6 90"/></circle>`).join('')}</g>` : ''}`;
+}
+/** Аура темы как SVG-группа в координатах 0..100×0..160 (для комнаты и превью). */
+export function ThemedAuraGroup({ theme, rarity }) {
+  useRevealCss();
+  const ids = useUid(), fam = familyOf(theme, rarity);
+  return <g dangerouslySetInnerHTML={{ __html: auraSVG(fam, ids, rarity === 'Mythic') }} />;
+}
+export function AnyAuraGroup({ id }) {
+  const t = THEMED_AURAS[id];
+  return t ? <ThemedAuraGroup theme={t[0]} rarity={t[1]} /> : AURA_ART[id] ? <AuraGroup id={id} /> : null;
+}
+export function AnyAuraArt({ id, width = 100, height = 160, style }) {
+  const t = THEMED_AURAS[id];
+  if (!t) return <AuraArt id={id} width={width} height={height} style={style} />;
+  return <svg viewBox="0 0 100 160" width={width} height={height} aria-hidden="true" style={{ overflow: 'visible', display: 'block', ...style }}><ThemedAuraGroup theme={t[0]} rarity={t[1]} /></svg>;
+}
+export function AnyFrame({ id, size = 64, children }) {
+  const t = THEMED_FRAMES[id];
+  return t ? <ThemedFrame theme={t[0]} rarity={t[1]} size={size}>{children}</ThemedFrame> : <AvatarFrame id={id} size={size}>{children}</AvatarFrame>;
+}
+export const isBigFrame = (id) => !!THEMED_FRAMES[id] || id === 'frame_ocean' || id === 'frame_dragon';
+
+// ---------- Премиальная плитка витрины ----------
+/**
+ * Плитка легендарной/мифической вещи в лавке: тёмная сцена темы, живые частицы, лучи, превью, перелив имени.
+ * preview — что показать слева; card — предмет для полноэкранного просмотра по тапу на превью.
+ */
+export function PremiumTile({ rarity = 'Legendary', theme, title, desc, preview, price, owned, on, can = true, onBuy, onEquip, card, limited, badge }) {
+  useRevealCss();
+  const fam = familyOf(theme, rarity), myth = rarity === 'Mythic';
+  const cv = useRef(null);
+  const [view, setView] = useState(false);
+  useParticles(cv, fam, { mode: 'ambient', density: .45 });
+  const btn = owned
+    ? (onEquip ? { label: on ? 'Надето' : 'Надеть', act: onEquip, bg: on ? 'rgba(255,255,255,.14)' : `linear-gradient(180deg, #fff, ${fam.c1})`, ink: on ? '#f4efe6' : '#120c04' } : { label: 'Уже в коллекции', act: null, bg: 'rgba(255,255,255,.1)', ink: 'rgba(244,239,230,.6)' })
+    : { label: price, act: can ? onBuy : null, bg: can ? `linear-gradient(180deg, #fff, ${fam.c1})` : 'rgba(255,255,255,.1)', ink: can ? '#120c04' : 'rgba(244,239,230,.55)' };
+  return (
+    <div className="rv-tile" style={{ gridColumn: '1 / -1', background: fam.bg, boxShadow: `0 0 0 1.5px ${fam.c1}, 0 0 22px -4px ${fam.c1}, inset 0 0 40px rgba(0,0,0,.5)`, outline: on ? `2px solid ${fam.c3}` : 'none', outlineOffset: 2 }}>
+      <canvas ref={cv} />
+      <div className="rv-tile-rays" style={{ background: `repeating-conic-gradient(from 0deg, ${fam.rays} 0 3deg, transparent 3deg 12deg)` }} />
+      {fam.holo && <div className="rv-holo" style={{ zIndex: 0, opacity: .3 }} />}
+      <div className="rv-sheen" style={{ zIndex: 0 }} />
+      <div style={{ position: 'relative', zIndex: 1, display: 'flex', gap: 12, alignItems: 'center', padding: 12 }}>
+        <button type="button" className="lrpg-btn" onClick={() => card && setView(true)} aria-label={`Рассмотреть: ${title}`} style={{ width: 118, minHeight: 124, flexShrink: 0, background: 'none', border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: card ? 'pointer' : 'default' }}>{preview}</button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <RarityLabel rarity={rarity} size={8.5} dark />
+            <span className="lrpg-mono" style={{ fontSize: 8, color: fam.c3, letterSpacing: '.1em' }}>· {fam.ru}</span>
+            {(limited || badge) && <span className="lrpg-mono" style={{ fontSize: 7.5, background: fam.c1, color: '#120c04', borderRadius: 4, padding: '1px 5px' }}>{limited ? `лимит · ${limited}` : badge}</span>}
+          </div>
+          <div className={'rv-ink-' + fam.ink} style={{ fontFamily: "'Cormorant SC', 'Fraunces', Georgia, serif", fontSize: myth ? 22 : 20, fontWeight: 700, lineHeight: 1.1, marginTop: 3 }}>{title}</div>
+          {desc && <div style={{ fontSize: 11.5, color: 'rgba(244,239,230,.78)', marginTop: 3, lineHeight: 1.35, fontStyle: 'italic' }}>{desc}</div>}
+          <button type="button" className="lrpg-btn" disabled={!btn.act} onClick={btn.act || undefined} style={{ marginTop: 9, width: '100%', minHeight: 38, borderRadius: 10, border: 'none', background: btn.bg, color: btn.ink, fontSize: 13.5, fontWeight: 800, boxShadow: btn.act && !on ? `0 0 16px ${fam.c1}88` : 'none', fontFamily: 'inherit' }}>{btn.label}</button>
+        </div>
+      </div>
+      {view && card && <CardViewer item={card} onClose={() => setView(false)} />}
+    </div>
+  );
+}
+/** Превью предмета для плитки: нарисованная вещь или крупный значок в ореоле. */
+export function ItemPreview({ art, icon, theme, rarity, size = 96 }) {
+  const fam = familyOf(theme, rarity);
+  return (
+    <span className="rv-float" style={{ position: 'relative', width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <span style={{ position: 'absolute', inset: '8%', borderRadius: '50%', background: `radial-gradient(circle, ${fam.c1}aa, transparent 68%)` }} />
+      <span style={{ position: 'relative' }}><ArtCenter art={art} icon={icon} size={size * .9} /></span>
+    </span>
+  );
 }

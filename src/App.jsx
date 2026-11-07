@@ -139,9 +139,10 @@ import { DayScale, ActivityHeatmap, WeekBalance, useLifeCss } from './lifeUI.jsx
 import { SaveCrystal, Toggle, HoldButton, SettingsSection, useSettingsCss } from './settingsUI.jsx';
 import { DayBoard, HeroBubble, MentorNote, useHomeCss } from './homeUI.jsx';
 import { RarityCard, RarityLabel, RarityIcon, RarityBurst, rarityRank, rarityMeta, RARITY_META } from './rarityFX.jsx';
-import { RevealCeremony, CardViewer, TitlePlate } from './revealFX.jsx';
+import { RevealCeremony, CardViewer, TitlePlate, PremiumTile, AnyFrame, AnyAuraArt, AnyAuraGroup, COSMETIC_THEME, isBigFrame } from './revealFX.jsx';
+import { gearFromSlots } from './heroGearFX.jsx';
 import { AvatarFrame, AuraArt, AuraGroup, ItemArt } from './artFX.jsx';
-import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
+import { HeroPaperDoll, HeroSprite, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
@@ -240,7 +241,9 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       на орбите; церемонии раскрытия со своим сценарием и музыкой у семи тем (небо, космос, дракон, глубины,
 //       лёд, роща/осень, буря); живые таблички титулов; снаряжение со стихиями и мифическим V уровнем;
 //       новые легендарные и мифические предметы и достижения.
-const APP_VERSION = '17.0';
+// 17.1 — снаряжение видно на герое (профиль и комната): стихия и облик растут по уровням I–V; премиальные
+//       плитки лавки для легендарок и мифов; новые тематические рамки (5) и ауры (6).
+const APP_VERSION = '17.1';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -1181,6 +1184,17 @@ const COSMETIC_CATALOG = [
   { id: 'aura_fire', name: 'Аура: Пламя феникса', type: 'aura', cost: 3000, rarity: 'Legendary', preview: '🔥' },
   { id: 'aura_void', name: 'Аура: Пустота', type: 'aura', cost: 3000, rarity: 'Legendary', preview: '🌌' },
   { id: 'aura_dragon', name: 'Аура: Дыхание дракона', type: 'aura', cost: 7500, rarity: 'Mythic', preview: '🐉' },
+  { id: 'frame_holy', name: 'Венец рассвета', type: 'frame', cost: 3500, rarity: 'Legendary', preview: '☀️' },
+  { id: 'frame_frost', name: 'Ледяной ореол', type: 'frame', cost: 3500, rarity: 'Legendary', preview: '❄️' },
+  { id: 'frame_grove', name: 'Венок рощи', type: 'frame', cost: 3500, rarity: 'Legendary', preview: '🌿' },
+  { id: 'frame_storm', name: 'Око бури', type: 'frame', cost: 8000, rarity: 'Mythic', preview: '⚡' },
+  { id: 'frame_cosmos', name: 'Звёздный ореол', type: 'frame', cost: 8000, rarity: 'Mythic', preview: '🌌' },
+  { id: 'aura_ocean', name: 'Аура: Глубины', type: 'aura', cost: 3000, rarity: 'Legendary', preview: '🫧' },
+  { id: 'aura_frost', name: 'Аура: Вьюга', type: 'aura', cost: 3000, rarity: 'Legendary', preview: '❄️' },
+  { id: 'aura_bloom', name: 'Аура: Цветение', type: 'aura', cost: 3000, rarity: 'Legendary', preview: '🌸' },
+  { id: 'aura_holy', name: 'Аура: Сияние', type: 'aura', cost: 3000, rarity: 'Legendary', preview: '☀️' },
+  { id: 'aura_storm', name: 'Аура: Гроза', type: 'aura', cost: 7500, rarity: 'Mythic', preview: '⚡' },
+  { id: 'aura_cosmos', name: 'Аура: Млечный путь', type: 'aura', cost: 7500, rarity: 'Mythic', preview: '🌌' },
   { id: 'title_adventurer', name: 'Титул: Авантюрист', type: 'title', cost: 300, rarity: 'Common', preview: 'Авантюрист' },
   { id: 'title_legend', name: 'Титул: Легенда', type: 'title', cost: 1000, rarity: 'Rare', preview: 'Легенда' },
   { id: 'bg_dusk', name: 'Фон: Сумерки', type: 'background', cost: 500, rarity: 'Common', preview: '🌆' },
@@ -4729,9 +4743,9 @@ function ProfileHub({
       <div className="lrpg-paper lrpg-stagger" style={{ padding: 12, marginBottom: 12, background: (COSMETIC_LOOK[cos.background] || {}).bg || 'linear-gradient(#fbf9f4, #f3eee3)', color: (COSMETIC_LOOK[cos.background] || {}).ink || undefined }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <button className="lrpg-btn" onClick={() => fileRef.current && fileRef.current.click()} aria-label="Сменить фото" style={{ background: 'none', padding: 0, flexShrink: 0 }}>
-            <AvatarFrame id={cos.frame} size={cos.frame === 'frame_ocean' || cos.frame === 'frame_dragon' ? 72 : 52}>
+            <AnyFrame id={cos.frame} size={isBigFrame(cos.frame) ? 72 : 52}>
               {ch.photo ? <img src={ch.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : <span style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Camera size={18} color={COLORS.textMuted} /></span>}
-            </AvatarFrame>
+            </AnyFrame>
           </button>
           <input ref={fileRef} type="file" accept="image/*" onChange={onPhoto} style={{ display: 'none' }} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -8096,7 +8110,7 @@ function HomeTab({ state, editingName, setEditingName, setCharacterName, setChar
       background: '#d8cdb8',
     }}>
       <div ref={sceneRef} style={{ position: 'absolute', inset: 0, transform: `translateY(${-sceneShift}px)`, transition: 'transform .55s cubic-bezier(.16,1,.3,1)' }}>
-        <PixelRoomScene aura={state.cosmetics && state.cosmetics.equipped && state.cosmetics.equipped.aura ? <AuraGroup id={state.cosmetics.equipped.aura} /> : null} room={state.room} tier={tier} heightScale={hScale} time={time} weather={weather} still={!!FEEDBACK_PREFS.batterySaver} highlight={roomOpen ? roomSlot : null} />
+        <PixelRoomScene gear={gearFromSlots(equipmentSlotsView(state.stats))} aura={state.cosmetics && state.cosmetics.equipped && state.cosmetics.equipped.aura ? <AnyAuraGroup id={state.cosmetics.equipped.aura} /> : null} room={state.room} tier={tier} heightScale={hScale} time={time} weather={weather} still={!!FEEDBACK_PREFS.batterySaver} highlight={roomOpen ? roomSlot : null} />
       </div>
 
       <div style={{
@@ -8642,6 +8656,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
   useEffect(() => { if (ensureDailyShop) ensureDailyShop(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [sub, setSub] = useState('showcase');
   const [viewCard, setViewCard] = useState(null);
+  const gear = gearFromSlots(equipmentSlotsView(state.stats));
   const [title, setTitle] = useState('');
   const [cost, setCost] = useState(150);
   const [icon, setIcon] = useState('🎁');
@@ -8851,11 +8866,26 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                     const on = cosmetics.equipped[item.type] === item.id;
                     const r = RAR[item.rarity] || RAR.Common;
                     const look = COSMETIC_LOOK[item.id] || {};
+                    if (rarityRank(item.rarity) >= 3 && (type === 'frame' || type === 'aura')) {
+                      const photo = state.character.photo ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span className="lrpg-display" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: '#f6d08a' }}>{(state.character.name || 'Г').slice(0, 1)}</span>;
+                      const prev = (h) => type === 'frame' ? <AnyFrame id={item.id} size={h * .8}>{photo}</AnyFrame> : (
+                        <span style={{ position: 'relative', width: h * .625, height: h, display: 'block' }}>
+                          <AnyAuraArt id={item.id} width={h * .625} height={h} style={{ position: 'absolute', left: 0, bottom: 0 }} />
+                          <span style={{ position: 'absolute', left: '50%', bottom: h * .04, transform: 'translateX(-50%)' }}><HeroSprite gear={gear} height={h * .72} /></span>
+                        </span>);
+                      return (
+                        <PremiumTile key={item.id} rarity={item.rarity} theme={COSMETIC_THEME[item.id]} title={item.name.replace(/^Аура: /, '')}
+                          desc={type === 'frame' ? 'Рамка фото в карточке героя' : 'Аура вокруг героя — в профиле и в комнате'}
+                          preview={prev(130)} price={`${item.cost} монет`} owned={has} on={on} can={coins >= item.cost}
+                          onBuy={() => { buyCosmetic(item); gameFeedback('PURCHASE'); }} onEquip={() => { equipCosmetic(item.type, on ? null : item.id); gameFeedback('ITEM_PLACE'); }}
+                          card={{ title: item.name.replace(/^Аура: /, ''), rarity: item.rarity, theme: COSMETIC_THEME[item.id], node: prev(type === 'frame' ? 100 : 120), effect: type === 'frame' ? 'Рамка фото' : 'Аура героя' }} />
+                      );
+                    }
                     return (
                       <RarityCard key={item.id} rarity={item.rarity} radius={12} style={{ outline: on ? `2px solid ${COLORS.text}` : 'none', outlineOffset: 2 }}><div style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <div style={{ height: type === 'frame' || type === 'aura' ? 108 : 46, borderRadius: 8, background: type === 'aura' ? 'linear-gradient(#efe6d2, #d8cdb8)' : look.bg || COLORS.bgCardAlt, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
-                          {type === 'frame' && <AvatarFrame id={item.id} size={80}>{state.character.photo ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span className="lrpg-display" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: COLORS.gold }}>{(state.character.name || 'Г').slice(0, 1)}</span>}</AvatarFrame>}
-                          {type === 'aura' && <span style={{ position: 'relative', width: 70, height: 104 }}><AuraArt id={item.id} width={70} height={104} style={{ position: 'absolute', inset: 0 }} /><svg viewBox="0 0 18 53" height="64" style={{ position: 'absolute', left: 24, bottom: 6 }} aria-hidden="true"><rect x="4" y="3" width="10" height="7" fill="#e8b896" /><rect x="3" y="1" width="12" height="3" fill="#1e1a1a" /><rect x="2" y="13" width="14" height="15" fill="#1e2230" /><rect x="4" y="28" width="10" height="20" fill="#2b2f3e" /><rect x="3" y="48" width="12" height="4" fill="#f2eee5" /></svg></span>}
+                          {type === 'frame' && <AnyFrame id={item.id} size={80}>{state.character.photo ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span className="lrpg-display" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: COLORS.gold }}>{(state.character.name || 'Г').slice(0, 1)}</span>}</AnyFrame>}
+                          {type === 'aura' && <span style={{ position: 'relative', width: 66, height: 104 }}><AnyAuraArt id={item.id} width={66} height={104} style={{ position: 'absolute', inset: 0 }} /><span style={{ position: 'absolute', left: '50%', bottom: 4, transform: 'translateX(-50%)' }}><HeroSprite gear={gear} height={74} /></span></span>}
                           {type === 'nameColor' && <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: look.color }}>Герой</span>}
                           {type === 'title' && <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.gold, border: `1px dashed ${COLORS.gold}`, borderRadius: 99, padding: '2px 8px' }}>«{item.preview}»</span>}
                           {type === 'background' && <span style={{ fontSize: 11, fontWeight: 700, color: look.ink || COLORS.text }}>карточка</span>}
@@ -11619,6 +11649,7 @@ function TelegramDiagnosticsCard() {
 }
 
 const WHATS_NEW = [
+  { v: '17.1', t: 'Герой носит своё снаряжение: от деревянного меча до драконьего клинка и парящей короны. В лавке легендарки и мифы — живые сцены, 5 новых рамок и 6 новых аур' },
   { v: '17.0', t: 'Раскрытие как у мифических скинов: свой сценарий и музыка у каждой темы, живые таблички титулов, снаряжение со стихиями и мифическим V уровнем, 6 новых мифов и 10 легендарок' },
   { v: '16.9', t: 'Нарисованные анимированные легендарки и мифические Драконьи доспехи, рамки «Подводный мир» и «Драконья оправа», ауры героя — в профиле и в комнате' },
   { v: '16.8', t: 'Редкость по-настоящему: от простой рамки до золотых и мифических карточек с частицами; лимитки месяца и лимитированные достижения' },

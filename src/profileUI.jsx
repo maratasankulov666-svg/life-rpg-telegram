@@ -4,8 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PAPER, PixelIcon } from './actionsUI.jsx';
 import { RarityCard, RarityLabel, RarityBurst, rarityRank, useRarityCss } from './rarityFX.jsx';
-import { AuraArt } from './artFX.jsx';
-import { TitlePlate } from './revealFX.jsx';
+import { TitlePlate, AnyAuraArt } from './revealFX.jsx';
+import { gearLayers, gearFromSlots, useHeroGearCss } from './heroGearFX.jsx';
 
 const FONT = "'Manrope', system-ui, -apple-system, sans-serif";
 export const RARITY_TONE = {
@@ -57,34 +57,40 @@ export function GearIcon({ slot, color, size = 26 }) {
   );
 }
 
-// Пиксельный герой во весь рост (тот же, что в комнате), с подкраской экипировки по редкости.
-function HeroSprite({ tint = {}, height = 150 }) {
-  const t = (slot, base) => tint[slot] || base;
+// Пиксельный герой во весь рост (тот же, что в комнате) — в надетом снаряжении: облик растёт по уровням I–V.
+export function HeroSprite({ gear = {}, height = 150 }) {
+  useHeroGearCss();
+  const L = gearLayers(gear);
   return (
-    <svg viewBox="0 0 18 53" height={height} width={(height * 18) / 53} shapeRendering="crispEdges" className="pf-breath" aria-hidden="true" style={{ display: 'block', overflow: 'visible' }}>
-      <rect x="1" y="15" width="3" height="12" fill={t('armor', '#1a1e2c')} /><rect x="14" y="15" width="3" height="12" fill={t('armor', '#1a1e2c')} />
-      <rect x="1" y="26" width="4" height="3" fill={t('gloves', '#e8b896')} /><rect x="13" y="26" width="4" height="3" fill={t('gloves', '#e8b896')} />
-      <rect x="2" y="13" width="14" height="2" fill="#1e2230" />
-      <rect x="4" y="15" width="10" height="13" fill={t('armor', '#1e2230')} />
-      <rect x="5" y="15" width="1" height="9" fill="#ffffff" opacity=".15" />
-      <rect x="7" y="12" width="1" height="6" fill="#f2eee5" /><rect x="10" y="12" width="1" height="5" fill="#f2eee5" />
-      {tint.accessory && <><rect x="8" y="15" width="2" height="2" fill={tint.accessory} /><rect x="7" y="14" width="1" height="1" fill={tint.accessory} /><rect x="10" y="14" width="1" height="1" fill={tint.accessory} /></>}
-      <rect x="5" y="24" width="8" height="1" fill="#141826" />
-      <rect x="3" y="28" width="12" height="2" fill="#1a1e2c" />
-      <rect x="4" y="30" width="5" height="16" fill="#2b2f3e" /><rect x="9" y="30" width="5" height="16" fill="#2b2f3e" />
-      <rect x="8" y="34" width="2" height="12" fill="#20232f" />
-      <rect x="2" y="46" width="7" height="5" fill={t('shoes', '#f2eee5')} /><rect x="9" y="46" width="7" height="5" fill={t('shoes', '#f2eee5')} />
-      <rect x="2" y="51" width="7" height="1" fill="#5a4636" /><rect x="9" y="51" width="7" height="1" fill="#5a4636" />
-      <rect x="7" y="10" width="4" height="2" fill="#d8a482" />
-      <rect x="4" y="3" width="10" height="7" fill="#e8b896" />
-      <rect x="5" y="6" width="2" height="2" fill="#1e2230" /><rect x="11" y="6" width="2" height="2" fill="#1e2230" />
-      <rect x="8" y="9" width="2" height="1" fill="#b88274" />
-      <g fill={tint.helmet || '#1e1a1a'}>
-        <rect x="6" y="0" width="7" height="1" /><rect x="4" y="1" width="11" height="1" /><rect x="3" y="2" width="13" height="2" />
-        <rect x="3" y="4" width="3" height="1" /><rect x="13" y="4" width="2" height="1" /><rect x="3" y="5" width="1" height="4" /><rect x="14" y="5" width="1" height="3" />
+    <svg viewBox="0 0 18 53" height={height} width={(height * 18) / 53} className="pf-breath" aria-hidden="true" style={{ display: 'block', overflow: 'visible' }}>
+      {L.back}
+      <g shapeRendering="crispEdges">
+        <rect x="1" y="15" width="3" height="12" fill="#1a1e2c" /><rect x="14" y="15" width="3" height="12" fill="#1a1e2c" />
+        <rect x="1" y="26" width="4" height="3" fill="#e8b896" /><rect x="13" y="26" width="4" height="3" fill="#e8b896" />
+        <rect x="2" y="13" width="14" height="2" fill="#1e2230" />
+        <rect x="4" y="15" width="10" height="13" fill="#1e2230" />
+        <rect x="5" y="15" width="1" height="9" fill="#ffffff" opacity=".15" />
+        <rect x="7" y="12" width="1" height="6" fill="#f2eee5" /><rect x="10" y="12" width="1" height="5" fill="#f2eee5" />
+        <rect x="5" y="24" width="8" height="1" fill="#141826" />
+        <rect x="3" y="28" width="12" height="2" fill="#1a1e2c" />
+        <rect x="4" y="30" width="5" height="16" fill="#2b2f3e" /><rect x="9" y="30" width="5" height="16" fill="#2b2f3e" />
+        <rect x="8" y="34" width="2" height="12" fill="#20232f" />
+        <rect x="2" y="46" width="7" height="5" fill="#f2eee5" /><rect x="9" y="46" width="7" height="5" fill="#f2eee5" />
+        <rect x="2" y="51" width="7" height="1" fill="#5a4636" /><rect x="9" y="51" width="7" height="1" fill="#5a4636" />
       </g>
-      {tint.weapon && <g fill={tint.weapon}><rect x="17" y="12" width="1" height="16" /><rect x="16" y="26" width="3" height="1" /><rect x="17" y="27" width="1" height="3" fill="#5a4636" /></g>}
-      {tint.artifact && <g><rect x="-3" y="24" width="4" height="5" fill={tint.artifact} /><rect x="-3" y="24" width="4" height="1" fill="#5a4636" /><rect x="-3" y="28" width="4" height="1" fill="#5a4636" /></g>}
+      {L.body}
+      <g shapeRendering="crispEdges">
+        <rect x="7" y="10" width="4" height="2" fill="#d8a482" />
+        <rect x="4" y="3" width="10" height="7" fill="#e8b896" />
+        <rect x="5" y="6" width="2" height="2" fill="#1e2230" /><rect x="11" y="6" width="2" height="2" fill="#1e2230" />
+        <rect x="8" y="9" width="2" height="1" fill="#b88274" />
+        <g fill="#1e1a1a">
+          <rect x="6" y="0" width="7" height="1" /><rect x="4" y="1" width="11" height="1" /><rect x="3" y="2" width="13" height="2" />
+          <rect x="3" y="4" width="3" height="1" /><rect x="13" y="4" width="2" height="1" /><rect x="3" y="5" width="1" height="4" /><rect x="14" y="5" width="1" height="3" />
+        </g>
+      </g>
+      {L.head}
+      {L.front}
     </svg>
   );
 }
@@ -98,8 +104,7 @@ export function HeroPaperDoll({ slots, onSlot, active, aura, onInspect }) {
   const left = ['helmet', 'armor', 'gloves', 'weapon'];
   const right = ['accessory', 'artifact', 'shoes'];
   const by = Object.fromEntries(slots.map(s => [s.slot, s]));
-  const tint = {};
-  slots.forEach(s => { if (s.tier.rarity !== 'Common') tint[s.slot] = RARITY_TONE[s.tier.rarity].c; });
+  const gear = gearFromSlots(slots);
   const Slot = ({ s }) => {
     if (!s) return <div style={{ height: 52 }} />;
     const tone = RARITY_TONE[s.tier.rarity] || RARITY_TONE.Common;
@@ -122,8 +127,8 @@ export function HeroPaperDoll({ slots, onSlot, active, aura, onInspect }) {
         <div style={{ position: 'relative', height: 232, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <div className="pf-glow" style={{ position: 'absolute', left: '50%', bottom: 18, width: 150, height: 150, marginLeft: -75, borderRadius: '50%', background: 'radial-gradient(circle, rgba(196,138,42,.28), transparent 65%)' }} />
           <div style={{ position: 'absolute', left: '50%', bottom: 6, width: 120, height: 16, marginLeft: -60, background: '#d8cdb8', borderRadius: '50%', boxShadow: 'inset 0 -3px 0 #c4b69c' }} />
-          {aura && <AuraArt id={aura} width={150} height={240} style={{ position: 'absolute', left: '50%', bottom: -4, marginLeft: -75 }} />}
-          <div style={{ position: 'relative', marginBottom: 12 }}><HeroSprite tint={tint} height={190} /></div>
+          {aura && <AnyAuraArt id={aura} width={150} height={240} style={{ position: 'absolute', left: '50%', bottom: -4, marginLeft: -75 }} />}
+          <div style={{ position: 'relative', marginBottom: 12 }}><HeroSprite gear={gear} height={190} /></div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{right.map(k => <Slot key={k} s={by[k]} />)}<div style={{ height: 52 }} /></div>
       </div>
