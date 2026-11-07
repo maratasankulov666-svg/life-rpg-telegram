@@ -135,6 +135,7 @@ import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_
 import { TreasuryScene, DebtBossSprite, HpBar, DamagePop, PiggyJar, WeekBars, GradeBadge, QuickEntrySheet, CatIcon, CatBadge, CAT_COLOR, fmtMoney, useFinanceCss } from './financeUI.jsx';
 import { StudioScene, PlayPlaque, RhythmDots, StageTrack, SUB_MILESTONES, milestoneInfo, fmtCompact, useCreatorCss } from './creatorUI.jsx';
 import { ShopScene, DailyLoginStrip, ItemTile, MiniChest, ReceiptModal, PrizeModal, useShopCss, RAR } from './shopUI.jsx';
+import { DayScale, ActivityHeatmap, WeekBalance, useLifeCss } from './lifeUI.jsx';
 import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
@@ -209,7 +210,12 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       фон, цвет имени, титулы — теперь реально видны в профиле), коллекции с бонусом +2 кристалла, кузница осколков
 //       (20 → 1 кристалл), кошелёк. Починено: колесо выдавало не тот приз, на котором остановилось; покупка дубля
 //       давала осколки бесплатно; старое «колесо за 35¢» убрано.
-const APP_VERSION = '16.4';
+// 16.5  События жизни = дневник дня: весы дня (польза/вред), полезное засчитывается раз в день (раньше можно было
+//       фармить), отмена ошибочной отметки с возвратом статов, неделя по дням, «чистые дни подряд» и счётчики
+//       «дней без …» по вредным привычкам, своё событие через иконки статов. Хроника = летопись: карта активности
+//       за 14 недель (тап — открыть день), главы по неделям с итогами, ★ важные события и фильтр «Важное»,
+//       запись в дневник с настроением и датой, подгрузка порциями.
+const APP_VERSION = '16.5';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -2023,6 +2029,7 @@ function defaultState() {
     unlockedLevels: [],
     dismissedEvolutions: [],
     customEvents: [],
+    lifeLog: [], // события жизни: {id, eventId, label, effects, bad, date, ts, chronicleId}
     recoveryMode: false,
     availableHoursPerWeek: null,
     finance: {
@@ -6396,14 +6403,33 @@ function addYouTubeQuest(ch, metric, delta) {
     });
   }
 
+  // Событие жизни: полезное засчитывается раз в день (иначе «Тренировку» можно было нажать 10 раз и получить +30),
+  // вредное — сколько угодно. Пишется в lifeLog (для отмены и счётчиков «дней без …») и в хронику.
   function logLifeEvent(event) {
     setState(prev => {
+      const date = dayKeyOf(Date.now());
+      const bad = event.effects.every(e => e.delta < 0) || event.effects.reduce((s, e) => s + e.delta, 0) < 0;
+      const log = prev.lifeLog || [];
+      if (!bad && log.some(l => l.eventId === event.id && l.date === date)) return prev;
       const stats = { ...prev.stats };
       event.effects.forEach(e => {
         if (stats[e.stat] !== undefined) stats[e.stat] = Math.max(0, Math.min(100, stats[e.stat] + e.delta));
       });
-      const desc = event.effects.map(e => `${e.delta > 0 ? '+' : ''}${e.delta} ${STAT_LABEL[e.stat]}`).join(', ');
-      return { ...prev, stats, chronicle: pushChronicle(prev.chronicle, 'LIFE_EVENT', `${event.label}: ${desc}`) };
+      const desc = event.effects.map(e => `${e.delta > 0 ? '+' : ''}${e.delta} ${STAT_RU[e.stat] || STAT_LABEL[e.stat]}`).join(', ');
+      const chronicle = pushChronicle(prev.chronicle, 'LIFE_EVENT', `${event.label}: ${desc}`);
+      const entry = { id: uid(), eventId: event.id, label: event.label, effects: event.effects, bad, date, ts: Date.now(), chronicleId: chronicle[0].id };
+      return { ...prev, stats, chronicle, lifeLog: [...log, entry].slice(-1500) };
+    });
+  }
+  // Отмена ошибочной отметки (только за сегодня): статы возвращаются, запись уходит из хроники.
+  function undoLifeEvent(logId) {
+    setState(prev => {
+      const log = prev.lifeLog || [];
+      const entry = log.find(l => l.id === logId);
+      if (!entry || entry.date !== dayKeyOf(Date.now())) return prev;
+      const stats = { ...prev.stats };
+      (entry.effects || []).forEach(e => { if (stats[e.stat] !== undefined) stats[e.stat] = Math.max(0, Math.min(100, stats[e.stat] - e.delta)); });
+      return { ...prev, stats, lifeLog: log.filter(l => l.id !== logId), chronicle: prev.chronicle.filter(c => c.id !== entry.chronicleId) };
     });
   }
 
@@ -7045,7 +7071,7 @@ useEffect(() => {
               {subTab.profile === 'mentor' && <MentorTab state={state} />}
               {subTab.profile === 'events' && (
                 <EventsTab
-                  logLifeEvent={logLifeEvent} customEvents={state.customEvents}
+                  logLifeEvent={logLifeEvent} customEvents={state.customEvents} lifeLog={state.lifeLog || []} chronicle={state.chronicle} undoLifeEvent={undoLifeEvent}
                   addCustomEvent={addCustomEvent} deleteCustomEvent={deleteCustomEvent}
                 />
               )}
@@ -8739,104 +8765,156 @@ function chronicleDayLabel(ts) {
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric' });
 }
 
+const CHRONICLE_IMPORTANT = new Set(['ACHIEVEMENT_UNLOCKED', 'LEVEL_UP', 'GOAL_COMPLETED', 'DEBT_DEFEATED']);
+const DIARY_MOODS = [{ k: '😄', l: 'отлично' }, { k: '🙂', l: 'хорошо' }, { k: '😐', l: 'так себе' }, { k: '😞', l: 'плохо' }];
+function weekStartOf(ts) { const d = new Date(ts); const w = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - w); return d.getTime(); }
+
 function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, deleteChronicleEntry }) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [newText, setNewText] = useState('');
-  const [newDate, setNewDate] = useState(todayStr());
+  useLifeCss();
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [filterKey, setFilterKey] = useState('all');
   const [searchText, setSearchText] = useState('');
+  const [day, setDay] = useState(null);
+  const [mood, setMood] = useState(null);
+  const [note, setNote] = useState('');
+  const [noteDate, setNoteDate] = useState(todayStr());
+  const [showWrite, setShowWrite] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [limit, setLimit] = useState(80);
 
-  function startEdit(c) {
-    setEditingId(c.id);
-    setEditText(c.text);
+  const counts = {};
+  chronicle.forEach(c => { const k = dayKeyOf(c.ts); counts[k] = (counts[k] || 0) + 1; });
+  const weekAgo = Date.now() - 7 * 86400000;
+  const weekN = chronicle.filter(c => c.ts >= weekAgo).length;
+  const stars = chronicle.filter(c => CHRONICLE_IMPORTANT.has(c.type)).length;
+  let streak = 0;
+  for (let i = 0; i < 366; i++) { const d = new Date(); d.setDate(d.getDate() - i); if (counts[dayKeyOf(d.getTime())]) streak += 1; else if (i > 0) break; }
+  const firstTs = chronicle.length ? Math.min(...chronicle.map(c => c.ts)) : Date.now();
+
+  const groups = [...CHRONICLE_FILTER_GROUPS, { key: 'stars', label: '★ Важное', types: [...CHRONICLE_IMPORTANT] }];
+  const active = groups.find(g => g.key === filterKey) || groups[0];
+  const q = searchText.trim().toLowerCase();
+  const filtered = chronicle
+    .filter(c => (!active.types || active.types.includes(c.type)) && (!q || String(c.text).toLowerCase().includes(q)) && (!day || dayKeyOf(c.ts) === day))
+    .slice().sort((a, b) => b.ts - a.ts);
+  const shown = filtered.slice(0, limit);
+
+  function saveEdit(id) { if (editText.trim()) editChronicleEntry(id, editText.trim()); setEditingId(null); }
+  function write() {
+    const t = note.trim(); if (!t) return;
+    addManualChronicleEntry((mood ? mood + ' ' : '') + t, noteDate);
+    setNote(''); setMood(null); setShowWrite(false); gameFeedback('PAGE_TURN');
   }
-
-  function saveEdit(id) {
-    if (editText.trim()) editChronicleEntry(id, editText.trim());
-    setEditingId(null);
-  }
-
-  const activeGroup = CHRONICLE_FILTER_GROUPS.find(g => g.key === filterKey);
-  const filtered = chronicle.filter(c => {
-    if (activeGroup.types && !activeGroup.types.includes(c.type)) return false;
-    if (searchText.trim() && !c.text.toLowerCase().includes(searchText.trim().toLowerCase())) return false;
-    return true;
-  });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
       <div>
-        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Дневник героя · {chronicle.length} записей</div>
-        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2, marginBottom: 4 }}>Хроника</div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Летопись героя · {chronicle.length} записей</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Хроника</div>
       </div>
-      <div style={{ position: 'relative' }}>
-        <Search size={14} color={COLORS.textMuted} style={{ position: 'absolute', left: 10, top: 10 }} />
-        <input className="lrpg-input" placeholder="Поиск по записям..." value={searchText} onChange={e => setSearchText(e.target.value)} style={{ paddingLeft: 30 }} />
+
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginBottom: 10 }}>
+          {[[weekN, 'за неделю'], [stars, '★ важных'], [streak, plural(streak, 'день подряд', 'дня подряд', 'дней подряд')]].map(([v, l]) => (
+            <div key={l} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '6px 8px' }}><div className="lrpg-num" style={{ fontSize: 17, fontWeight: 800 }}>{v}</div><div style={{ fontSize: 10.5, color: COLORS.textMuted }}>{l}</div></div>
+          ))}
+        </div>
+        <ActivityHeatmap counts={counts} weeks={14} selected={day} onPick={(k) => { gameFeedback('BUTTON_PRESS'); setDay(k); setLimit(80); }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, fontSize: 12, color: COLORS.textMuted }}>
+          {day ? <span>День: <b style={{ color: COLORS.text }}>{new Date(day + 'T12:00:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' })}</b> · {counts[day] || 0} записей</span> : <span>Тапни по клетке, чтобы открыть день</span>}
+          {day && <button className="lrpg-btn" onClick={() => setDay(null)} style={{ background: 'none', color: COLORS.gold, fontWeight: 700, fontSize: 12, padding: 0 }}>Все дни ×</button>}
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
-        {CHRONICLE_FILTER_GROUPS.map(g => (
-          <button key={g.key} className="lrpg-btn" onClick={() => setFilterKey(g.key)} style={{
-            flexShrink: 0, background: filterKey === g.key ? COLORS.violet : COLORS.bgCardAlt,
-            color: filterKey === g.key ? '#fbf9f4' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 700,
-          }}>{g.label}</button>
-        ))}
-      </div>
-      <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCardAlt, color: COLORS.violet, border: `1px solid ${COLORS.violet}55`, borderRadius: 10, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>
-        <Plus size={14} /> Добавить запись задним числом
-      </button>
-      {showAdd && (
-        <Card>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input className="lrpg-input" placeholder="Что произошло" value={newText} onChange={e => setNewText(e.target.value)} />
-            <input className="lrpg-input" type="date" value={newDate} onChange={e => setNewDate(e.target.value)} max={todayStr()} />
-            <button className="lrpg-btn" disabled={!newText.trim()} onClick={() => { addManualChronicleEntry(newText.trim(), newDate); setNewText(''); setShowAdd(false); }}
-              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newText.trim() ? 1 : 0.5 }}>
-              Добавить
-            </button>
+
+      <button className="lrpg-btn" onClick={() => setShowWrite(v => !v)} style={{ background: showWrite ? COLORS.bgCard : COLORS.text, color: showWrite ? COLORS.text : COLORS.bg, borderRadius: 12, padding: '11px 0', fontSize: 14, fontWeight: 700, border: `1px solid ${COLORS.text}` }}>{showWrite ? 'Закрыть' : '✎ Запись в дневник'}</button>
+      {showWrite && (
+        <div className="lrpg-paper" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, background: '#fbf6ea' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {DIARY_MOODS.map(m => (
+              <button key={m.k} className="lrpg-btn" onClick={() => setMood(mood === m.k ? null : m.k)} aria-pressed={mood === m.k} style={{ flex: 1, padding: '6px 0', borderRadius: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, background: mood === m.k ? COLORS.goldSoft : COLORS.bgCard, border: `1.5px solid ${mood === m.k ? COLORS.gold : COLORS.border}` }}>
+                <span style={{ fontSize: 20 }}>{m.k}</span><span style={{ fontSize: 10, color: COLORS.textMuted }}>{m.l}</span>
+              </button>
+            ))}
           </div>
-        </Card>
-      )}
-      {filtered.length === 0 && <div style={{ fontSize: 12, color: COLORS.textMuted, textAlign: 'center', padding: '20px 0' }}>Ничего не найдено.</div>}
-      {filtered.map((c, idx) => {
-        const day = new Date(c.ts).toDateString();
-        const newDay = idx === 0 || new Date(filtered[idx - 1].ts).toDateString() !== day;
-        const kind = CHRONICLE_KIND[c.type] || 'quest';
-        return (
-        <React.Fragment key={c.id}>
-        {newDay && (
-          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, margin: '12px 0 2px', display: 'flex', alignItems: 'center', gap: 8 }}>
-            {chronicleDayLabel(c.ts)}<span style={{ flex: 1, height: 1, background: COLORS.border }} />
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 10px', background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 10, minWidth: 0 }}>
-          <span style={{ width: 26, height: 26, borderRadius: 7, background: (CHRONICLE_COLOR[c.type] || COLORS.textMuted) + '1a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-            <PixelIcon kind={kind} color={CHRONICLE_COLOR[c.type] || COLORS.textMuted} size={14} />
-          </span>
-          <div style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
-            {editingId === c.id ? (
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input className="lrpg-input" value={editText} onChange={e => setEditText(e.target.value)} autoFocus />
-                <button className="lrpg-btn" onClick={() => saveEdit(c.id)} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 6, padding: '0 10px', fontSize: 12, fontWeight: 700 }}><Check size={13} /></button>
-              </div>
-            ) : (
-              <div style={{ fontSize: 13 }}>{c.text}{c.edited && <span style={{ fontSize: 10, color: COLORS.textMuted }}> (отредактировано)</span>}{c.isManual && <span style={{ fontSize: 10, color: COLORS.teal }}> · добавлено вручную</span>}</div>
-            )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(c.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
-              {editingId !== c.id && (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="lrpg-btn" onClick={() => startEdit(c)} style={{ background: 'none' }}><Pencil size={11} color={COLORS.textMuted} /></button>
-                  <button className="lrpg-btn" onClick={() => deleteChronicleEntry(c.id)} style={{ background: 'none' }}><Trash2 size={11} color={COLORS.textMuted} /></button>
-                </div>
-              )}
-            </div>
+          <textarea className="lrpg-input" rows={3} placeholder="Что случилось? Что понял? Чем гордишься?" value={note} onChange={e => setNote(e.target.value)} />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input className="lrpg-input" type="date" value={noteDate} max={todayStr()} onChange={e => setNoteDate(e.target.value)} style={{ flex: 1 }} />
+            <button className="lrpg-btn" disabled={!note.trim()} onClick={write} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 10, padding: '9px 16px', fontWeight: 700, opacity: note.trim() ? 1 : .5 }}>Записать</button>
           </div>
         </div>
-        </React.Fragment>
+      )}
+
+      <div style={{ position: 'relative' }}>
+        <Search size={14} color={COLORS.textMuted} style={{ position: 'absolute', left: 11, top: 12 }} />
+        <input className="lrpg-input" placeholder="Поиск по летописи…" value={searchText} onChange={e => setSearchText(e.target.value)} style={{ paddingLeft: 32 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+        {groups.map(g => (
+          <button key={g.key} className="lrpg-btn" onClick={() => setFilterKey(g.key)} aria-pressed={filterKey === g.key} style={{ flexShrink: 0, padding: '6px 11px', borderRadius: 99, fontSize: 12.5, fontWeight: 600, background: filterKey === g.key ? COLORS.text : COLORS.bgCard, color: filterKey === g.key ? COLORS.bg : COLORS.text, border: `1px solid ${filterKey === g.key ? COLORS.text : COLORS.border}` }}>{g.label}</button>
+        ))}
+      </div>
+
+      {filtered.length === 0 && <div className="lrpg-paper" style={{ padding: 14, fontSize: 13.5, color: COLORS.textMuted }}>Ничего не найдено.</div>}
+      {shown.map((c, idx) => {
+        const ws = weekStartOf(c.ts);
+        const newWeek = idx === 0 || weekStartOf(shown[idx - 1].ts) !== ws;
+        const newDay = idx === 0 || dayKeyOf(shown[idx - 1].ts) !== dayKeyOf(c.ts);
+        const star = CHRONICLE_IMPORTANT.has(c.type);
+        const kind = CHRONICLE_KIND[c.type] || 'quest';
+        const col = CHRONICLE_COLOR[c.type] || COLORS.textMuted;
+        let chapter = null;
+        if (newWeek) {
+          const inWeek = chronicle.filter(x => weekStartOf(x.ts) === ws);
+          const n = Math.floor((ws - weekStartOf(firstTs)) / (7 * 86400000)) + 1;
+          const end = new Date(ws + 6 * 86400000);
+          chapter = (
+            <div style={{ marginTop: idx ? 10 : 0, padding: '10px 12px', borderRadius: 12, background: COLORS.text, color: COLORS.bg, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <div>
+                <div className="lrpg-mono" style={{ fontSize: 8.5, opacity: .7 }}>Глава {n}</div>
+                <div className="lrpg-display" style={{ fontSize: 16, fontWeight: 700 }}>{new Date(ws).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — {end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, fontSize: 11.5, textAlign: 'right' }}>
+                <span><b className="lrpg-num">{inWeek.filter(x => x.type === 'QUEST_COMPLETED').length}</b> квестов</span>
+                <span><b className="lrpg-num">{inWeek.filter(x => CHRONICLE_IMPORTANT.has(x.type)).length}</b> ★</span>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <React.Fragment key={c.id}>
+            {chapter}
+            {newDay && <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, margin: '4px 0 -4px', display: 'flex', alignItems: 'center', gap: 8 }}>{chronicleDayLabel(c.ts)}<span style={{ flex: 1, height: 1, background: COLORS.border }} /></div>}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 10px', background: star ? '#fbf3e0' : COLORS.bgCard, border: `1px solid ${star ? COLORS.gold + '88' : COLORS.border}`, borderRadius: 10, minWidth: 0 }}>
+              <span style={{ width: 26, height: 26, borderRadius: 7, background: col + '1a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+                {star ? <span style={{ color: COLORS.gold, fontSize: 15, lineHeight: 1 }}>★</span> : <PixelIcon kind={kind} color={col} size={14} />}
+              </span>
+              <div style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
+                {editingId === c.id ? (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input className="lrpg-input" value={editText} onChange={e => setEditText(e.target.value)} autoFocus onKeyDown={e => { if (e.key === 'Enter') saveEdit(c.id); }} />
+                    <button className="lrpg-btn" onClick={() => saveEdit(c.id)} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '0 10px' }}><Check size={13} /></button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13.5, lineHeight: 1.4, fontWeight: star ? 700 : 400 }}>{c.text}{c.edited && <span style={{ fontSize: 10.5, color: COLORS.textMuted }}> (изменено)</span>}{c.isManual && <span className="lrpg-mono" style={{ fontSize: 8, color: COLORS.teal }}> · дневник</span>}</div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 3 }}>
+                  <span style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(c.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                  {editingId !== c.id && (
+                    <span style={{ display: 'flex', gap: 10 }}>
+                      <button className="lrpg-btn" aria-label="Изменить" onClick={() => { setEditingId(c.id); setEditText(c.text); }} style={{ background: 'none', padding: 0 }}><Pencil size={12} color={COLORS.textMuted} /></button>
+                      {confirmDel === c.id
+                        ? <button className="lrpg-btn" onClick={() => { deleteChronicleEntry(c.id); setConfirmDel(null); }} style={{ background: 'none', padding: 0, color: COLORS.crimson, fontSize: 11.5, fontWeight: 700 }}>удалить?</button>
+                        : <button className="lrpg-btn" aria-label="Удалить" onClick={() => { setConfirmDel(c.id); setTimeout(() => setConfirmDel(x => x === c.id ? null : x), 3000); }} style={{ background: 'none', padding: 0 }}><Trash2 size={12} color={COLORS.textMuted} /></button>}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </React.Fragment>
         );
       })}
+      {filtered.length > shown.length && <button className="lrpg-btn" onClick={() => setLimit(l => l + 80)} style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700 }}>Показать ещё {Math.min(80, filtered.length - shown.length)}</button>}
     </div>
   );
 }
@@ -10128,139 +10206,204 @@ function WorldTab({ stats, unlockedAchievements, state }) {
   );
 }
 
-function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEvent }) {
-  const [lastLogged, setLastLogged] = useState(null);
-  const [showAddEvent, setShowAddEvent] = useState(false);
+// История событий жизни: новый журнал lifeLog + старые записи хроники (LIFE_EVENT) для совместимости.
+function lifeHistory(lifeLog, chronicle) {
+  const log = (lifeLog || []).map(l => ({ key: l.eventId || l.label, label: l.label, ts: l.ts, bad: !!l.bad, id: l.id }));
+  const known = new Set((lifeLog || []).map(l => l.chronicleId).filter(Boolean));
+  const old = (chronicle || []).filter(c => c.type === 'LIFE_EVENT' && !known.has(c.id)).map(c => {
+    const label = String(c.text || '').split(':')[0].trim();
+    const ev = LIFE_EVENTS.find(e => e.label === label);
+    return { key: ev ? ev.id : label, label, ts: c.ts, bad: !/\+\d/.test(c.text || '') };
+  });
+  return [...log, ...old].sort((a, b) => b.ts - a.ts);
+}
+const dayKeyOf = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+function EventsTab({ logLifeEvent, customEvents, addCustomEvent, deleteCustomEvent, lifeLog, chronicle, undoLifeEvent }) {
+  useLifeCss();
+  const [showAdd, setShowAdd] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newStat, setNewStat] = useState(STATS_DEF[0].key);
-  const [newDelta, setNewDelta] = useState(2);
-  const [addSecond, setAddSecond] = useState(false);
-  const [newStat2, setNewStat2] = useState(STATS_DEF[1].key);
-  const [newDelta2, setNewDelta2] = useState(-2);
+  const [effects, setEffects] = useState([{ stat: 'physical', delta: 2 }]);
+  const [flash, setFlash] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
 
-  const netDelta = e => e.effects.reduce((sum, ef) => sum + ef.delta, 0);
-  const normalizedCustom = customEvents.map(e => ({
-    ...e, icon: Sparkles, color: netDelta(e) >= 0 ? COLORS.teal : COLORS.crimson, isCustom: true,
-  }));
-  const positive = [...LIFE_EVENTS.filter(e => e.effects.some(ef => ef.delta > 0)), ...normalizedCustom.filter(e => netDelta(e) >= 0)];
-  const negative = [...LIFE_EVENTS.filter(e => e.effects.every(ef => ef.delta < 0)), ...normalizedCustom.filter(e => netDelta(e) < 0)];
+  const today = dayKeyOf(Date.now());
+  const all = [
+    ...LIFE_EVENTS.map(e => ({ ...e, bad: e.effects.every(ef => ef.delta < 0) })),
+    ...customEvents.map(e => ({ ...e, isCustom: true, bad: e.effects.reduce((s, ef) => s + ef.delta, 0) < 0 })),
+  ];
+  const todayLog = (lifeLog || []).filter(l => l.date === today).sort((a, b) => b.ts - a.ts);
+  const doneToday = new Set(todayLog.filter(l => !l.bad).map(l => l.eventId));
+  const badCountToday = {};
+  todayLog.filter(l => l.bad).forEach(l => { badCountToday[l.eventId] = (badCountToday[l.eventId] || 0) + 1; });
+  const sumDelta = (list, sign) => list.reduce((s, l) => s + (l.effects || []).filter(ef => sign > 0 ? ef.delta > 0 : ef.delta < 0).reduce((a, ef) => a + Math.abs(ef.delta), 0), 0);
+  const good = sumDelta(todayLog, 1);
+  const bad = sumDelta(todayLog, -1);
+  const statNet = {};
+  todayLog.forEach(l => (l.effects || []).forEach(ef => { statNet[ef.stat] = (statNet[ef.stat] || 0) + ef.delta; }));
 
-  function handleLog(event) {
-    logLifeEvent(event);
-    setLastLogged(event.id);
-    setTimeout(() => setLastLogged(null), 1500);
+  const hist = lifeHistory(lifeLog, chronicle);
+  const firstTs = hist.length ? hist[hist.length - 1].ts : null;
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6 - i));
+    const key = dayKeyOf(d.getTime());
+    const items = hist.filter(h => dayKeyOf(h.ts) === key);
+    return { key, label: d.toLocaleDateString('ru-RU', { weekday: 'short' }).slice(0, 2), good: items.filter(h => !h.bad).length, bad: items.filter(h => h.bad).length };
+  });
+  // «Дней без …» по вредным событиям, которые хоть раз отмечались.
+  const badKeys = {};
+  hist.filter(h => h.bad).forEach(h => { if (!badKeys[h.key]) badKeys[h.key] = { label: h.label, last: h.ts, n: 0 }; badKeys[h.key].n += 1; });
+  const daysSince = (ts) => Math.floor((new Date(today + 'T12:00:00') - new Date(dayKeyOf(ts) + 'T12:00:00')) / 86400000);
+  const cleanList = Object.entries(badKeys).map(([k, v]) => ({ k, ...v, days: daysSince(v.last) })).sort((a, b) => b.n - a.n).slice(0, 4);
+  let cleanStreak = 0;
+  if (firstTs) {
+    const badDays = new Set(hist.filter(h => h.bad).map(h => dayKeyOf(h.ts)));
+    for (let i = 0; i < 400; i++) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const key = dayKeyOf(d.getTime());
+      if (d.getTime() < firstTs - 86400000) break;
+      if (badDays.has(key)) break;
+      cleanStreak += 1;
+    }
   }
 
-  function handleCreate() {
-    const effects = [{ stat: newStat, delta: newDelta }];
-    if (addSecond && newStat2 !== newStat) effects.push({ stat: newStat2, delta: newDelta2 });
-    addCustomEvent(newTitle.trim(), effects);
-    setNewTitle('');
-    setAddSecond(false);
-    setShowAddEvent(false);
+  function tap(e) {
+    if (!e.bad && doneToday.has(e.id)) { gameFeedback('LOCKED'); return; }
+    logLifeEvent(e);
+    setFlash(e.id); setTimeout(() => setFlash(null), 900);
+    gameFeedback(e.bad ? 'ERROR' : 'QUEST_COMPLETE', { xp: 0 });
+  }
+  function setEff(i, patch) { setEffects(list => list.map((x, j) => j === i ? { ...x, ...patch } : x)); }
+  function create() {
+    const effs = effects.filter((x, i) => i === 0 || x.stat !== effects[0].stat);
+    addCustomEvent(newTitle.trim(), effs);
+    setNewTitle(''); setEffects([{ stat: 'physical', delta: 2 }]); setShowAdd(false);
+    gameFeedback('ITEM_UNLOCK');
   }
 
-  function renderGrid(events) {
+  const tile = (e) => {
+    const done = !e.bad && doneToday.has(e.id);
+    const cnt = e.bad ? badCountToday[e.id] || 0 : 0;
+    const main = (e.effects[0] || {}).stat || 'discipline';
+    const accent = e.bad ? COLORS.crimson : COLORS.green;
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        {events.map(e => {
-          const Icon = e.icon;
-          const desc = e.effects.map(ef => `${ef.delta > 0 ? '+' : ''}${ef.delta} ${STAT_LABEL[ef.stat]}`).join(', ');
-          return (
-            <div key={e.id} style={{ position: 'relative' }}>
-              <button className="lrpg-btn" onClick={() => handleLog(e)} style={{
-                width: '100%', background: lastLogged === e.id ? e.color : COLORS.bgCard, border: `1px solid ${e.color}55`,
-                borderRadius: 12, padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'left',
-                transition: 'background 0.2s',
-              }}>
-                <Icon size={16} color={lastLogged === e.id ? '#fbf9f4' : e.color} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: lastLogged === e.id ? '#fbf9f4' : COLORS.text }}>{e.label}</span>
-                <span style={{ fontSize: 10, color: lastLogged === e.id ? '#fbf9f4' : COLORS.textMuted }}>{desc}</span>
-              </button>
-              {e.isCustom && (
-                <button className="lrpg-btn" onClick={() => deleteCustomEvent(e.id)} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(251,249,244,0.6)', borderRadius: 999, padding: 3 }}>
-                  <X size={10} color={COLORS.textMuted} />
-                </button>
-              )}
-            </div>
-          );
-        })}
+      <div key={e.id} style={{ position: 'relative' }}>
+        <button className={'lrpg-btn' + (flash === e.id ? ' ag-press' : '')} onClick={() => tap(e)} aria-pressed={done} style={{
+          width: '100%', textAlign: 'left', padding: '10px 10px 9px', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 5, minHeight: 86,
+          background: done ? 'rgba(63,122,74,.10)' : flash === e.id ? accent + '22' : COLORS.bgCard, border: `1.5px solid ${done ? COLORS.green : flash === e.id ? accent : COLORS.border}`,
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ width: 26, height: 26, borderRadius: 7, background: accent + '1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><PixelIcon kind={main} color={accent} size={14} /></span>
+            {done && <span className="lrpg-mono lf-pop" style={{ fontSize: 8, color: COLORS.green }}>✓ сегодня</span>}
+            {cnt > 0 && <span className="lrpg-num lf-pop" style={{ fontSize: 11, fontWeight: 800, color: COLORS.crimson }}>×{cnt}</span>}
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text, lineHeight: 1.2 }}>{e.label}</span>
+          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            {e.effects.map((ef, i) => <span key={i} className="lrpg-num" style={{ fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: (ef.delta > 0 ? COLORS.green : COLORS.crimson) + '1a', color: ef.delta > 0 ? COLORS.green : COLORS.crimson }}>{ef.delta > 0 ? '+' : ''}{ef.delta} {STAT_RU[ef.stat] || ef.stat}</span>)}
+          </span>
+        </button>
+        {e.isCustom && (confirmDel === e.id
+          ? <button className="lrpg-btn" onClick={() => { deleteCustomEvent(e.id); setConfirmDel(null); }} style={{ position: 'absolute', top: 6, right: 6, background: COLORS.crimson, color: '#fbf9f4', borderRadius: 6, padding: '2px 6px', fontSize: 10, fontWeight: 700 }}>удалить</button>
+          : <button className="lrpg-btn" aria-label="Удалить событие" onClick={() => { setConfirmDel(e.id); setTimeout(() => setConfirmDel(c => c === e.id ? null : c), 3000); }} style={{ position: 'absolute', top: 6, right: 6, background: 'none', padding: 2 }}><X size={12} color={COLORS.textMuted} /></button>)}
       </div>
     );
-  }
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Card>
-        <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.5 }}>
-          Отметь, что произошло сегодня — статы обновятся сразу же. Это не квесты, а честная фиксация реальных событий.
-        </div>
-      </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Дневник дня · {new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>События жизни</div>
+      </div>
 
-      <button className="lrpg-btn" onClick={() => setShowAddEvent(v => !v)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.bgCardAlt, color: COLORS.violet, border: `1px solid ${COLORS.violet}55`, borderRadius: 10, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>
-        <Plus size={14} /> Добавить своё событие
-      </button>
-      {showAddEvent && (
-        <Card>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input className="lrpg-input" placeholder="Название события" value={newTitle} onChange={e => setNewTitle(e.target.value)} />
-            <div style={{ fontSize: 10, color: COLORS.textMuted }}>Стат 1:</div>
-            <select className="lrpg-input" value={newStat} onChange={e => setNewStat(e.target.value)}>
-              {STATS_DEF.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-            </select>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {[-3, -2, -1, 1, 2, 3].map(d => (
-                <button key={d} className="lrpg-btn" onClick={() => setNewDelta(d)} style={{
-                  flex: 1, background: newDelta === d ? (d > 0 ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
-                  color: newDelta === d ? '#fbf9f4' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
-                }}>{d > 0 ? `+${d}` : d}</button>
+      <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden' }}>
+        <DayScale good={good} bad={bad} />
+        <div style={{ padding: '10px 12px 12px', borderTop: `1px solid ${COLORS.border}` }}>
+          {todayLog.length === 0 ? (
+            <div style={{ fontSize: 13, color: COLORS.textMuted }}>Сегодня ещё ничего не отмечено. Честно отмечай и хорошее, и плохое — статы меняются сразу.</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {Object.entries(statNet).filter(([, v]) => v).map(([k, v]) => (
+                  <span key={k} className="lrpg-num" style={{ fontSize: 12, fontWeight: 800, padding: '3px 8px', borderRadius: 99, background: (v > 0 ? COLORS.green : COLORS.crimson) + '1a', color: v > 0 ? COLORS.green : COLORS.crimson }}>{v > 0 ? '+' : ''}{v} {STAT_RU[k] || k}</span>
+                ))}
+              </div>
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '10px 0 4px' }}>Отмечено сегодня · можно отменить</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {todayLog.map(l => (
+                  <span key={l.id} className="lf-pop" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 9px', borderRadius: 99, fontSize: 12, fontWeight: 600, background: COLORS.bgCardAlt, border: `1px solid ${l.bad ? COLORS.crimson + '55' : COLORS.green + '55'}` }}>
+                    {new Date(l.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · {l.label}
+                    <button className="lrpg-btn" aria-label={`Отменить: ${l.label}`} onClick={() => { undoLifeEvent(l.id); gameFeedback('MENU_CLOSE'); }} style={{ background: 'none', padding: 2, display: 'flex' }}><X size={12} color={COLORS.textMuted} /></button>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {hist.length > 0 && (
+        <div className="lrpg-paper" style={{ padding: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+            <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Неделя</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12.5, fontWeight: 700, color: cleanStreak ? COLORS.green : COLORS.textMuted }}>{cleanStreak > 0 && <FlameIcon n={cleanStreak} size={14} />}{cleanStreak} {plural(cleanStreak, 'чистый день', 'чистых дня', 'чистых дней')}</span>
+          </div>
+          <WeekBalance days={week} />
+          {cleanList.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, marginTop: 10 }}>
+              {cleanList.map(c => (
+                <div key={c.k} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '7px 9px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {c.days > 0 ? <FlameIcon n={c.days} size={16} /> : <span style={{ width: 16, height: 16, borderRadius: 4, background: COLORS.crimson + '33' }} />}
+                  <span style={{ minWidth: 0 }}>
+                    <span className="lrpg-num" style={{ display: 'block', fontSize: 15, fontWeight: 800, color: c.days > 0 ? COLORS.text : COLORS.crimson }}>{c.days} {plural(c.days, 'день', 'дня', 'дней')}</span>
+                    <span style={{ display: 'block', fontSize: 10.5, color: COLORS.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>без «{c.label}»</span>
+                  </span>
+                </div>
               ))}
             </div>
-
-            {!addSecond && (
-              <button className="lrpg-btn" onClick={() => setAddSecond(true)} style={{
-                background: 'none', color: COLORS.teal, border: `1px dashed ${COLORS.teal}55`, borderRadius: 6,
-                padding: '6px 0', fontSize: 11, fontWeight: 600,
-              }}>
-                + Добавить второй стат (например: энергетик — Physical -2 и Discipline -1)
-              </button>
-            )}
-            {addSecond && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>Стат 2:</div>
-                  <button className="lrpg-btn" onClick={() => setAddSecond(false)} style={{ background: 'none' }}><X size={12} color={COLORS.textMuted} /></button>
-                </div>
-                <select className="lrpg-input" value={newStat2} onChange={e => setNewStat2(e.target.value)}>
-                  {STATS_DEF.filter(s => s.key !== newStat).map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {[-3, -2, -1, 1, 2, 3].map(d => (
-                    <button key={d} className="lrpg-btn" onClick={() => setNewDelta2(d)} style={{
-                      flex: 1, background: newDelta2 === d ? (d > 0 ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
-                      color: newDelta2 === d ? '#fbf9f4' : COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 12, fontWeight: 700,
-                    }}>{d > 0 ? `+${d}` : d}</button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            <button className="lrpg-btn" disabled={!newTitle.trim()} onClick={handleCreate}
-              style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: newTitle.trim() ? 1 : 0.5 }}>
-              Создать
-            </button>
-          </div>
-        </Card>
+          )}
+        </div>
       )}
 
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: COLORS.teal }}>Полезное</div>
-        {renderGrid(positive)}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: COLORS.green }}>Полезное</span>
+        <span style={{ fontSize: 11.5, color: COLORS.textMuted }}>раз в день каждое</span>
       </div>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: COLORS.crimson }}>Вредное</div>
-        {renderGrid(negative)}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>{all.filter(e => !e.bad).map(tile)}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: COLORS.crimson }}>Вредное</span>
+        <span style={{ fontSize: 11.5, color: COLORS.textMuted }}>честность важнее</span>
       </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>{all.filter(e => e.bad).map(tile)}</div>
+
+      <button className="lrpg-btn" onClick={() => setShowAdd(v => !v)} style={{ background: COLORS.bgCard, color: COLORS.text, border: `1px dashed ${COLORS.border}`, borderRadius: 12, padding: '11px 0', fontSize: 13.5, fontWeight: 700 }}>{showAdd ? 'Закрыть' : '+ Своё событие'}</button>
+      {showAdd && (
+        <div className="lrpg-paper" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <input className="lrpg-input" placeholder="Например: энергетик, прогулка 10 км" value={newTitle} onChange={e => setNewTitle(e.target.value)} />
+          {effects.map((ef, i) => (
+            <div key={i}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>Влияет на · {i + 1}</span>
+                {i > 0 && <button className="lrpg-btn" onClick={() => setEffects(l => l.slice(0, 1))} style={{ background: 'none', padding: 2 }}><X size={12} color={COLORS.textMuted} /></button>}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 4, marginTop: 4 }}>
+                {Object.keys(STAT_RU).map(k => (
+                  <button key={k} className="lrpg-btn" onClick={() => setEff(i, { stat: k })} aria-pressed={ef.stat === k} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 6px', borderRadius: 8, fontSize: 11.5, fontWeight: 600, background: ef.stat === k ? COLORS.text : COLORS.bgCard, color: ef.stat === k ? COLORS.bg : COLORS.text, border: `1px solid ${ef.stat === k ? COLORS.text : COLORS.border}` }}>
+                    <PixelIcon kind={k} color={ef.stat === k ? COLORS.bg : undefined} bg={ef.stat === k ? COLORS.text : undefined} size={12} />{STAT_RU[k]}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                {[-3, -2, -1, 1, 2, 3].map(d => (
+                  <button key={d} className="lrpg-btn" onClick={() => setEff(i, { delta: d })} aria-pressed={ef.delta === d} style={{ flex: 1, padding: '6px 0', borderRadius: 8, fontSize: 12.5, fontWeight: 800, background: ef.delta === d ? (d > 0 ? COLORS.green : COLORS.crimson) : COLORS.bgCard, color: ef.delta === d ? '#fbf9f4' : COLORS.text, border: `1px solid ${ef.delta === d ? 'transparent' : COLORS.border}` }}>{d > 0 ? '+' : ''}{d}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {effects.length < 2 && <button className="lrpg-btn" onClick={() => setEffects(l => [...l, { stat: l[0].stat === 'mental' ? 'discipline' : 'mental', delta: -1 }])} style={{ background: 'none', color: COLORS.teal, fontSize: 12.5, fontWeight: 700, padding: 0, textAlign: 'left' }}>+ второй стат</button>}
+          <button className="lrpg-btn" disabled={!newTitle.trim()} onClick={create} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, opacity: newTitle.trim() ? 1 : .5 }}>Создать событие</button>
+        </div>
+      )}
     </div>
   );
 }
