@@ -131,7 +131,8 @@ import {
 } from 'recharts';
 import { GoalTrail, RidgePanorama, DeadlineSeal, TrophyShelf, TrophyCup, SpherePicker, GoalCeremony, useGoalsCss, useHighlight, sphereMeta, daysLeft, plural, GOAL_CAMPS, GOAL_SUMMIT } from './goalsUI.jsx';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
-import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf } from './progressUI.jsx';
+import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf, rankOf } from './progressUI.jsx';
+import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
 
@@ -185,7 +186,12 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       младше 12 ч без монет), церемония «Вершина покорена», зал трофеев; выполненные шаги-квесты сами двигают
 //       прогресс (до 90 %); форма «Новый поход» со сферами и быстрыми сроками; починены пропавшие промпты
 //       «Разбить на квесты» и «Reality Check» (раньше всегда падали в «AI не ответил»).
-const APP_VERSION = '16.0';
+// 16.1  Профиль = карточка героя: имя и титул правятся прямо на карточке, фото, ранг и опыт; пиксельный герой-«кукла»
+//       с 7 слотами снаряжения (цвет по редкости, детали по тапу); летопись (дни, квесты, серия, вершины); плитки
+//       владений с живыми цифрами. Достижения: 29 медалей на русском (было 17 на английском) с прогрессом, категориями
+//       и баннером при получении; старые английские титулы переводятся. Инвентарь с куклой и вещами комнаты, хроника
+//       по дням с иконками, русские тексты событий; починены поля ввода, вылезавшие за край экрана.
+const APP_VERSION = '16.1';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -512,20 +518,20 @@ function FeedbackSettingsCard() {
   const [saver, setSaver] = useState(FEEDBACK_PREFS.batterySaver);
   return (
     <Card>
-      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Sound Effects</div>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Звук и эффекты</div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <span style={{ fontSize: 12 }}>SFX</span>
+        <span style={{ fontSize: 12 }}>Звуки</span>
         <button className="lrpg-btn" onClick={() => { const n = !sfxOn; setSfxOn(n); n ? SoundManager.unmute() : SoundManager.mute(); gameFeedback('BUTTON_PRESS'); }} style={{
           background: sfxOn ? COLORS.violet : COLORS.bgCardAlt, color: '#fff', borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
-        }}>{sfxOn ? 'ON' : 'OFF'}</button>
+        }}>{sfxOn ? 'Вкл' : 'Выкл'}</button>
       </div>
       <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>Громкость {volume}%</div>
       <input type="range" min={0} max={100} value={volume} onChange={e => { const v = Number(e.target.value); setVolume(v); SoundManager.setVolume(v / 100); }} style={{ width: '100%' }} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-        <span style={{ fontSize: 12 }}>Battery saver</span>
+        <span style={{ fontSize: 12 }}>Экономия батареи</span>
         <button className="lrpg-btn" onClick={() => { const n = !saver; setSaver(n); saveFeedbackPrefs({ batterySaver: n }); gameFeedback('BUTTON_PRESS'); }} style={{
           background: saver ? COLORS.teal : COLORS.bgCardAlt, color: saver ? '#fbf9f4' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
-        }}>{saver ? 'ON' : 'OFF'}</button>
+        }}>{saver ? 'Вкл' : 'Выкл'}</button>
       </div>
     </Card>
   );
@@ -768,31 +774,64 @@ function setCompletionTier(set, stats) {
 }
 
 const LEVEL_UNLOCKS = [
-  { level: 5, title: 'Boss Tasks', desc: 'Теперь можно создавать Boss Task — квесты со своей полоской HP.', coins: 30 },
+  { level: 5, title: 'Боссы', desc: 'Теперь можно создавать босс-задачи — квесты со своей полоской HP.', coins: 30 },
   { level: 10, title: 'Ветеран', desc: 'Открыт статус ветерана — держись, дальше будет глубже.', coins: 60 },
   { level: 15, title: 'Мастер деталей', desc: 'Ты явно не бросаешь начатое.', coins: 90 },
   { level: 20, title: 'Легенда пути', desc: 'Немногие доходят так далеко.', coins: 150 },
 ];
 
+// Достижения: label — русское имя (и титул), cat — раздел доски, kind — иконка медали,
+// target/value — прогресс к открытию (value(s) безопасно читает state). check выводится из value.
+const achDef = (id, label, desc, rarity, xp, coins, cat, kind, target, value) => ({
+  id, label, desc, rarity, xp, coins, cat, kind, target, value,
+  check: s => { try { return value(s) >= target; } catch (e) { return false; } },
+});
+const doneQuests = s => (s.quests || []).filter(q => q.status === 'completed').length;
+const doneGoals = s => (s.goals || []).filter(g => g.progress >= 100).length;
+const bestStreak = s => Math.max(0, ...(s.habits || []).map(h => h.bestStreak || 0));
+const daysInGame = s => (s.firstOpenedAt ? Math.floor((Date.now() - s.firstOpenedAt) / 86400000) + 1 : 1);
 const ACHIEVEMENTS = [
-  { id: 'lvl5', label: 'Adventurer', desc: 'Достигни 5 уровня', rarity: 'Common', xp: 40, coins: 30, check: s => s.character.level >= 5 },
-  { id: 'lvl10', label: 'Veteran', desc: 'Достигни 10 уровня', rarity: 'Rare', xp: 80, coins: 60, check: s => s.character.level >= 10 },
-  { id: 'lvl25', label: 'Master of Life', desc: 'Достигни 25 уровня', rarity: 'Epic', xp: 150, coins: 120, check: s => s.character.level >= 25 },
-  { id: 'lvl50', label: 'Legend', desc: 'Достигни 50 уровня', rarity: 'Legendary', xp: 400, coins: 300, check: s => s.character.level >= 50 },
-  { id: 'quest1', label: 'First Step', desc: 'Заверши первый квест', rarity: 'Common', xp: 15, coins: 10, check: s => s.quests.filter(q => q.status === 'completed').length >= 1 },
-  { id: 'quest25', label: 'Doer', desc: 'Заверши 25 квестов', rarity: 'Rare', xp: 60, coins: 40, check: s => s.quests.filter(q => q.status === 'completed').length >= 25 },
-  { id: 'quest100', label: 'Relentless', desc: 'Заверши 100 квестов', rarity: 'Epic', xp: 150, coins: 100, check: s => s.quests.filter(q => q.status === 'completed').length >= 100 },
-  { id: 'goal1', label: 'Goal Getter', desc: 'Заверши первую цель', rarity: 'Common', xp: 30, coins: 20, check: s => s.goals.filter(g => g.progress >= 100).length >= 1 },
-  { id: 'goal5', label: 'Visionary', desc: 'Заверши 5 целей', rarity: 'Epic', xp: 120, coins: 90, check: s => s.goals.filter(g => g.progress >= 100).length >= 5 },
-  { id: 'streak7', label: 'The Consistent', desc: 'Streak 7 дней в привычке', rarity: 'Rare', xp: 50, coins: 30, check: s => s.habits.some(h => h.bestStreak >= 7) },
-  { id: 'streak30', label: 'Iron Discipline', desc: 'Streak 30 дней в привычке', rarity: 'Epic', xp: 130, coins: 100, check: s => s.habits.some(h => h.bestStreak >= 30) },
-  { id: 'streak100', label: 'Unbreakable', desc: 'Streak 100 дней в привычке', rarity: 'Legendary', xp: 350, coins: 250, check: s => s.habits.some(h => h.bestStreak >= 100) },
-  { id: 'shop1', label: 'Treat Yourself', desc: 'Соверши первую покупку в Reward Shop', rarity: 'Common', xp: 10, coins: 0, check: s => s.chronicle.some(c => c.type === 'REWARD_PURCHASED') },
-  { id: 'debt_slayer', label: 'Debt Slayer', desc: 'Победи первого Debt Boss', rarity: 'Rare', xp: 100, coins: 80, check: s => s.finance.debts.some(d => d.remaining <= 0) },
-  { id: 'debt_free', label: 'Debt Free', desc: 'Победи всех Debt Boss', rarity: 'Legendary', xp: 300, coins: 200, check: s => s.finance.debts.length > 0 && s.finance.debts.every(d => d.remaining <= 0) },
-  { id: 'first_order', label: 'On the Road', desc: 'Залогируй первый заказ', rarity: 'Common', xp: 15, coins: 10, check: s => s.finance.taxi.orders.length >= 1 },
-  { id: 'order_grinder', label: 'Road Grinder', desc: 'Залогируй 50 заказов', rarity: 'Rare', xp: 90, coins: 70, check: s => s.finance.taxi.orders.length >= 50 },
+  achDef('lvl3', 'Подмастерье', 'Достигни 3 уровня', 'Common', 20, 15, 'path', 'discipline', 3, s => s.character.level),
+  achDef('lvl5', 'Искатель приключений', 'Достигни 5 уровня', 'Common', 40, 30, 'path', 'discipline', 5, s => s.character.level),
+  achDef('lvl10', 'Ветеран', 'Достигни 10 уровня', 'Rare', 80, 60, 'path', 'discipline', 10, s => s.character.level),
+  achDef('lvl25', 'Мастер жизни', 'Достигни 25 уровня', 'Epic', 150, 120, 'path', 'discipline', 25, s => s.character.level),
+  achDef('lvl50', 'Легенда', 'Достигни 50 уровня', 'Legendary', 400, 300, 'path', 'discipline', 50, s => s.character.level),
+  achDef('days7', 'Неделя в пути', '7 дней в игре', 'Common', 20, 20, 'path', 'mental', 7, daysInGame),
+  achDef('days30', 'Месяц героя', '30 дней в игре', 'Rare', 60, 50, 'path', 'mental', 30, daysInGame),
+  achDef('days100', 'Сотня рассветов', '100 дней в игре', 'Epic', 160, 120, 'path', 'mental', 100, daysInGame),
+  achDef('quest1', 'Первый шаг', 'Заверши первый квест', 'Common', 15, 10, 'deeds', 'quest', 1, doneQuests),
+  achDef('quest25', 'Деятель', 'Заверши 25 квестов', 'Rare', 60, 40, 'deeds', 'quest', 25, doneQuests),
+  achDef('quest100', 'Неудержимый', 'Заверши 100 квестов', 'Epic', 150, 100, 'deeds', 'quest', 100, doneQuests),
+  achDef('boss1', 'Гроза боссов', 'Победи босс-задачу', 'Rare', 60, 50, 'deeds', 'boss', 1, s => (s.quests || []).filter(q => q.status === 'completed' && q.bossHP).length),
+  achDef('goal1', 'Первая вершина', 'Заверши первую цель', 'Common', 30, 20, 'deeds', 'career', 1, doneGoals),
+  achDef('goal5', 'Покоритель хребтов', 'Заверши 5 целей', 'Epic', 120, 90, 'deeds', 'career', 5, doneGoals),
+  achDef('streak3', 'Искра', 'Серия 3 дня в привычке', 'Common', 15, 10, 'habit', 'focus', 3, bestStreak),
+  achDef('streak7', 'Постоянство', 'Серия 7 дней в привычке', 'Rare', 50, 30, 'habit', 'focus', 7, bestStreak),
+  achDef('streak30', 'Железная дисциплина', 'Серия 30 дней в привычке', 'Epic', 130, 100, 'habit', 'focus', 30, bestStreak),
+  achDef('streak100', 'Несокрушимый', 'Серия 100 дней в привычке', 'Legendary', 350, 250, 'habit', 'focus', 100, bestStreak),
+  achDef('habits5', 'Ритуалист', 'Заведи 5 привычек', 'Common', 20, 15, 'habit', 'physical', 5, s => (s.habits || []).length),
+  achDef('shop1', 'Побалуй себя', 'Первая покупка в лавке наград', 'Common', 10, 0, 'wealth', 'finance', 1, s => ((s.chronicle || []).some(c => c.type === 'REWARD_PURCHASED') ? 1 : 0)),
+  achDef('coins1000', 'Казначей', 'Заработай 1000 монет за всё время', 'Rare', 70, 50, 'wealth', 'finance', 1000, s => s.coinsEarnedAllTime || 0),
+  achDef('debt_slayer', 'Убийца долгов', 'Закрой первый долг', 'Rare', 100, 80, 'wealth', 'finance', 1, s => ((s.finance && s.finance.debts) || []).filter(d => d.remaining <= 0).length),
+  achDef('debt_free', 'Свободен от долгов', 'Закрой все долги', 'Legendary', 300, 200, 'wealth', 'finance', 1, s => { const d = (s.finance && s.finance.debts) || []; return d.length > 0 && d.every(x => x.remaining <= 0) ? 1 : 0; }),
+  achDef('first_order', 'В дороге', 'Запиши первый заказ', 'Common', 15, 10, 'wealth', 'career', 1, s => ((s.finance && s.finance.taxi && s.finance.taxi.orders) || []).length),
+  achDef('order_grinder', 'Король трассы', 'Запиши 50 заказов', 'Rare', 90, 70, 'wealth', 'career', 50, s => ((s.finance && s.finance.taxi && s.finance.taxi.orders) || []).length),
+  achDef('chest5', 'Охотник за сундуками', 'Открой 5 сундуков дня', 'Rare', 50, 40, 'world', 'finance', 5, s => (s.counters && s.counters.chests) || 0),
+  achDef('room3', 'Новосёл', 'Обставь комнату: 3 предмета', 'Common', 25, 20, 'world', 'creator', 3, s => normalizeRoom(s.room).owned.length),
+  achDef('council1', 'Голос совета', 'Проведи первый совет наставников', 'Common', 25, 20, 'world', 'social', 1, s => ((s.council && s.council.meetings) || []).length),
+  achDef('council10', 'Свой в штабе', 'Проведи 10 советов', 'Rare', 80, 60, 'world', 'social', 10, s => ((s.council && s.council.meetings) || []).length),
 ];
+const ACH_CATS = [
+  { key: 'all', label: 'Все' }, { key: 'path', label: 'Путь' }, { key: 'deeds', label: 'Дела' },
+  { key: 'habit', label: 'Привычки' }, { key: 'wealth', label: 'Богатство' }, { key: 'world', label: 'Мир' },
+];
+// Старые английские титулы → русские (у игроков в сохранении может лежать прежний вариант).
+const LEGACY_TITLES = {
+  Adventurer: 'Искатель приключений', Veteran: 'Ветеран', 'Master of Life': 'Мастер жизни', Legend: 'Легенда',
+  'First Step': 'Первый шаг', Doer: 'Деятель', Relentless: 'Неудержимый', 'Goal Getter': 'Первая вершина', Visionary: 'Покоритель хребтов',
+  'The Consistent': 'Постоянство', 'Iron Discipline': 'Железная дисциплина', Unbreakable: 'Несокрушимый', 'Treat Yourself': 'Побалуй себя',
+  'Debt Slayer': 'Убийца долгов', 'Debt Free': 'Свободен от долгов', 'On the Road': 'В дороге', 'Road Grinder': 'Король трассы',
+};
 
 const DEBT_STRATEGIES = [
   { key: 'avalanche', label: 'Avalanche', desc: 'Сначала самый дорогой долг (% ставка)' },
@@ -2226,7 +2265,7 @@ function ensureDailyContent(s) {
       });
     });
     ns.lastBonusDate = today;
-    chronicle.unshift({ id: uid(), ts: Date.now(), type: 'BONUS_QUESTS', text: 'Новые Bonus Quests на сегодня.' });
+    chronicle.unshift({ id: uid(), ts: Date.now(), type: 'BONUS_QUESTS', text: 'Новые бонусные квесты на сегодня.' });
   }
   if (ns.lastMonthlyDate !== month) {
     const t = MONTHLY_POOL[Math.floor(Math.random() * MONTHLY_POOL.length)];
@@ -2237,7 +2276,7 @@ function ensureDailyContent(s) {
       deadline: month + '-28T23:59', order: order++, createdAt: Date.now(),
     });
     ns.lastMonthlyDate = month;
-    chronicle.unshift({ id: uid(), ts: Date.now(), type: 'MONTHLY_CHALLENGE', text: `Новый Monthly Challenge: ${t.title}` });
+    chronicle.unshift({ id: uid(), ts: Date.now(), type: 'MONTHLY_CHALLENGE', text: `Новое испытание месяца: ${t.title}` });
   }
 
   if (ns.lastEventDate !== today) {
@@ -2249,7 +2288,7 @@ function ensureDailyContent(s) {
         xp: ev.xp, coins: ev.coins, stat: ev.stat, status: 'active',
         deadline: today + 'T23:59', order: order++, createdAt: Date.now(), rarity: ev.rarity,
       });
-      chronicle.unshift({ id: uid(), ts: Date.now(), type: 'RANDOM_EVENT', text: `✨ Random Event (${ev.rarity}): ${ev.title}` });
+      chronicle.unshift({ id: uid(), ts: Date.now(), type: 'RANDOM_EVENT', text: `✨ Случайное событие (${RARITY_TONE[ev.rarity] ? RARITY_TONE[ev.rarity].ru.toLowerCase() : ev.rarity}): ${ev.title}` });
     }
   }
 
@@ -4608,76 +4647,209 @@ const COUNCIL_SYSTEM = `Ты секретарь штаба Life RPG. Дирек�
 - Язык русский, коротко.`;
 
 
-function ProfileHub({
-  state, energy, xpNeed, setTab, setSubTab, openProfile,
-}) {
-  const currentWeight = latestWeight(state.body);
+function achievementItems(state) {
+  return ACHIEVEMENTS.map(a => {
+    let cur = 0;
+    try { cur = Math.max(0, Math.floor(Number(a.value(state)) || 0)); } catch (e) { cur = 0; }
+    return { ...a, cur, unlocked: (state.unlockedAchievements || []).includes(a.id) };
+  });
+}
+
+function equipmentSlotsView(stats) {
+  return EQUIPMENT_SLOTS.map(s => {
+    const value = Math.round(stats[s.statKey] || 0);
+    const tier = equipmentTierFor(value);
+    const next = EQUIPMENT_TIERS[EQUIPMENT_TIERS.indexOf(tier) + 1] || null;
+    return { slot: s.slot, label: s.label, theme: s.theme, tier, next, value, statLabel: STAT_LABEL[s.statKey] || s.statKey };
+  });
+}
+
+function AchievementsPage({ state }) {
+  const [cat, setCat] = useState('all');
+  const items = achievementItems(state);
+  const got = items.filter(a => a.unlocked);
+  const nearest = items.filter(a => !a.unlocked).sort((a, b) => (b.cur / b.target) - (a.cur / a.target))[0];
+  const byRarity = ['Common', 'Rare', 'Epic', 'Legendary'].map(r => ({ r, n: got.filter(a => a.rarity === r).length, t: items.filter(a => a.rarity === r).length }));
   return (
     <div>
-      <ScreenHeader title="Профиль" icon={User} extra={
-        <button className="lrpg-btn" onClick={() => openProfile('settings')} style={{ background: 'none' }}>
-          <SettingsIcon size={16} color={COLORS.textMuted} />
+      <div style={{ marginBottom: 12 }}>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Зал медалей</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Достижения</div>
+      </div>
+      <div className="lrpg-paper" style={{ padding: 12, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+          <span className="lrpg-num" style={{ fontSize: 28, fontWeight: 800 }}>{got.length}<span style={{ fontSize: 15, color: COLORS.textMuted }}>/{items.length}</span></span>
+          <span style={{ display: 'flex', gap: 10 }}>
+            {byRarity.map(x => (
+              <span key={x.r} style={{ textAlign: 'center' }}>
+                <span className="lrpg-num" style={{ display: 'block', fontSize: 14, fontWeight: 800, color: RARITY_TONE[x.r].c }}>{x.n}/{x.t}</span>
+                <span className="lrpg-mono" style={{ fontSize: 7, color: COLORS.textMuted }}>{RARITY_TONE[x.r].ru.slice(0, 4)}</span>
+              </span>
+            ))}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 2, marginTop: 8 }}>
+          {items.map(a => <span key={a.id} style={{ flex: 1, height: 6, borderRadius: 1, background: a.unlocked ? RARITY_TONE[a.rarity].c : '#e6e0d3' }} />)}
+        </div>
+        {nearest && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${COLORS.border}` }}>
+            <Medal kind={nearest.kind} rarity={nearest.rarity} locked size={30} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.gold }}>Ближе всего</div>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>{nearest.label} <span style={{ fontWeight: 500, color: COLORS.textMuted }}>· {nearest.desc}</span></div>
+            </div>
+            <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800 }}>{Math.min(nearest.cur, nearest.target)}/{nearest.target}</span>
+          </div>
+        )}
+      </div>
+      <AchievementBoard items={items} cats={ACH_CATS} cat={cat} setCat={setCat} />
+    </div>
+  );
+}
+
+function ProfileHub({
+  state, energy, xpNeed, setTab, setSubTab, openProfile, setCharacterName, setCharacterTitle, setCharacterPhoto,
+}) {
+  useProfileCss();
+  const [slot, setSlot] = useState(null);
+  const [editName, setEditName] = useState(false);
+  const [titles, setTitles] = useState(false);
+  const ch = state.character;
+  const rank = rankOf(ch.level);
+  const slots = equipmentSlotsView(state.stats);
+  const items = achievementItems(state);
+  const got = items.filter(a => a.unlocked);
+  const recent = (state.unlockedAchievements || []).slice(-4).reverse().map(id => items.find(a => a.id === id)).filter(Boolean);
+  const days = state.firstOpenedAt ? Math.floor((Date.now() - state.firstOpenedAt) / 86400000) + 1 : 1;
+  const quests = (state.quests || []).filter(q => q.status === 'completed').length;
+  const best = Math.max(0, ...(state.habits || []).map(h => h.bestStreak || 0));
+  const summits = (state.goals || []).filter(g => g.progress >= 100).length;
+  const crystals = normalizeEconomy(state.economy).crystals || 0;
+  const weight = latestWeight(state.body);
+  const room = normalizeRoom(state.room);
+  let net = null;
+  try { net = computeNetWorth(state).netWorth; } catch (e) { net = null; }
+  const debts = ((state.finance && state.finance.debts) || []).filter(d => d.remaining > 0).length;
+  const yt = (state.youtube && state.youtube.channels) || [];
+  const pendingCouncil = state.council && state.council.pending ? 1 : null;
+  const xpPct = Math.max(0, Math.min(100, (ch.xp / Math.max(1, xpNeed)) * 100));
+  const legendary = slots.filter(s => s.tier.rarity !== 'Common').length;
+  const fileRef = React.useRef(null);
+
+  async function onPhoto(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try { setCharacterPhoto(await resizeImageFile(file, 300, 0.85)); gameFeedback('ITEM_PLACE'); } catch (err) { /* ignore */ }
+  }
+  const go = (key) => { gameFeedback('PAGE_TURN'); openProfile(key); };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Карточка героя · день {days}</div>
+          {editName ? (
+            <input className="lrpg-input" autoFocus defaultValue={ch.name} maxLength={24} aria-label="Имя героя"
+              onBlur={e => { setCharacterName((e.target.value || '').trim() || 'Герой'); setEditName(false); }}
+              onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+              style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }} />
+          ) : (
+            <button className="lrpg-btn" onClick={() => setEditName(true)} aria-label="Изменить имя" style={{ background: 'none', padding: 0, display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left' }}>
+              <span className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2, color: COLORS.text }}>{ch.name}</span>
+              <Pencil size={14} color={COLORS.textMuted} />
+            </button>
+          )}
+          <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setTitles(true); }} style={{ marginTop: 4, background: ch.title ? COLORS.goldSoft : COLORS.bgCard, border: `1px dashed ${ch.title ? COLORS.gold : COLORS.border}`, color: ch.title ? COLORS.gold : COLORS.textMuted, borderRadius: 99, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
+            {ch.title ? `«${ch.title}»` : '+ выбрать титул'}
+          </button>
+        </div>
+        <button className="lrpg-btn" onClick={() => go('settings')} aria-label="Настройки" style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 12, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <SettingsIcon size={18} color={COLORS.textMuted} />
         </button>
-      } />
-
-      <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 16, padding: 14, marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-          border: `2px solid ${COLORS.gold}66`, background: COLORS.bgCardAlt,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          {state.character.photo
-            ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            : <User size={24} color={COLORS.textMuted} />}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="lrpg-display" style={{ fontSize: 16, color: COLORS.gold, fontWeight: 700 }}>{state.character.name}</div>
-          <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 6 }}>Уровень {state.character.level}{state.character.title ? ` · ${state.character.title}` : ''}</div>
-          <div style={{ fontSize: 10, color: COLORS.crimson, marginBottom: 3 }}>HP {state.stats.physical}/100</div>
-          <Bar value={state.stats.physical} max={100} color={COLORS.crimson} height={4} />
-          <div style={{ fontSize: 10, color: COLORS.teal, margin: '5px 0 3px' }}>Энергия {energy}/100</div>
-          <Bar value={energy} max={100} color={COLORS.teal} height={4} />
-          <div style={{ fontSize: 10, color: COLORS.gold, margin: '5px 0 3px' }}>Опыт {state.character.xp}/{xpNeed}</div>
-          <Bar value={state.character.xp} max={xpNeed} color={COLORS.gold} height={4} />
-        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, marginBottom: 4 }}>Персонаж</div>
-          <ProfileRow icon={Shirt} label="Внешность" onClick={() => openProfile('body')} />
-          <ProfileRow icon={Ruler} label="Рост / Вес" onClick={() => openProfile('body')} />
-          <ProfileRow icon={Activity} label="Характеристики" onClick={() => { setTab('progress'); setSubTab(s => ({ ...s, progress: 'stats' })); }} />
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: 12, marginBottom: 12, background: 'linear-gradient(#fbf9f4, #f3eee3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <button className="lrpg-btn" onClick={() => fileRef.current && fileRef.current.click()} aria-label="Сменить фото" style={{ width: 46, height: 46, borderRadius: 12, overflow: 'hidden', background: COLORS.bgCardAlt, border: `2px solid ${COLORS.gold}`, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {ch.photo ? <img src={ch.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Camera size={18} color={COLORS.textMuted} />}
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" onChange={onPhoto} style={{ display: 'none' }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 6 }}>
+              <span style={{ fontSize: 15, fontWeight: 800 }}>{rank.name} · ур. {ch.level}</span>
+              <span className="lrpg-num" style={{ fontSize: 11, color: COLORS.textMuted }}>{ch.xp}/{xpNeed} XP</span>
+            </div>
+            <div style={{ position: 'relative', height: 8, borderRadius: 4, background: '#e6e0d3', overflow: 'hidden', marginTop: 5 }}>
+              <div className="ag-fill" style={{ width: `${xpPct}%`, height: '100%', background: COLORS.gold }} />
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+              <span style={{ fontSize: 11.5, color: COLORS.crimson, fontWeight: 700 }}>HP {Math.round(state.stats.physical)}</span>
+              <span style={{ fontSize: 11.5, color: COLORS.teal, fontWeight: 700 }}>Энергия {Math.round(energy)}</span>
+              <span style={{ fontSize: 11.5, color: COLORS.gold, fontWeight: 700 }}>{state.coins} монет</span>
+              {crystals > 0 && <span style={{ fontSize: 11.5, color: '#a83e66', fontWeight: 700 }}>{crystals} крист.</span>}
+            </div>
+          </div>
         </div>
-        <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px' }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, marginBottom: 4 }}>Моё</div>
-          <ProfileRow icon={Backpack} label="Инвентарь" onClick={() => openProfile('inventory')} />
-          <ProfileRow icon={CoinsIcon} label="Магазин" onClick={() => openProfile('shop')} />
-          <ProfileRow icon={Trophy} label="Достижения" onClick={() => openProfile('achievements')} />
+        <HeroPaperDoll slots={slots} active={slot} onSlot={(k) => { gameFeedback('BUTTON_PRESS'); setSlot(k); }} />
+        <div style={{ fontSize: 11.5, color: COLORS.textMuted, textAlign: 'center', marginTop: 8 }}>
+          {slot ? 'Тапни слот ещё раз, чтобы закрыть' : `Экипировка растёт от реальных статов · улучшено ${legendary}/7. Тапни по слоту`}
         </div>
       </div>
 
-      <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, marginBottom: 4 }}>Моя жизнь</div>
-        <ProfileRow icon={Wallet} label="Финансы" onClick={() => openProfile('finance')} />
-        <ProfileRow icon={Youtube} label="YouTube" onClick={() => openProfile('youtube')} />
-        <ProfileRow icon={BookOpen} label="Учёба" onClick={() => { setTab('actions'); setSubTab(s => ({ ...s, actions: 'quests' })); }} />
-        <ProfileRow icon={Briefcase} label="Работа" onClick={() => openProfile('finance')} />
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: '10px 6px', marginBottom: 12, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', animationDelay: '.05s' }}>
+        {[
+          { v: days, l: plural(days, 'день', 'дня', 'дней') + ' в игре' },
+          { v: quests, l: 'квестов' },
+          { v: best, l: 'лучшая серия', flame: true },
+          { v: summits, l: plural(summits, 'вершина', 'вершины', 'вершин') },
+        ].map((x, i) => (
+          <div key={i} style={{ textAlign: 'center', borderLeft: i ? `1px solid ${COLORS.border}` : 'none', padding: '2px 4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+              {x.flame && best > 0 && <FlameIcon n={best} size={14} />}
+              <span className="lrpg-num" style={{ fontSize: 20, fontWeight: 800 }}>{x.v}</span>
+            </div>
+            <div style={{ fontSize: 10.5, color: COLORS.textMuted, lineHeight: 1.2 }}>{x.l}</div>
+          </div>
+        ))}
       </div>
 
-      <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: '10px 12px' }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.gold, marginBottom: 4 }}>Настройки</div>
-        <ProfileRow icon={SettingsIcon} label="Основные" onClick={() => openProfile('settings')} />
-        <ProfileRow icon={Save} label="Сохранение" onClick={() => openProfile('settings')} />
-        <ProfileRow icon={ScrollText} label="Хроника" onClick={() => openProfile('chronicle')} />
-        <ProfileRow icon={Users} label="Штаб Кайлена" onClick={() => openProfile('council')} />
-        <ProfileRow icon={MessageCircle} label="Наставник" onClick={() => openProfile('mentor')} />
-        <ProfileRow icon={HeartHandshake} label="События жизни" onClick={() => openProfile('events')} />
+      <button type="button" className="lrpg-btn lrpg-paper lrpg-stagger" onClick={() => go('achievements')} style={{ width: '100%', padding: 12, marginBottom: 12, textAlign: 'left', animationDelay: '.08s' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+          <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: COLORS.text }}>Достижения</span>
+          <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800, color: COLORS.gold }}>{got.length}/{items.length} →</span>
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 8, alignItems: 'flex-end' }}>
+          {recent.length ? recent.map(a => (
+            <div key={a.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 64 }}>
+              <Medal kind={a.kind} rarity={a.rarity} size={34} />
+              <span style={{ fontSize: 10, color: COLORS.textMuted, textAlign: 'center', lineHeight: 1.15, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{a.label}</span>
+            </div>
+          )) : (
+            <>
+              <Medal kind="quest" locked size={34} />
+              <span style={{ fontSize: 12.5, color: COLORS.textMuted, alignSelf: 'center' }}>Первая медаль — за первый выполненный квест.</span>
+            </>
+          )}
+        </div>
+      </button>
+
+      <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted, margin: '2px 0 8px' }}>Владения героя</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+        <SectionTile icon="social" color="#2f6b6e" title="Штаб Кайлена" note={`Кайлен ${npcPresence('kaylen').status}`} badge={pendingCouncil} onClick={() => go('council')} wide />
+        <SectionTile icon="physical" color="#3f7a4a" title="Тело" note={weight ? `${state.body.heightCm || '—'} см · ${weight} кг` : 'Рост, вес, питание'} onClick={() => go('body')} />
+        <SectionTile icon="finance" color="#c48a2a" title="Финансы" note={net != null ? `капитал ${fmtNum(Math.round(net))}${debts ? ` · долгов ${debts}` : ''}` : 'Деньги и долги'} onClick={() => go('finance')} />
+        <SectionTile icon="creator" color="#a83e66" title="YouTube" note={yt.length ? `${yt.length} ${plural(yt.length, 'канал', 'канала', 'каналов')}` : 'Подключи канал'} onClick={() => go('youtube')} />
+        <SectionTile icon="career" color="#a4412a" title="Лавка" note={`${state.coins} монет${crystals ? ` · ${crystals} крист.` : ''}`} onClick={() => go('shop')} />
+        <SectionTile icon="quest" color="#5a4636" title="Инвентарь" note={`${room.owned.length} в комнате · ${legendary}/7 снаряжения`} onClick={() => go('inventory')} />
+        <SectionTile icon="knowledge" color="#4a6a9a" title="Хроника" note={`${(state.chronicle || []).length} записей`} onClick={() => go('chronicle')} />
+        <SectionTile icon="mental" color="#7a5a8a" title="События жизни" note="Что случилось сегодня" onClick={() => go('events')} />
+        <SectionTile icon="focus" color="#6b6f7a" title="Совет Кайлена" note="Быстрый совет и разбор недели" onClick={() => go('mentor')} />
       </div>
 
-      <div style={{ fontSize: 10, color: COLORS.textMuted, textAlign: 'center', marginTop: 10 }}>
-        {currentWeight ? `${state.body.heightCm || '—'} см · ${currentWeight} кг` : 'Заполни рост и вес — силуэт на Home изменится'}
-      </div>
+      {titles && (
+        <TitleSheet titles={got.map(a => ({ id: a.id, label: a.label, rarity: a.rarity }))} current={ch.title}
+          onPick={(t) => { setCharacterTitle(t); setTitles(false); gameFeedback('ITEM_PLACE'); }} onClose={() => setTitles(false)} />
+      )}
     </div>
   );
 }
@@ -4703,6 +4875,7 @@ export default function LifeRPG() {
   const [showAddQuest, setShowAddQuest] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [goalFx, setGoalFx] = useState(null);
+  const [achQueue, setAchQueue] = useState([]);
   const [showAddReward, setShowAddReward] = useState(false);
   const [skipTarget, setSkipTarget] = useState(null);
   const [levelUpFlash, setLevelUpFlash] = useState(null);
@@ -4718,7 +4891,7 @@ export default function LifeRPG() {
       if (!prev.dayRoute || prev.dayRoute.chestClaimed) return prev;
       const { character, bonusCoins, leveledUp } = applyXP(prev.character, rew.xp);
       const extraCoins = rew.gift.kind === 'coins' ? rew.gift.amount : 0;
-      let next = { ...prev, character, dayRoute: { ...prev.dayRoute, chestClaimed: true } };
+      let next = { ...prev, character, dayRoute: { ...prev.dayRoute, chestClaimed: true }, counters: { ...(prev.counters || {}), chests: ((prev.counters && prev.counters.chests) || 0) + 1 } };
       next = { ...next, ...applyCoinLedger(next, 'earn', rew.coins + extraCoins + (bonusCoins || 0), 'day_chest', 'Сундук дня') };
       if (rew.gift.kind === 'crystal') next = { ...next, ...applyCrystalLedger(next, 'earn', rew.gift.amount, 'day_chest', 'Сундук дня') };
       if (rew.gift.kind === 'room') {
@@ -4731,7 +4904,7 @@ export default function LifeRPG() {
       const giftText = rew.gift.kind === 'room' ? `, предмет «${rew.gift.item.name}»` : rew.gift.kind === 'crystal' ? `, +${rew.gift.amount} кристалл` : `, +${rew.gift.amount} бонусных монет`;
       next.chronicle = pushChronicle(prev.chronicle, 'REWARD', `Сундук дня открыт: +${rew.coins} монет, +${rew.xp} XP${giftText}`);
       if (leveledUp) {
-        next.chronicle = pushChronicle(next.chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${character.level} уровня.`);
+        next.chronicle = pushChronicle(next.chronicle, 'LEVEL_UP', `Новый уровень! Теперь ты ${character.level} уровня.`);
         setLevelUpFlash(character.level);
         setTimeout(() => gameFeedback('LEVEL_UP', { level: character.level }), 200);
         setTimeout(() => setLevelUpFlash(null), 3400);
@@ -4974,7 +5147,7 @@ export default function LifeRPG() {
       const farmNote = mult < 1 ? ` [anti-farm ×${mult}]` : '';
       let chronicle = pushChronicle(prev.chronicle, 'QUEST_COMPLETED', `${q.title} — выполнено (+${awardedXp} XP, +${awardedCoins} Coins${statParts ? `, ${statParts}` : ''})${farmNote}`);
       if (leveledUp) {
-        chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${character.level} уровня.`);
+        chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Новый уровень! Теперь ты ${character.level} уровня.`);
         setLevelUpFlash(character.level);
         gameFeedback('LEVEL_UP', { level: character.level });
         setTimeout(() => setLevelUpFlash(null), 3200);
@@ -5008,9 +5181,9 @@ export default function LifeRPG() {
         if (q.stat && stats[q.stat] !== undefined) stats[q.stat] = Math.min(100, stats[q.stat] + 2);
         if (q.secondaryStat && stats[q.secondaryStat] !== undefined) stats[q.secondaryStat] = Math.min(100, stats[q.secondaryStat] + 1);
         quests = prev.quests.map(x => x.id === id ? { ...x, status: 'completed', completedAt: Date.now(), bossHPRemaining: 0 } : x);
-        chronicle = pushChronicle(chronicle, 'QUEST_COMPLETED', `💀 Boss Task «${q.title}» повержен! (+${awardedXp} XP, +${awardedCoins} Coins)`);
+        chronicle = pushChronicle(chronicle, 'QUEST_COMPLETED', `💀 Босс «${q.title}» повержен! (+${awardedXp} XP, +${awardedCoins} монет)`);
         if (res.leveledUp) {
-          chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${character.level} уровня.`);
+          chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Новый уровень! Теперь ты ${character.level} уровня.`);
           setLevelUpFlash(character.level);
           setTimeout(() => setLevelUpFlash(null), 3200);
         }
@@ -5151,7 +5324,7 @@ export default function LifeRPG() {
       next = { ...next, character: res.character };
       coins += res.bonusCoins || 0;
       if (res.leveledUp) {
-        chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${res.character.level} уровня.`);
+        chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Новый уровень! Теперь ты ${res.character.level} уровня.`);
         levelAfter = res.character.level;
       }
     }
@@ -5377,7 +5550,7 @@ export default function LifeRPG() {
       return {
         ...prev, ...ledger,
         lastPurchase: { id: uid(), rewardId: r.id, title: r.title, cost: r.cost, ts: Date.now(), isCustom: !!r.custom },
-        chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `Куплено: ${r.title} (-${r.cost} Coins)`),
+        chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `Куплено: ${r.title} (-${r.cost} монет)`),
       };
     });
   }
@@ -5392,7 +5565,7 @@ export default function LifeRPG() {
       const ledger = applyCoinLedger(prev, 'refund', lp.cost, 'refund', `Возврат: ${lp.title}`, lp.rewardId);
       return {
         ...prev, ...ledger, lastPurchase: null, lastRefundAt: Date.now(),
-        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `↩️ Возврат покупки: ${lp.title} (+${lp.cost} Coins)`),
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `↩️ Возврат покупки: ${lp.title} (+${lp.cost} монет)`),
       };
     });
   }
@@ -5446,7 +5619,7 @@ export default function LifeRPG() {
       return {
         ...prev, ...ledger,
         cosmetics: { ...prev.cosmetics, unlocked: [...prev.cosmetics.unlocked, item.id] },
-        chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `✨ Косметика: ${item.name} (-${item.cost} Coins)`),
+        chronicle: pushChronicle(prev.chronicle, 'REWARD_PURCHASED', `✨ Косметика: ${item.name} (-${item.cost} монет)`),
       };
     });
   }
@@ -6476,7 +6649,7 @@ function addYouTubeQuest(ch, metric, delta) {
         const res = applyXP(character, a.xp);
         character = res.character;
         if (res.bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', res.bonusCoins, 'levelup', 'Level-Up Bonus');
-        chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🏆 Achievement: ${a.label} (${a.rarity}) — +${a.xp} XP, +${a.coins} Coins`);
+        chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🏆 Достижение «${a.label}» (${RARITY_TONE[a.rarity] ? RARITY_TONE[a.rarity].ru : a.rarity}) — +${a.xp} XP, +${a.coins} монет`);
       });
       const unlockedSets = [...prev.unlockedSets];
       toUnlockSets.forEach(s => {
@@ -6486,14 +6659,14 @@ function addYouTubeQuest(ch, metric, delta) {
         const res = applyXP(character, s.xp);
         character = res.character;
         if (res.bonusCoins > 0) ledgerState = applyCoinLedger(ledgerState, 'earn', res.bonusCoins, 'levelup', 'Level-Up Bonus');
-        chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🛡️ Set Bonus: ${s.label} собран целиком — +${s.xp} XP, +${s.coins} Coins`);
+        chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🛡️ Комплект «${s.label}» собран целиком — +${s.xp} XP, +${s.coins} монет`);
       });
       const unlockedLevels = [...prev.unlockedLevels];
       toUnlockLevels.forEach(l => {
         if (unlockedLevels.includes(l.level)) return;
         unlockedLevels.push(l.level);
         ledgerState = applyCoinLedger(ledgerState, 'earn', l.coins, 'levelup', `Уровень ${l.level}: ${l.title}`, l.level);
-        chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🔓 Уровень ${l.level}: ${l.title} — ${l.desc} (+${l.coins} Coins)`);
+        chronicle = pushChronicle(chronicle, 'ACHIEVEMENT_UNLOCKED', `🔓 Уровень ${l.level}: ${l.title} — ${l.desc} (+${l.coins} монет)`);
       });
       return {
         ...prev, coins: ledgerState.coins, coinsEarnedAllTime: ledgerState.coinsEarnedAllTime,
@@ -6501,7 +6674,14 @@ function addYouTubeQuest(ch, metric, delta) {
         character, chronicle, unlockedAchievements: unlocked, unlockedSets, unlockedLevels,
       };
     });
+    if (toUnlock.length) setAchQueue(q => [...q, ...toUnlock.filter(a => !q.some(x => x.id === a.id)).map(a => ({ id: a.id, label: a.label, desc: a.desc, rarity: a.rarity, kind: a.kind, xp: a.xp, coins: a.coins }))]);
   }, [loaded, state]);
+
+  // Старые английские титулы из прошлых версий → русские.
+  useEffect(() => {
+    if (!loaded || !state || !state.character.title || !LEGACY_TITLES[state.character.title]) return;
+    setState(prev => ({ ...prev, character: { ...prev.character, title: LEGACY_TITLES[prev.character.title] || prev.character.title } }));
+  }, [loaded, state && state.character.title]);
 
 const ytDoneRef = React.useRef(new Set());
 useEffect(() => {
@@ -6750,6 +6930,7 @@ useEffect(() => {
         .lrpg-btn-gold { background: #a4412a !important; color: #fbf9f4 !important; border: 1px solid #a4412a !important; box-shadow: 0 2px 0 #7a2e1c !important; }
         .lrpg-btn-violet { background: #1e2230 !important; color: #f2eee5 !important; border: 1px solid #1e2230 !important; box-shadow: 0 2px 0 #0e1018 !important; }
         .lrpg-btn-ghost { background: #fbf9f4 !important; color: #1e2230 !important; border: 1px solid #e2dbcc !important; box-shadow: none !important; }
+        .lrpg-input { box-sizing: border-box !important; max-width: 100%; min-width: 0; }
         .lrpg-input { background: #fbf9f4 !important; border: 1px solid #e2dbcc !important; color: #1e2230 !important; box-shadow: none !important; border-radius: 10px !important; }
         .lrpg-input:focus { border-color: #a4412a !important; box-shadow: 0 0 0 3px rgba(164,65,42,.14) !important; }
         .lrpg-chamfer { clip-path: none !important; border-radius: 14px; box-shadow: inset 0 0 0 1px #e2dbcc !important; }
@@ -6791,6 +6972,9 @@ useEffect(() => {
       `}</style>
 
 
+      {achQueue.length > 0 && (
+        <AchievementToast key={achQueue[0].id} a={achQueue[0]} sound={(e) => gameFeedback(e)} onDone={() => setAchQueue(q => q.slice(1))} />
+      )}
       {goalFx && (
         <GoalCeremony key={goalFx.goal.id + goalFx.kind + (goalFx.camp ? goalFx.camp.at : '')} fx={goalFx} sound={(e) => gameFeedback(e)}
           onClose={() => closeGoalFx()}
@@ -6881,6 +7065,7 @@ useEffect(() => {
             <ProfileHub
               state={state} energy={energy} xpNeed={xpNeeded(state.character.level)}
               setTab={setTab} setSubTab={setSubTab} openProfile={openProfile}
+              setCharacterName={setCharacterName} setCharacterTitle={setCharacterTitle} setCharacterPhoto={setCharacterPhoto}
             />
           )}
 
@@ -6936,7 +7121,7 @@ useEffect(() => {
                 />
               )}
               {subTab.profile === 'achievements' && (
-                <WorldTab stats={state.stats} unlockedAchievements={state.unlockedAchievements} state={state} />
+                <AchievementsPage state={state} />
               )}
               {subTab.profile === 'body' && (
                 <BodyTab
@@ -8487,6 +8672,19 @@ const CHRONICLE_FILTER_GROUPS = [
   { key: 'other', label: 'Прочее', types: ['SYSTEM', 'MANUAL'] },
 ];
 
+const CHRONICLE_KIND = {
+  QUEST_COMPLETED: 'quest', QUEST_SKIPPED: 'quest', QUEST_LATER: 'quest', QUEST_CREATED: 'quest', BONUS_QUESTS: 'quest', MONTHLY_CHALLENGE: 'boss', RANDOM_EVENT: 'focus',
+  GOAL_CREATED: 'career', GOAL_COMPLETED: 'career', DEBT_PAYMENT: 'finance', DEBT_DEFEATED: 'finance', REWARD_PURCHASED: 'finance', REWARD: 'finance',
+  ACHIEVEMENT_UNLOCKED: 'creator', LEVEL_UP: 'discipline', LIFE_EVENT: 'social', SYSTEM: 'mental', MANUAL: 'knowledge',
+};
+function chronicleDayLabel(ts) {
+  const d = new Date(ts); const t = new Date();
+  const y = new Date(); y.setDate(t.getDate() - 1);
+  if (d.toDateString() === t.toDateString()) return 'Сегодня';
+  if (d.toDateString() === y.toDateString()) return 'Вчера';
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: d.getFullYear() === t.getFullYear() ? undefined : 'numeric' });
+}
+
 function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, deleteChronicleEntry }) {
   const [showAdd, setShowAdd] = useState(false);
   const [newText, setNewText] = useState('');
@@ -8514,7 +8712,11 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Дневник героя · {chronicle.length} записей</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2, marginBottom: 4 }}>Хроника</div>
+      </div>
       <div style={{ position: 'relative' }}>
         <Search size={14} color={COLORS.textMuted} style={{ position: 'absolute', left: 10, top: 10 }} />
         <input className="lrpg-input" placeholder="Поиск по записям..." value={searchText} onChange={e => setSearchText(e.target.value)} style={{ paddingLeft: 30 }} />
@@ -8543,10 +8745,22 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
         </Card>
       )}
       {filtered.length === 0 && <div style={{ fontSize: 12, color: COLORS.textMuted, textAlign: 'center', padding: '20px 0' }}>Ничего не найдено.</div>}
-      {filtered.map(c => (
-        <div key={c.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0', borderBottom: `1px solid ${COLORS.border}` }}>
-          <div style={{ width: 8, height: 8, borderRadius: 999, background: CHRONICLE_COLOR[c.type] || COLORS.textMuted, marginTop: 5, flexShrink: 0 }} />
-          <div style={{ flex: 1 }}>
+      {filtered.map((c, idx) => {
+        const day = new Date(c.ts).toDateString();
+        const newDay = idx === 0 || new Date(filtered[idx - 1].ts).toDateString() !== day;
+        const kind = CHRONICLE_KIND[c.type] || 'quest';
+        return (
+        <React.Fragment key={c.id}>
+        {newDay && (
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, margin: '12px 0 2px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            {chronicleDayLabel(c.ts)}<span style={{ flex: 1, height: 1, background: COLORS.border }} />
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 10px', background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 10, minWidth: 0 }}>
+          <span style={{ width: 26, height: 26, borderRadius: 7, background: (CHRONICLE_COLOR[c.type] || COLORS.textMuted) + '1a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+            <PixelIcon kind={kind} color={CHRONICLE_COLOR[c.type] || COLORS.textMuted} size={14} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
             {editingId === c.id ? (
               <div style={{ display: 'flex', gap: 6 }}>
                 <input className="lrpg-input" value={editText} onChange={e => setEditText(e.target.value)} autoFocus />
@@ -8556,7 +8770,7 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
               <div style={{ fontSize: 13 }}>{c.text}{c.edited && <span style={{ fontSize: 10, color: COLORS.textMuted }}> (отредактировано)</span>}{c.isManual && <span style={{ fontSize: 10, color: COLORS.teal }}> · добавлено вручную</span>}</div>
             )}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{fmtTime(c.ts)}</div>
+              <div style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(c.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
               {editingId !== c.id && (
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className="lrpg-btn" onClick={() => startEdit(c)} style={{ background: 'none' }}><Pencil size={11} color={COLORS.textMuted} /></button>
@@ -8566,7 +8780,9 @@ function ChronicleTab({ chronicle, addManualChronicleEntry, editChronicleEntry, 
             </div>
           </div>
         </div>
-      ))}
+        </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -11804,96 +12020,92 @@ function CalendarTab({ playLog, firstOpenedAt }) {
 }
 
 function InventoryTab({ stats, unlockedSets, councilGear = [], room, equipRoomSlot }) {
+  useProfileCss();
+  const [slot, setSlot] = useState(null);
+  const slots = equipmentSlotsView(stats);
+  const r = normalizeRoom(room);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {councilGear.length > 0 && (
-        <Card>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Шмот от штаба</div>
-          {councilGear.map(g => <div key={g.id} style={{ fontSize: 12, padding: '4px 0' }}>{g.label} · {g.slot} · {g.rarity || 'Common'}</div>)}
-        </Card>
-      )}
-      {normalizeRoom(room).owned.length > 0 && (
-        <Card>
-          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Комната</div>
-          {normalizeRoom(room).owned.map(id => {
-            const it = roomItemById(id);
-            if (!it) return null;
-            const on = normalizeRoom(room).equipped[it.slot] === it.id;
-            return (
-              <div key={id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${COLORS.border}` }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{it.name}</div>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted }}>{ROOM_SLOTS.find(s => s.key === it.slot)?.label}</div>
-                </div>
-                <button className="lrpg-btn" onClick={() => equipRoomSlot && equipRoomSlot(it.slot, on ? null : it.id)} style={{ fontSize: 11, padding: '5px 10px', borderRadius: 999, background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#fbf9f4' : COLORS.text }}>{on ? 'Стоит' : 'Поставить'}</button>
-              </div>
-            );
-          })}
-        </Card>
-      )}
-      <Card>
-        <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.5, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-          <Backpack size={16} color={COLORS.violet} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>Экипировка растёт вместе с твоими реальными статами — не нужно ничего фармить отдельно, просто развивайся.</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Снаряжение растёт от реальных статов</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Инвентарь</div>
+      </div>
+      <div className="lrpg-paper" style={{ padding: 12 }}>
+        <HeroPaperDoll slots={slots} active={slot} onSlot={(k) => { gameFeedback('BUTTON_PRESS'); setSlot(k); }} />
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+          {EQUIPMENT_TIERS.map(t => (
+            <span key={t.roman} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: COLORS.textMuted }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: RARITY_TONE[t.rarity].c }} />{t.roman} · от {t.min}
+            </span>
+          ))}
         </div>
-      </Card>
+      </div>
 
       <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Layers size={15} color={COLORS.gold} /> Комплекты
-        </div>
+        <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Комплекты</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {ITEM_SETS.map(set => {
             const unlocked = unlockedSets.includes(set.key);
-            const piecesReady = set.slots.filter(slotKey => {
-              const slotDef = EQUIPMENT_SLOTS.find(s => s.slot === slotKey);
-              return EQUIPMENT_TIERS.indexOf(equipmentTierFor(stats[slotDef.statKey])) >= 2;
-            }).length;
+            const parts = set.slots.map(k => slots.find(s => s.slot === k));
+            const ready = parts.filter(p => EQUIPMENT_TIERS.indexOf(p.tier) >= 2).length;
             return (
-              <Card key={set.key} style={{ opacity: unlocked ? 1 : 0.75, border: unlocked ? `1px solid ${COLORS.gold}55` : `1px solid ${COLORS.border}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: unlocked ? COLORS.gold : COLORS.text }}>{unlocked ? '🛡️ ' : ''}{set.label}</span>
-                  <span style={{ fontSize: 11, color: COLORS.textMuted }}>{piecesReady}/{set.slots.length} на Mastery+</span>
+              <div key={set.key} className="lrpg-paper" style={{ padding: 12, borderColor: unlocked ? COLORS.gold : undefined, background: unlocked ? '#fbf3e0' : undefined }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 14.5, fontWeight: 700, color: unlocked ? COLORS.gold : COLORS.text }}>{set.label}</span>
+                  <span className="lrpg-mono" style={{ fontSize: 8.5, color: unlocked ? COLORS.gold : COLORS.textMuted }}>{unlocked ? 'собран' : `${ready}/${set.slots.length} эпических`}</span>
                 </div>
-                <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>
-                  {set.slots.map(slotKey => EQUIPMENT_SLOTS.find(s => s.slot === slotKey).label).join(' · ')}
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  {parts.map(p => {
+                    const tone = RARITY_TONE[p.tier.rarity];
+                    const ok = EQUIPMENT_TIERS.indexOf(p.tier) >= 2;
+                    return (
+                      <span key={p.slot} title={p.theme} style={{ width: 38, height: 38, borderRadius: 8, background: tone.bg, border: `2px solid ${ok ? tone.c : COLORS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: ok ? 1 : 0.65 }}>
+                        <GearIcon slot={p.slot} color={tone.c} size={22} />
+                      </span>
+                    );
+                  })}
                 </div>
-                {unlocked ? (
-                  <div style={{ fontSize: 10, color: COLORS.teal, marginTop: 6 }}>Собран! Бонус уже получен.</div>
-                ) : (
-                  <div style={{ marginTop: 6 }}><Bar value={piecesReady} max={set.slots.length} color={COLORS.gold} /></div>
-                )}
-              </Card>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 6 }}>
+                  {unlocked ? 'Бонус получен.' : `Все части до III уровня (стат 60+) → +${set.xp} XP и +${set.coins} монет.`}
+                </div>
+              </div>
             );
           })}
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        {EQUIPMENT_SLOTS.map(slot => {
-          const Icon = slot.icon;
-          const value = stats[slot.statKey];
-          const tier = equipmentTierFor(value);
-          const nextTier = EQUIPMENT_TIERS[EQUIPMENT_TIERS.indexOf(tier) + 1];
-          const color = RARITY_COLOR[tier.rarity];
-          return (
-            <Card key={slot.slot} style={{ border: `1px solid ${color}55` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                <Icon size={16} color={color} />
-                <span style={{ fontSize: 11, color: COLORS.textMuted }}>{slot.label}</span>
-              </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color }}>{slot.theme} {tier.roman}</div>
-              <Tag color={color}>{tier.rarity}</Tag>
-              <div style={{ marginTop: 8 }}>
-                <Bar value={value} color={color} />
-              </div>
-              <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>
-                {nextTier ? `До уровня ${nextTier.roman}: ${STAT_LABEL[slot.statKey]} ${nextTier.min}` : 'Максимальный уровень'}
-              </div>
-            </Card>
-          );
-        })}
+      {councilGear.length > 0 && (
+        <div className="lrpg-paper" style={{ padding: 12 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 700, marginBottom: 6 }}>Подарки штаба</div>
+          {councilGear.map(g => <div key={g.id} style={{ fontSize: 13, padding: '5px 0', borderTop: `1px dashed ${COLORS.border}` }}>{g.label} <span style={{ color: COLORS.textMuted }}>· {g.slot} · {(RARITY_TONE[g.rarity] || RARITY_TONE.Common).ru}</span></div>)}
+        </div>
+      )}
+
+      <div>
+        <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Вещи для комнаты</div>
+        {r.owned.length === 0 ? (
+          <div className="lrpg-paper" style={{ padding: 12, fontSize: 13, color: COLORS.textMuted }}>Пока пусто. Мебель продаётся в лавке и выпадает из сундука дня.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+            {r.owned.map(id => {
+              const it = roomItemById(id);
+              if (!it) return null;
+              const on = r.equipped[it.slot] === it.id;
+              return (
+                <div key={id} className="lrpg-paper" style={{ overflow: 'hidden', borderColor: on ? COLORS.teal : undefined }}>
+                  <RoomItemThumb it={it} width={170} height={84} />
+                  <div style={{ padding: '6px 8px 8px' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.2 }}>{it.name}</div>
+                    <div style={{ fontSize: 10.5, color: COLORS.textMuted }}>{ROOM_SLOTS.find(s => s.key === it.slot)?.label}</div>
+                    <button className="lrpg-btn" onClick={() => { gameFeedback('ITEM_PLACE'); equipRoomSlot && equipRoomSlot(it.slot, on ? null : it.id); }} style={{ marginTop: 6, width: '100%', fontSize: 12, fontWeight: 700, padding: '6px 0', borderRadius: 8, background: on ? COLORS.teal : COLORS.bgCardAlt, color: on ? '#fbf9f4' : COLORS.text, border: `1px solid ${on ? COLORS.teal : COLORS.border}` }}>{on ? 'Стоит в комнате' : 'Поставить'}</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
