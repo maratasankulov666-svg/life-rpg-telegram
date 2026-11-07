@@ -19,6 +19,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | `src/creatorUI.jsx` | YouTube UI ("creator studio"): `StudioScene`, `PlayPlaque`, `SUB_MILESTONES`/`milestoneInfo`, `RhythmDots`, `StageTrack`, `fmtCompact` |
 | `src/shopUI.jsx` | Shop UI ("Vera's shop"): `ShopScene` (counter + Vera portrait + speech), `DailyLoginStrip`, `ItemTile`, `MiniChest`, `ReceiptModal` (paid stamp), `PrizeModal`, `RAR` |
 | `src/lifeUI.jsx` | Life events + chronicle UI: `DayScale` (good/bad scale), `ActivityHeatmap` (weeks × days, tap to filter), `WeekBalance` |
+| `src/settingsUI.jsx` | Settings UI: `SaveCrystal`, `Toggle`, `HoldButton` (press-and-hold confirm), `SettingsSection` (accordion) |
 | `src/progressUI.jsx` | Progress section UI: `WorldMapPixel` (9 lands = 9 stats, 6 stages, fog, roads), `LANDS`, `stageOf`, `StageMini`, `HeroRankCard` (`rankOf`), `StatRow` |
 | `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts`, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
@@ -65,7 +66,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | 8031 | StatsTab | 9877 | EventsTab (+`lifeHistory`, `dayKeyOf`; `state.lifeLog`, `logLifeEvent` once-per-day for positive, `undoLifeEvent`) |
 | 8134 | ShopTab (+`DAILY_LOGIN_TABLE`, `SHOP_CHESTS`, `FORGE_RATE`, `COSMETIC_LOOK`; EconomyPanel merged in) | 9219 | YouTubeHQ (+`parseAiIdeas`, `ytWeekStart`; YouTubeTab merged in; rewards via `onCreatorAction` stage/publish) |
 | 8313 | ChronicleTab (+`CHRONICLE_IMPORTANT`, chapters by week, diary moods) | 10709 | GarageTab |
-| 8397 | HabitsTab | 11031 | SettingsTab (+SaveManager 9945, AICenter 10040) |
+| 8397 | HabitsTab | 11031 | SettingsTab (+`WHATS_NEW`, `DIFFICULTY_INFO`; snapshots `listSnapshots`/`takeSnapshot` near `LOCAL_BACKUP_KEY`; `applyCalmMode`, `hapticsOn` pref) |
 | 8723 | FinanceTab (+`financeScore`, `DEBT_TACTICS`) | 11430 | BodyTab (+NutritionCard 10249) |
 | 11548 | CalendarTab | 11629 | InventoryTab |
 

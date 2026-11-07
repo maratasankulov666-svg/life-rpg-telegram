@@ -136,6 +136,7 @@ import { TreasuryScene, DebtBossSprite, HpBar, DamagePop, PiggyJar, WeekBars, Gr
 import { StudioScene, PlayPlaque, RhythmDots, StageTrack, SUB_MILESTONES, milestoneInfo, fmtCompact, useCreatorCss } from './creatorUI.jsx';
 import { ShopScene, DailyLoginStrip, ItemTile, MiniChest, ReceiptModal, PrizeModal, useShopCss, RAR } from './shopUI.jsx';
 import { DayScale, ActivityHeatmap, WeekBalance, useLifeCss } from './lifeUI.jsx';
+import { SaveCrystal, Toggle, HoldButton, SettingsSection, useSettingsCss } from './settingsUI.jsx';
 import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
@@ -215,7 +216,10 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       «дней без …» по вредным привычкам, своё событие через иконки статов. Хроника = летопись: карта активности
 //       за 14 недель (тап — открыть день), главы по неделям с итогами, ★ важные события и фильтр «Важное»,
 //       запись в дневник с настроением и датой, подгрузка порциями.
-const APP_VERSION = '16.5';
+// 16.6  Настройки = меню игры: кристалл сохранения, разделы-аккордеон; авто-копии раз в день и перед сбросом/импортом
+//       (три последние, с откатом), импорт из файла, сброс только удержанием, вибрация вкл/выкл, спокойный режим
+//       глушит анимации, понятные описания сложности, ползунок свободных часов, ИИ-ядро, «Что нового».
+const APP_VERSION = '16.6';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -246,6 +250,9 @@ function loadFeedbackPrefs() {
   catch { return { sfxOn: true, volume: 0.7, batterySaver: false }; }
 }
 let FEEDBACK_PREFS = loadFeedbackPrefs();
+// Спокойный режим: глушит CSS-анимации во всей игре (класс на body).
+function applyCalmMode(on) { try { document.body.classList.toggle('lrpg-calm', !!on); } catch (e) { /* нет DOM */ } }
+if (typeof document !== 'undefined') applyCalmMode(FEEDBACK_PREFS.batterySaver);
 function saveFeedbackPrefs(p) {
   FEEDBACK_PREFS = { ...FEEDBACK_PREFS, ...p };
   try { localStorage.setItem(FEEDBACK_STORAGE, JSON.stringify(FEEDBACK_PREFS)); } catch {}
@@ -259,6 +266,7 @@ const FeedbackBus = {
 
 const HapticManager = {
   fire(kind = 'light') {
+    if (FEEDBACK_PREFS.hapticsOn === false) return;
     try {
       const tg = window.Telegram?.WebApp?.HapticFeedback;
       if (tg) {
@@ -535,32 +543,6 @@ function FeedbackLayer() {
     </>
   );
 }
-
-function FeedbackSettingsCard() {
-  const [sfxOn, setSfxOn] = useState(FEEDBACK_PREFS.sfxOn);
-  const [volume, setVolume] = useState(Math.round(FEEDBACK_PREFS.volume * 100));
-  const [saver, setSaver] = useState(FEEDBACK_PREFS.batterySaver);
-  return (
-    <Card>
-      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Звук и эффекты</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <span style={{ fontSize: 12 }}>Звуки</span>
-        <button className="lrpg-btn" onClick={() => { const n = !sfxOn; setSfxOn(n); n ? SoundManager.unmute() : SoundManager.mute(); gameFeedback('BUTTON_PRESS'); }} style={{
-          background: sfxOn ? COLORS.violet : COLORS.bgCardAlt, color: '#fff', borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
-        }}>{sfxOn ? 'Вкл' : 'Выкл'}</button>
-      </div>
-      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 4 }}>Громкость {volume}%</div>
-      <input type="range" min={0} max={100} value={volume} onChange={e => { const v = Number(e.target.value); setVolume(v); SoundManager.setVolume(v / 100); }} style={{ width: '100%' }} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-        <span style={{ fontSize: 12 }}>Экономия батареи</span>
-        <button className="lrpg-btn" onClick={() => { const n = !saver; setSaver(n); saveFeedbackPrefs({ batterySaver: n }); gameFeedback('BUTTON_PRESS'); }} style={{
-          background: saver ? COLORS.teal : COLORS.bgCardAlt, color: saver ? '#fbf9f4' : COLORS.textMuted, borderRadius: 999, padding: '5px 12px', fontSize: 11, fontWeight: 800,
-        }}>{saver ? 'Вкл' : 'Выкл'}</button>
-      </div>
-    </Card>
-  );
-}
-
 
 // ===================== АРТ: спрайты персонажа (8 типов телосложения) и фон комнаты =====================
 // Сгенерированы отдельно и встроены как data URI — не требуют внешнего хостинга.
@@ -1391,6 +1373,19 @@ function applyCoinLedger(prev, type, amount, source, title, sourceId) {
 
 const STORAGE_KEY = 'liferpg_state_v1';
 const LOCAL_BACKUP_KEY = 'liferpg_local_backup_v1';
+// Резервные копии: раз в день и перед сбросом/импортом. Хранятся три последние (если не влезают — меньше).
+const SNAP_KEY = 'liferpg_snapshots_v1';
+function listSnapshots() {
+  try { const l = JSON.parse(localStorage.getItem(SNAP_KEY) || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+}
+function takeSnapshot(st, reason) {
+  if (!st || !st.character) return false;
+  let list = [{ id: Math.random().toString(36).slice(2, 10), ts: Date.now(), reason, level: st.character.level, coins: st.coins, data: JSON.stringify(st) }, ...listSnapshots()].slice(0, 3);
+  while (list.length) {
+    try { localStorage.setItem(SNAP_KEY, JSON.stringify(list)); return true; } catch (e) { list = list.slice(0, list.length - 1); }
+  }
+  return false;
+}
 const SAVE_TIMEOUT_MS = 25000; // операция может состоять из десятка+ последовательных сетевых
 // запросов (по чанку) к CloudStorage — на LTE это легитимно может занять больше 8 секунд,
 // это не обязательно "зависание". У нас уже есть локальный бэкап как подстраховка, так что
@@ -6447,10 +6442,12 @@ function addYouTubeQuest(ch, metric, delta) {
   }
 
   function resetAllData() {
+    takeSnapshot(state, 'Перед полным сбросом');
     setState(defaultState());
   }
 
   function resetFinance() {
+    takeSnapshot(state, 'Перед сбросом финансов');
     setState(prev => ({
       ...prev,
       finance: defaultState().finance,
@@ -6459,6 +6456,7 @@ function addYouTubeQuest(ch, metric, delta) {
   }
 
   function resetProgressKeepLife() {
+    takeSnapshot(state, 'Перед сбросом прогресса');
     setState(prev => {
       const d = defaultState();
       const next = {
@@ -6521,6 +6519,7 @@ function addYouTubeQuest(ch, metric, delta) {
       parsed.youtube = { ...defs.youtube, ...(parsed.youtube || {}) };
       if (!Array.isArray(parsed.youtube.channels)) parsed.youtube.channels = [];
       const result = ensureDailyContent(parsed);
+      takeSnapshot(state, 'Перед импортом');
       setState(result.state);
       setWelcomeBackDays(0);
       return { ok: true };
@@ -6595,6 +6594,15 @@ function addYouTubeQuest(ch, metric, delta) {
     });
     gameFeedback('ACHIEVEMENT_UNLOCK');
   }, [loaded, state && state.economy]);
+
+  // Ежедневная резервная копия (одна в день, при первом запуске за день).
+  useEffect(() => {
+    if (!loaded || !state) return;
+    const last = listSnapshots().find(x => x.reason === 'Ежедневная копия');
+    if (last && new Date(last.ts).toDateString() === new Date().toDateString()) return;
+    const t = setTimeout(() => takeSnapshot(state, 'Ежедневная копия'), 4000);
+    return () => clearTimeout(t);
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Старые английские титулы из прошлых версий → русские.
   useEffect(() => {
@@ -6888,6 +6896,7 @@ useEffect(() => {
         @keyframes lrpg-lvl-star { 0%,100% { opacity: .15; transform: scale(.5); } 50% { opacity: 1; transform: scale(1.1); } }
         @keyframes lrpg-levelup { 0% { opacity: 0; transform: translate(-50%, -12px) scale(.9); } 15% { opacity: 1; transform: translate(-50%, 0) scale(1.03); } 25% { transform: translate(-50%,0) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -6px); } }
         @media (prefers-reduced-motion: reduce) { .lrpg-root *, .lrpg-root *::before { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+        body.lrpg-calm *, body.lrpg-calm *::before, body.lrpg-calm *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
       `}</style>
 
 
@@ -11375,278 +11384,227 @@ function TelegramDiagnosticsCard() {
   );
 }
 
-function SaveManagerCard({ state, importSaveData, onExported }) {
-  const [showExport, setShowExport] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+const WHATS_NEW = [
+  { v: '16.6', t: 'Настройки — меню игры: кристалл сохранения, авто-копии с откатом, сброс удержанием, вибрация, спокойный режим' },
+  { v: '16.5', t: 'События жизни — дневник дня с весами и «днями без…», хроника с картой активности и главами' },
+  { v: '16.4', t: 'Лавка Веры: ежедневка, чеки, колесо и сундуки, образ в профиле, коллекции и кузница' },
+  { v: '16.3', t: 'YouTube — студия творца: вехи-кнопки, ритм недели, конвейер роликов, ИИ-продюсер' },
+  { v: '16.2', t: 'Финансы — казна героя: долги-боссы, быстрый ввод, бюджет-конверты, копилки, такси' },
+  { v: '16.1', t: 'Профиль — карточка героя со снаряжением, 29 достижений с прогрессом' },
+  { v: '16.0', t: 'Цели — атлас походов: горы, лагеря, вершины и зал трофеев' },
+  { v: '15.x', t: 'Новая бумажно-пиксельная тема, комната с Ташкентом, дорога дня, карта мира, штаб наставников с голосами' },
+];
+const DIFFICULTY_INFO = {
+  easy: { name: 'Лёгкий', desc: 'Мягкие штрафы за пропуски, повтор квеста за день почти не режет награду.' },
+  normal: { name: 'Обычный', desc: 'Сбалансированно: пропуски чувствуются, фарм одного квеста режется.' },
+  hardcore: { name: 'Хардкор', desc: 'Пропуски бьют в полтора раза сильнее, повтор квеста за день почти ничего не даёт.' },
+};
+
+function SettingsTab({ character, setCharacterName, resetAllData, resetProgressKeepLife, resetFinance, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, localBackupOk, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
+  useSettingsCss();
+  const [open, setOpen] = useState('save');
+  const [saving, setSaving] = useState(false);
+  const [saveRes, setSaveRes] = useState(null);
   const [importText, setImportText] = useState('');
-  const [importResult, setImportResult] = useState(null);
+  const [importRes, setImportRes] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [confirmingImport, setConfirmingImport] = useState(false);
+  const [snaps, setSnaps] = useState(() => listSnapshots());
+  const [restoreId, setRestoreId] = useState(null);
+  const [sfx, setSfx] = useState(FEEDBACK_PREFS.sfxOn);
+  const [vol, setVol] = useState(Math.round(FEEDBACK_PREFS.volume * 100));
+  const [haptics, setHaptics] = useState(FEEDBACK_PREFS.hapticsOn !== false);
+  const [calm, setCalm] = useState(!!FEEDBACK_PREFS.batterySaver);
+  const [aiHealth, setAiHealth] = useState(() => loadAIHealth());
+  const [pinging, setPinging] = useState(false);
+  const fileRef = React.useRef(null);
 
-  const exportJson = JSON.stringify(state);
+  const crystal = storageStatus === 'ok' ? 'ok' : localBackupOk ? 'local' : 'bad';
+  const statusText = storageStatus === 'ok' ? 'Облако и устройство: всё сохраняется' : storageStatus === 'checking' ? 'Проверяю облако…' : localBackupOk ? 'Облако недоступно, но копия на устройстве есть' : 'Сохранение не работает — сделай экспорт!';
+  const toggle = (k) => { gameFeedback('PAGE_TURN'); setOpen(o => (o === k ? null : k)); };
+  const exportJson = () => JSON.stringify(state);
 
-  function handleCopy() {
-    try {
-      navigator.clipboard.writeText(exportJson).then(() => {
-        setCopied(true);
-        onExported();
-        setTimeout(() => setCopied(false), 2000);
-      });
-    } catch (e) { /* clipboard may be blocked — manual selection is the fallback */ }
+  async function doSave() {
+    setSaving(true); setSaveRes(null);
+    const ok = await saveNow();
+    setSaveRes(ok ? 'ok' : 'fail'); setSaving(false);
+    gameFeedback(ok ? 'ITEM_PLACE' : 'ERROR');
+    setTimeout(() => setSaveRes(null), 2500);
   }
-
-  function handleDownload() {
+  function download() {
     onExported();
     try {
-      const blob = new Blob([exportJson], { type: 'application/json' });
+      const blob = new Blob([exportJson()], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `life-rpg-save-${todayStr()}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      a.href = url; a.download = `life-rpg-save-${todayStr()}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (e) { /* download may be blocked — copy/textarea is the fallback */ }
+      gameFeedback('ITEM_PLACE');
+    } catch (e) { /* загрузка файлов может быть запрещена — есть копирование */ }
   }
-
-  function confirmImport() {
-    const res = importSaveData(importText.trim());
-    setImportResult(res);
-    setConfirmingImport(false);
-    if (res.ok) { setImportText(''); setShowImport(false); }
+  function copy() {
+    try {
+      navigator.clipboard.writeText(exportJson()).then(() => { setCopied(true); onExported(); gameFeedback('ITEM_PLACE'); setTimeout(() => setCopied(false), 2000); });
+    } catch (e) { /* буфер может быть закрыт */ }
   }
-
-  return (
-    <Card>
-      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Download size={14} color={COLORS.gold} /> Экспорт / Импорт сохранения
-      </div>
-      <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 8 }}>
-        Самый надёжный способ не потерять прогресс — экспортируй его перед закрытием и импортируй при следующем открытии.
-      </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button className="lrpg-btn" onClick={() => setShowExport(v => !v)} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.gold, border: `1px solid ${COLORS.gold}55`, borderRadius: 8, padding: '8px 0', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-          <Download size={12} /> Экспорт
-        </button>
-        <button className="lrpg-btn" onClick={() => setShowImport(v => !v)} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.violet, border: `1px solid ${COLORS.violet}55`, borderRadius: 8, padding: '8px 0', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-          <Upload size={12} /> Импорт
-        </button>
-      </div>
-
-      {showExport && (
-        <div style={{ marginTop: 10 }}>
-          <textarea readOnly value={exportJson} onClick={e => e.target.select()} className="lrpg-input" style={{ height: 90, fontSize: 10, fontFamily: 'monospace' }} />
-          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <button className="lrpg-btn" onClick={handleCopy} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-              <Copy size={11} /> {copied ? 'Скопировано!' : 'Скопировать'}
-            </button>
-            <button className="lrpg-btn" onClick={handleDownload} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.textMuted, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700 }}>Скачать файл</button>
-          </div>
-          <div style={{ fontSize: 9, color: COLORS.textMuted, marginTop: 4 }}>Если кнопки не сработают — тапни по тексту выше, он выделится целиком, скопируй вручную.</div>
-        </div>
-      )}
-
-      {showImport && (
-        <div style={{ marginTop: 10 }}>
-          <textarea placeholder="Вставь сюда сохранённый JSON..." value={importText} onChange={e => setImportText(e.target.value)} className="lrpg-input" style={{ height: 90, fontSize: 10, fontFamily: 'monospace' }} />
-          <button className="lrpg-btn" disabled={!importText.trim()} onClick={() => setConfirmingImport(true)} style={{ marginTop: 6, width: '100%', background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '8px 0', fontSize: 12, fontWeight: 700, opacity: importText.trim() ? 1 : 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-            <ClipboardPaste size={12} /> Загрузить
-          </button>
-          {confirmingImport && (
-            <div style={{ marginTop: 6, background: COLORS.crimsonSoft, borderRadius: 8, padding: 8 }}>
-              <div style={{ fontSize: 11, color: COLORS.text }}>Это заменит весь текущий прогресс данными из вставленного сохранения. Продолжить?</div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <button className="lrpg-btn" onClick={confirmImport} style={{ flex: 1, background: COLORS.crimson, color: '#fff', borderRadius: 6, padding: '6px 0', fontSize: 11, fontWeight: 700 }}>Да, заменить</button>
-                <button className="lrpg-btn" onClick={() => setConfirmingImport(false)} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 6, padding: '6px 0', fontSize: 11, border: `1px solid ${COLORS.border}` }}>Отмена</button>
-              </div>
-            </div>
-          )}
-          {importResult && !importResult.ok && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 6 }}>Не получилось: {importResult.error}</div>}
-        </div>
-      )}
-      {importResult && importResult.ok && <div style={{ fontSize: 11, color: COLORS.teal, marginTop: 8 }}>Сохранение успешно загружено!</div>}
-    </Card>
-  );
-}
-
-function AICenterCard() {
-  const [health, setHealth] = useState(() => loadAIHealth());
-  const [pinging, setPinging] = useState(false);
-  const [configured, setConfigured] = useState([]);
+  function doImport(text) {
+    const res = importSaveData(String(text || '').trim());
+    setImportRes(res);
+    if (res.ok) { setImportText(''); setSnaps(listSnapshots()); gameFeedback('ACHIEVEMENT_UNLOCK'); } else gameFeedback('ERROR');
+  }
+  function fromFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => doImport(r.result);
+    r.readAsText(f);
+    e.target.value = '';
+  }
   async function ping() {
     setPinging(true);
     try {
       const r = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ping: true }) });
       const data = await r.json();
-      setConfigured(data.configured || []);
-      const h = loadAIHealth();
-      h.lastPing = Date.now();
-      h.configured = data.configured || [];
-      saveAIHealth(h);
-      setHealth(h);
-    } catch {
-      setConfigured([]);
-    }
+      const h = loadAIHealth(); h.lastPing = Date.now(); h.configured = data.configured || []; saveAIHealth(h); setAiHealth(h);
+      gameFeedback('BUTTON_PRESS');
+    } catch (e) { gameFeedback('ERROR'); }
     setPinging(false);
   }
-  const stats = health.stats || { requests: 0, success: 0, fallback: 0, errors: 0 };
-  const log = health.log || [];
-  return (
-    <Card>
-      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>🤖 AI CORE</div>
-      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Система AI активна. Ключи только на сервере. Если все провайдеры молчат — игра берёт резервный режим.</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-        {AI_PROVIDERS_META.map(p => {
-          const on = configured.includes(p.id) || (health.configured || []).includes(p.id);
-          return (
-            <span key={p.id} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 999, background: on ? 'rgba(63,122,74,0.15)' : 'rgba(255,255,255,0.04)', color: on ? COLORS.green : COLORS.textMuted }}>
-              {on ? '🟢' : '⚪'} {p.name}
-            </span>
-          );
-        })}
-      </div>
-      <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>
-        Сегодня: {stats.requests} запросов · {stats.success} ок · {stats.fallback} fallback · {stats.errors} ошибок
-      </div>
-      <button className="lrpg-btn lrpg-cta" disabled={pinging} onClick={ping} style={{ width: '100%', marginBottom: 8 }}>
-        {pinging ? 'Проверяю…' : 'Проверить AI'}
-      </button>
-      {log.slice(0, 6).map((e, i) => (
-        <div key={i} style={{ fontSize: 10, color: COLORS.textMuted, display: 'flex', gap: 6, padding: '3px 0', borderTop: `1px solid ${COLORS.border}` }}>
-          <span>{e.ok ? '✅' : '❌'}</span>
-          <span>{e.taskType}</span>
-          <span>{e.provider}</span>
-          <span>{e.latency ? `${e.latency} ms` : ''}</span>
-          {e.error ? <span style={{ color: COLORS.crimson }}>{String(e.error).slice(0, 80)}</span> : null}
-        </div>
-      ))}
-    </Card>
-  );
-}
-
-function SettingsTab({ character, setCharacterName, resetAllData, resetProgressKeepLife, resetFinance, availableHoursPerWeek, setAvailableHours, storageStatus, storageError, lastSavedAt, localBackupOk, state, importSaveData, saveNow, onExported, difficultyMode, setDifficultyMode }) {
-  const [confirmingReset, setConfirmingReset] = useState(false);
-  const [confirmingSoft, setConfirmingSoft] = useState(false);
-  const [confirmingFin, setConfirmingFin] = useState(false);
-  const [manualSaving, setManualSaving] = useState(false);
-  const [manualSaveResult, setManualSaveResult] = useState(null); // 'ok' | 'fail' | null
-
-  async function handleManualSave() {
-    setManualSaving(true);
-    setManualSaveResult(null);
-    const ok = await saveNow();
-    setManualSaveResult(ok ? 'ok' : 'fail');
-    setManualSaving(false);
-    setTimeout(() => setManualSaveResult(null), 2500);
-  }
+  const aiStats = aiHealth.stats || { requests: 0, success: 0, fallback: 0, errors: 0 };
+  const smallBtn = (color) => ({ background: COLORS.bgCard, color: color || COLORS.text, border: `1px solid ${color ? color + '55' : COLORS.border}`, borderRadius: 10, padding: '9px 10px', fontSize: 13, fontWeight: 700 });
+  const pxIcon = (kind, color) => <PixelIcon kind={kind} color={color} size={16} />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700 }}>
-        <SettingsIcon size={15} color={COLORS.violet} /> Настройки
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Меню игры · Life RPG v{APP_VERSION}</div>
+        <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Настройки</div>
       </div>
-      <Card style={{ border: `1px solid ${storageStatus === 'ok' ? COLORS.teal + '55' : localBackupOk ? COLORS.gold + '55' : COLORS.crimson + '55'}` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700 }}>
-          <Save size={14} color={storageStatus === 'ok' ? COLORS.teal : localBackupOk ? COLORS.gold : COLORS.crimson} />
-          Облачное автосохранение: {storageStatus === 'ok' ? 'работает' : storageStatus === 'unavailable' ? 'недоступно' : storageStatus === 'checking' ? 'проверяю...' : 'ошибка'}
-        </div>
-        {storageStatus !== 'ok' && (
-          <div style={{ fontSize: 11, marginTop: 4, color: localBackupOk ? COLORS.gold : COLORS.crimson }}>
-            {localBackupOk ? 'Но локальная копия на этом устройстве сохраняется исправно — прогресс не потеряется при перезаходе здесь же.' : 'И локальную копию тоже не удалось сохранить — используй Экспорт прямо сейчас.'}
+
+      <div className="lrpg-paper lrpg-stagger" style={{ padding: 12, display: 'flex', gap: 12, alignItems: 'center', borderColor: crystal === 'bad' ? COLORS.crimson : undefined }}>
+        <SaveCrystal status={crystal} size={58} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 700, lineHeight: 1.25, color: crystal === 'bad' ? COLORS.crimson : COLORS.text }}>{statusText}</div>
+          <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 2 }}>{lastSavedAt ? `Сохранено ${fmtTime(lastSavedAt)}` : 'Ещё не сохранялось'}{snaps[0] ? ` · копия ${new Date(snaps[0].ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''}</div>
+          {storageError && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 2 }}>{storageError}</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button className="lrpg-btn" disabled={saving} onClick={doSave} style={{ ...smallBtn(saveRes === 'fail' ? COLORS.crimson : COLORS.teal), flex: 1, background: saveRes === 'ok' ? COLORS.teal : COLORS.bgCard, color: saveRes === 'ok' ? '#fbf9f4' : saveRes === 'fail' ? COLORS.crimson : COLORS.teal }}>{saving ? 'Сохраняю…' : saveRes === 'ok' ? 'Сохранено ✓' : saveRes === 'fail' ? 'Не вышло' : 'Сохранить'}</button>
+            <button className="lrpg-btn" onClick={download} style={{ ...smallBtn(COLORS.gold), flex: 1 }}>Файл</button>
           </div>
-        )}
-        {lastSavedAt && <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>Последнее сохранение: {fmtTime(lastSavedAt)}</div>}
-        {storageError && <div style={{ fontSize: 10, color: COLORS.crimson, marginTop: 4 }}>{storageError}</div>}
-        <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>В облако синхронизируются уровень/квесты/цели/настройки. Полная история операций такси и финансов хранится только на этом устройстве — переноси её на новое устройство через Экспорт/Импорт.</div>
-        {storageStatus !== 'ok' && (
-          <div style={{ fontSize: 10, color: COLORS.gold, marginTop: 6 }}>Пока это так — используй Экспорт/Импорт ниже, это работает независимо от автосохранения.</div>
-        )}
-        <button className="lrpg-btn" disabled={manualSaving} onClick={handleManualSave} style={{
-          marginTop: 8, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-          background: manualSaveResult === 'ok' ? COLORS.teal : manualSaveResult === 'fail' ? COLORS.crimson : COLORS.bgCardAlt,
-          color: manualSaveResult ? '#fbf9f4' : COLORS.text, border: `1px solid ${COLORS.border}`,
-          borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: manualSaving ? 0.6 : 1,
-        }}>
-          <Save size={13} /> {manualSaving ? 'Сохраняю...' : manualSaveResult === 'ok' ? 'Сохранено!' : manualSaveResult === 'fail' ? 'Не вышло — используй Экспорт' : 'Сохранить сейчас'}
-        </button>
-      </Card>
-      <TelegramDiagnosticsCard />
-      <SaveManagerCard state={state} importSaveData={importSaveData} onExported={onExported} />
-      <Card>
-        <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>Имя персонажа</div>
-        <input className="lrpg-input" value={character.name} onChange={e => setCharacterName(e.target.value || 'Герой')} />
-      </Card>
-
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}><Swords size={14} color={COLORS.crimson} /> Режим сложности</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Влияет на штрафы за пропуск и на то, как быстро проседает награда за повторение одного и того же квеста (anti-farm).</div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {Object.entries(DIFFICULTY_SETTINGS).map(([key, cfg]) => (
-            <button key={key} className="lrpg-btn" onClick={() => setDifficultyMode(key)} style={{
-              flex: 1, background: difficultyMode === key ? COLORS.crimson : COLORS.bgCardAlt,
-              color: difficultyMode === key ? '#fff' : COLORS.textMuted, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700,
-            }}>{cfg.label}</button>
-          ))}
         </div>
-      </Card>
+      </div>
 
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}><CalendarClock size={14} color={COLORS.teal} /> Свободное время в неделю</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Используется в Goal Engine и Reality Check, чтобы AI и предупреждения о конфликте целей учитывали реальный ресурс, а не только дедлайны.</div>
-        <input className="lrpg-input" type="number" min={0} placeholder="Часов в неделю" value={availableHoursPerWeek || ''} onChange={e => setAvailableHours(Number(e.target.value) || null)} />
-      </Card>
-
-      <FeedbackSettingsCard />
-      <AICenterCard />
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Интеграции</div>
-        {['Apple Health / шаги', 'Экранное время', 'Календарь'].map(x => (
-          <div key={x} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${COLORS.border}`, fontSize: 12 }}>
-            <span>{x}</span><span style={{ color: COLORS.textMuted }}>Не подключено</span>
+      <SettingsSection title="Сохранения и копии" icon={pxIcon('quest', COLORS.teal)} color={COLORS.teal} open={open === 'save'} onToggle={() => toggle('save')} badge={snaps.length ? <span className="lrpg-num" style={{ fontSize: 11, color: COLORS.textMuted }}>{snaps.length} {plural(snaps.length, 'копия', 'копии', 'копий')}</span> : null}>
+        <div style={{ fontSize: 12.5, color: COLORS.textMuted, margin: '10px 0' }}>Игра сама делает копию раз в день и перед любым сбросом или импортом. Хранятся три последние — можно откатиться.</div>
+        {snaps.length === 0 && <div style={{ fontSize: 13, color: COLORS.textMuted }}>Копий пока нет — первая появится сегодня.</div>}
+        {snaps.map(sn => (
+          <div key={sn.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: `1px dashed ${COLORS.border}` }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600 }}>{new Date(sn.ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+              <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>{sn.reason} · ур. {sn.level ?? '—'} · {sn.coins ?? 0} монет</div>
+            </div>
+            {restoreId === sn.id ? (
+              <span style={{ display: 'flex', gap: 4 }}>
+                <button className="lrpg-btn" onClick={() => { doImport(sn.data); setRestoreId(null); }} style={{ ...smallBtn(COLORS.crimson), padding: '6px 8px' }}>Вернуть</button>
+                <button className="lrpg-btn" onClick={() => setRestoreId(null)} style={{ ...smallBtn(), padding: '6px 8px' }}>Нет</button>
+              </span>
+            ) : <button className="lrpg-btn" onClick={() => setRestoreId(sn.id)} style={{ ...smallBtn(COLORS.teal), padding: '6px 10px' }}>Откатить</button>}
           </div>
         ))}
-      </Card>
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '12px 0 6px' }}>Перенос на другое устройство</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <button className="lrpg-btn" onClick={download} style={smallBtn(COLORS.gold)}>Скачать файл</button>
+          <button className="lrpg-btn" onClick={copy} style={smallBtn(COLORS.gold)}>{copied ? 'Скопировано ✓' : 'Скопировать'}</button>
+          <button className="lrpg-btn" onClick={() => fileRef.current && fileRef.current.click()} style={smallBtn(COLORS.violet)}>Загрузить файл</button>
+          <input ref={fileRef} type="file" accept="application/json,.json,text/plain" onChange={fromFile} style={{ display: 'none' }} />
+          <button className="lrpg-btn" disabled={!importText.trim()} onClick={() => doImport(importText)} style={{ ...smallBtn(COLORS.violet), opacity: importText.trim() ? 1 : .5 }}>Вставить текст</button>
+        </div>
+        <textarea className="lrpg-input" placeholder="Вставь сюда текст сохранения…" value={importText} onChange={e => setImportText(e.target.value)} style={{ marginTop: 6, height: 64, fontSize: 11, fontFamily: 'monospace' }} />
+        {importRes && <div style={{ fontSize: 12.5, marginTop: 6, color: importRes.ok ? COLORS.green : COLORS.crimson }}>{importRes.ok ? 'Сохранение загружено. Прежнее состояние лежит в копиях.' : `Не получилось: ${importRes.error}`}</div>}
+        <div style={{ marginTop: 10 }}><TelegramDiagnosticsCard /></div>
+      </SettingsSection>
 
-      <Card>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, color: COLORS.crimson }}>Опасная зона</div>
-        <div style={{ fontSize: 11, color: COLORS.textMuted, marginBottom: 8 }}>Два режима. Сейв после сброса не вернуть.</div>
-        {!confirmingSoft ? (
-          <button className="lrpg-btn" onClick={() => setConfirmingSoft(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.gold, border: `1px solid ${COLORS.gold}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%', marginBottom: 8 }}>
-            Сбросить прогресс
-          </button>
-        ) : (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <button className="lrpg-btn" onClick={() => { resetProgressKeepLife && resetProgressKeepLife(); setConfirmingSoft(false); }} style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Сбросить уровень и награды</button>
-            <button className="lrpg-btn" onClick={() => setConfirmingSoft(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 10px' }}>Нет</button>
-          </div>
-        )}
-        <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 10 }}>Остаются: имя, фото, цели, привычки, события, YouTube, финансы, тело.</div>
-        {!confirmingFin ? (
-          <button className="lrpg-btn" onClick={() => setConfirmingFin(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%', marginBottom: 8 }}>
-            Сбросить финансы
-          </button>
-        ) : (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <button className="lrpg-btn" onClick={() => { resetFinance && resetFinance(); setConfirmingFin(false); }} style={{ flex: 1, background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 12 }}>Обнулить деньги и долги</button>
-            <button className="lrpg-btn" onClick={() => setConfirmingFin(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 10px' }}>Нет</button>
-          </div>
-        )}
-        <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 10 }}>Только баланс, транзакции, долги, бюджет, активы. Уровень и цели не трогает.</div>
-        {!confirmingReset ? (
-          <button className="lrpg-btn" onClick={() => setConfirmingReset(true)} style={{ background: COLORS.bgCardAlt, color: COLORS.crimson, border: `1px solid ${COLORS.crimson}55`, borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, width: '100%' }}>
-            Сбросить всё
-          </button>
-        ) : (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="lrpg-btn" onClick={() => { resetAllData(); setConfirmingReset(false); }} style={{ flex: 1, background: COLORS.crimson, color: '#fff', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13 }}>Да, всё</button>
-            <button className="lrpg-btn" onClick={() => setConfirmingReset(false)} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px' }}>Отмена</button>
-          </div>
-        )}
-        <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Полный вайп: и цели, и YouTube, и деньги.</div>
-      </Card>
+      <SettingsSection title="Герой и игра" icon={pxIcon('discipline', COLORS.crimson)} color={COLORS.crimson} open={open === 'game'} onToggle={() => toggle('game')}>
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '12px 0 6px' }}>Имя героя</div>
+        <input className="lrpg-input" defaultValue={character.name} maxLength={24} onBlur={e => setCharacterName((e.target.value || '').trim() || 'Герой')} />
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '14px 0 6px' }}>Сложность</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {Object.keys(DIFFICULTY_SETTINGS).map(k => {
+            const on = difficultyMode === k;
+            const info = DIFFICULTY_INFO[k] || { name: DIFFICULTY_SETTINGS[k].label, desc: '' };
+            return (
+              <button key={k} className="lrpg-btn" onClick={() => { setDifficultyMode(k); gameFeedback('BUTTON_PRESS'); }} aria-pressed={on} style={{ textAlign: 'left', padding: '9px 11px', borderRadius: 12, background: on ? COLORS.text : COLORS.bgCard, color: on ? COLORS.bg : COLORS.text, border: `1px solid ${on ? COLORS.text : COLORS.border}` }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{info.name}{on ? ' ✓' : ''}</div>
+                <div style={{ fontSize: 11.5, opacity: .75, marginTop: 1 }}>{info.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '14px 0 6px' }}>Свободных часов в неделю · {availableHoursPerWeek || 'не задано'}</div>
+        <input type="range" min={0} max={70} step={1} value={availableHoursPerWeek || 0} onChange={e => setAvailableHours(Number(e.target.value) || null)} style={{ width: '100%', accentColor: COLORS.gold }} aria-label="Свободных часов в неделю" />
+        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+          {[5, 10, 20, 30].map(h => <button key={h} className="lrpg-btn" onClick={() => setAvailableHours(h)} style={{ ...smallBtn(), flex: 1, padding: '6px 0', background: availableHoursPerWeek === h ? COLORS.goldSoft : COLORS.bgCard }}>{h} ч</button>)}
+        </div>
+        <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 4 }}>Нужно целям: ИИ и «перегруз на тропах» сверяют сроки с твоим реальным временем.</div>
+      </SettingsSection>
 
-      <div style={{ textAlign: 'center', fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>Life RPG v{APP_VERSION}</div>
+      <SettingsSection title="Звук и отклик" icon={pxIcon('creator', COLORS.gold)} color={COLORS.gold} open={open === 'sound'} onToggle={() => toggle('sound')}>
+        <Toggle on={sfx} label="Звуки" note="Нажатия, монеты, сундуки, новый уровень" onChange={(v) => { setSfx(v); v ? SoundManager.unmute() : SoundManager.mute(); if (v) gameFeedback('COIN_GAIN', { coins: 1 }); }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0 8px', opacity: sfx ? 1 : .45 }}>
+          <span style={{ fontSize: 12.5, color: COLORS.textMuted, width: 70 }}>Громкость</span>
+          <input type="range" min={0} max={100} value={vol} disabled={!sfx} onChange={e => { const v = Number(e.target.value); setVol(v); SoundManager.setVolume(v / 100); }} onPointerUp={() => gameFeedback('BUTTON_PRESS')} style={{ flex: 1, accentColor: COLORS.gold }} aria-label="Громкость" />
+          <span className="lrpg-num" style={{ fontSize: 12, width: 34, textAlign: 'right' }}>{vol}%</span>
+        </div>
+        <div style={{ borderTop: `1px dashed ${COLORS.border}` }} />
+        <Toggle on={haptics} label="Вибрация" note="Отклик телефона в Telegram" onChange={(v) => { setHaptics(v); saveFeedbackPrefs({ hapticsOn: v }); if (v) gameFeedback('BUTTON_PRESS'); }} />
+        <div style={{ borderTop: `1px dashed ${COLORS.border}` }} />
+        <Toggle on={calm} label="Спокойный режим" note="Меньше анимаций и конфетти — бережёт батарею" onChange={(v) => { setCalm(v); saveFeedbackPrefs({ batterySaver: v }); applyCalmMode(v); }} />
+      </SettingsSection>
+
+      <SettingsSection title="ИИ-ядро" icon={pxIcon('mental', COLORS.violet)} color={COLORS.violet} open={open === 'ai'} onToggle={() => toggle('ai')} badge={<span className="lrpg-num" style={{ fontSize: 11, color: COLORS.textMuted }}>{(aiHealth.configured || []).length}/{AI_PROVIDERS_META.length}</span>}>
+        <div style={{ fontSize: 12.5, color: COLORS.textMuted, margin: '10px 0' }}>Ключи хранятся только на сервере. Если все молчат — игра берёт запасной локальный ответ.</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {AI_PROVIDERS_META.map(p => {
+            const on = (aiHealth.configured || []).includes(p.id);
+            return <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, padding: '4px 9px', borderRadius: 99, background: on ? 'rgba(63,122,74,.12)' : COLORS.bgCardAlt, color: on ? COLORS.green : COLORS.textMuted }}><span style={{ width: 7, height: 7, borderRadius: 2, background: on ? COLORS.green : '#c9c2b2' }} />{p.name}</span>;
+          })}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6, marginTop: 10 }}>
+          {[['запросов', aiStats.requests], ['успешно', aiStats.success], ['запасных', aiStats.fallback], ['ошибок', aiStats.errors]].map(([l, v]) => (
+            <div key={l} style={{ background: COLORS.bgCardAlt, borderRadius: 8, padding: '5px 6px', textAlign: 'center' }}><div className="lrpg-num" style={{ fontSize: 15, fontWeight: 800 }}>{v}</div><div style={{ fontSize: 10, color: COLORS.textMuted }}>{l}</div></div>
+          ))}
+        </div>
+        <button className="lrpg-btn" disabled={pinging} onClick={ping} style={{ ...smallBtn(COLORS.violet), width: '100%', marginTop: 8 }}>{pinging ? 'Проверяю…' : 'Проверить ИИ'}</button>
+        {(aiHealth.log || []).slice(0, 5).map((e, i) => (
+          <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11.5, padding: '5px 0', borderTop: `1px dashed ${COLORS.border}`, minWidth: 0 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: e.ok ? COLORS.green : COLORS.crimson, flexShrink: 0 }} />
+            <span style={{ fontWeight: 600 }}>{e.provider || '—'}</span>
+            <span style={{ color: COLORS.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{e.taskType}{e.error ? ' · ' + String(e.error).slice(0, 60) : ''}</span>
+            {e.latency ? <span className="lrpg-num" style={{ color: COLORS.textMuted }}>{e.latency} мс</span> : null}
+          </div>
+        ))}
+      </SettingsSection>
+
+      <SettingsSection title="Что нового" icon={pxIcon('focus', COLORS.green)} color={COLORS.green} open={open === 'news'} onToggle={() => toggle('news')} badge={<span className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.green }}>v{APP_VERSION}</span>}>
+        {WHATS_NEW.map((w, i) => (
+          <div key={w.v} style={{ display: 'flex', gap: 10, padding: '8px 0', borderTop: i ? `1px dashed ${COLORS.border}` : 'none', marginTop: i ? 0 : 8 }}>
+            <span className="lrpg-num" style={{ fontSize: 12, fontWeight: 800, color: i === 0 ? COLORS.green : COLORS.textMuted, width: 34, flexShrink: 0 }}>{w.v}</span>
+            <span style={{ fontSize: 13, lineHeight: 1.4 }}>{w.t}</span>
+          </div>
+        ))}
+        <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 6 }}>Скоро: тренировки «Проект 78» и тело, голоса наставников через Google и Azure.</div>
+      </SettingsSection>
+
+      <SettingsSection title="Опасная зона" icon={pxIcon('boss', COLORS.crimson)} color={COLORS.crimson} open={open === 'danger'} onToggle={() => toggle('danger')}>
+        <div style={{ fontSize: 12.5, color: COLORS.textMuted, margin: '10px 0' }}>Удерживай кнопку, чтобы подтвердить. Перед сбросом игра сама сделает копию — её можно вернуть в «Сохранениях».</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <HoldButton label="Сбросить прогресс" color={COLORS.gold} onDone={() => { resetProgressKeepLife && resetProgressKeepLife(); setSnaps(listSnapshots()); gameFeedback('ERROR'); }} note="Уровень, статы, монеты и квесты — с нуля. Остаются имя, фото, цели, привычки, события, YouTube, финансы, тело." />
+          <HoldButton label="Сбросить финансы" color={COLORS.teal} onDone={() => { resetFinance && resetFinance(); setSnaps(listSnapshots()); gameFeedback('ERROR'); }} note="Только баланс, операции, долги, бюджет и активы." />
+          <HoldButton label="Стереть всё" color={COLORS.crimson} ms={2600} onDone={() => { resetAllData(); setSnaps(listSnapshots()); gameFeedback('ERROR'); }} note="Полный вайп — как первый запуск. Держать дольше." />
+        </div>
+      </SettingsSection>
+
+      <div style={{ textAlign: 'center', fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>Life RPG v{APP_VERSION} · интеграции со здоровьем и календарём — в планах</div>
     </div>
   );
 }
