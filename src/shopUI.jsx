@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { PAPER } from './actionsUI.jsx';
 import { NpcPortrait } from './councilUI.jsx';
 import { RarityCard, RarityLabel, RarityBurst, RarityIcon, rarityRank, RARITY_META } from './rarityFX.jsx';
-import { RevealCeremony } from './revealFX.jsx';
+import { RevealCeremony, PremiumTile, ItemPreview } from './revealFX.jsx';
 
 const FONT = "'Manrope', system-ui, -apple-system, sans-serif";
 export const RAR = {
@@ -117,6 +117,10 @@ export function ItemTile({ it, owned, afford, onBuy, big }) {
   const r = RAR[it.rarity] || RAR.Common;
   const rank = rarityRank(it.rarity);
   const price = it.currency === 'crystals' ? `${it.cost} кр.` : `${it.cost}`;
+  // Легендарки и мифы — премиальная сцена темы с живыми частицами и картой по тапу.
+  if (rank >= 3) return <PremiumTile rarity={it.rarity} theme={it.theme} title={it.title} desc={it.effect || it.lore} limited={it.limited} badge={it.featured ? 'хит дня' : null}
+    preview={<ItemPreview art={it.id} icon={it.icon} theme={it.theme} rarity={it.rarity} size={104} />} price={it.currency === 'crystals' ? `${it.cost} кристаллов` : `${it.cost} монет`}
+    owned={owned} can={afford} onBuy={onBuy} card={{ ...it, art: it.id }} />;
   return (
     <RarityCard rarity={it.rarity} theme={it.theme} limited={it.limited} className="sh-pop" style={{ gridColumn: big ? '1 / -1' : 'auto' }}>
       <div style={{ padding: big ? 12 : 10, display: 'flex', flexDirection: big ? 'row' : 'column', gap: big ? 12 : 8, alignItems: big ? 'center' : 'stretch', position: 'relative' }}>

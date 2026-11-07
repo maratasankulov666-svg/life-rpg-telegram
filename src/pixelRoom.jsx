@@ -3,6 +3,7 @@
 // растягивается на весь экран через preserveAspectRatio="xMidYMax slice".
 // Здесь же каталог предметов комнаты: их можно купить за монеты и поставить в слоты.
 import React from 'react';
+import { gearLayers, useHeroGearCss } from './heroGearFX.jsx';
 
 // ---------- Каталог комнаты ----------
 export const ROOM_SLOTS = [
@@ -422,7 +423,9 @@ function Gadget({ it }) {
 
 // ---------- Персонаж (18×53, растягивается по телосложению) ----------
 const BODY_SX = [0.84, 0.9, 0.95, 1, 1.06, 1.14, 1.24, 1.34];
-function Hero({ tier = 3, heightScale = 1, photoTint }) {
+function Hero({ tier = 3, heightScale = 1, photoTint, gear }) {
+  useHeroGearCss();
+  const L = gearLayers(gear || {}, true);
   const sx = BODY_SX[Math.max(0, Math.min(7, tier))] || 1;
   const k = 2.95 * Math.max(0.88, Math.min(1.12, heightScale));
   const w = 18 * k;
@@ -436,6 +439,7 @@ function Hero({ tier = 3, heightScale = 1, photoTint }) {
         <rect x={97.5 - 22 * sx} y="374" width={44 * sx} height="4" /><rect x={97.5 - 17 * sx} y="378" width={34 * sx} height="2" />
       </g>
       <svg x={x} y={y} width={w} height={h} viewBox="0 0 18 53" overflow="visible" className="a-breath">
+        <g transform={body}>{L.back}</g>
         <g transform={body}>
           <rect x="1" y="15" width="3" height="12" fill="#1a1e2c" /><rect x="14" y="15" width="3" height="12" fill="#1a1e2c" />
           <rect x="2" y="27" width="3" height="2" fill="#e8b896" /><rect x="13" y="27" width="3" height="2" fill="#e8b896" />
@@ -451,6 +455,7 @@ function Hero({ tier = 3, heightScale = 1, photoTint }) {
           <rect x="3" y="44" width="6" height="4" fill="#2b2f3e" /><rect x="9" y="44" width="6" height="4" fill="#2b2f3e" />
           <rect x="2" y="48" width="7" height="3" fill="#f2eee5" /><rect x="9" y="48" width="7" height="3" fill="#f2eee5" />
           <rect x="2" y="51" width="7" height="1" fill="#c9bfae" /><rect x="9" y="51" width="7" height="1" fill="#c9bfae" />
+          {L.body}
         </g>
         <rect x="7" y="10" width="4" height="2" fill="#d8a482" />
         <rect x="4" y="3" width="10" height="7" fill="#e8b896" />
@@ -461,6 +466,8 @@ function Hero({ tier = 3, heightScale = 1, photoTint }) {
           <rect x="3" y="4" width="3" height="1" /><rect x="7" y="4" width="2" height="2" /><rect x="10" y="4" width="2" height="1" /><rect x="13" y="4" width="2" height="1" />
           <rect x="3" y="5" width="1" height="4" /><rect x="14" y="5" width="1" height="3" />
         </g>
+        {L.head}
+        <g transform={body}>{L.front}</g>
       </svg>
     </g>
   );
@@ -495,7 +502,7 @@ function Placed({ slot, it, p, pulse }) {
  * props: room (state.room), tier (0..7 телосложение), heightScale, time ('day'|'dawn'|'evening'|'night'),
  * weather ('clear'|'rain'|'snow'|...), still (без анимаций), highlight (ключ слота для подсветки).
  */
-export function PixelRoomScene({ room, tier = 3, heightScale = 1, time, weather = 'clear', still = false, highlight = null, aura = null }) {
+export function PixelRoomScene({ room, tier = 3, heightScale = 1, time, weather = 'clear', still = false, highlight = null, aura = null, gear = null }) {
   useSceneCss();
   const r = normalizeRoom(room);
   const t = time || sceneTime();
@@ -559,7 +566,7 @@ export function PixelRoomScene({ room, tier = 3, heightScale = 1, time, weather 
         const sc = (hh * 1.25) / 150;
         return <svg x={97.5 - 50 * sc} y={378 - 150 * sc} width={100 * sc} height={160 * sc} viewBox="0 0 100 160" overflow="visible" aria-hidden="true">{aura}</svg>;
       })()}
-      <Hero tier={tier} heightScale={heightScale} />
+      <Hero tier={tier} heightScale={heightScale} gear={gear} />
 
       {hb && (
         <g className="a-hl" pointerEvents="none">
