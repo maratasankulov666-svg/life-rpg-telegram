@@ -132,6 +132,7 @@ import {
 import { GoalTrail, RidgePanorama, DeadlineSeal, TrophyShelf, TrophyCup, SpherePicker, GoalCeremony, useGoalsCss, useHighlight, sphereMeta, daysLeft, plural, GOAL_CAMPS, GOAL_SUMMIT } from './goalsUI.jsx';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
 import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf, rankOf } from './progressUI.jsx';
+import { TreasuryScene, DebtBossSprite, HpBar, DamagePop, PiggyJar, WeekBars, GradeBadge, QuickEntrySheet, CatIcon, CatBadge, CAT_COLOR, fmtMoney, useFinanceCss } from './financeUI.jsx';
 import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
@@ -191,7 +192,12 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       владений с живыми цифрами. Достижения: 29 медалей на русском (было 17 на английском) с прогрессом, категориями
 //       и баннером при получении; старые английские титулы переводятся. Инвентарь с куклой и вещами комнаты, хроника
 //       по дням с иконками, русские тексты событий; починены поля ввода, вылезавшие за край экрана.
-const APP_VERSION = '16.1';
+// 16.2  Финансы = казна героя: пиксельный сундук (монет тем больше, чем больше баланс), «можно потратить» и лимит
+//       на день до конца месяца, оценка здоровья казны S…D, быстрый ввод (сумма, кнопки +10/25/50/100 тыс, категории
+//       с иконками, сегодня/вчера, заказ такси с расчётом комиссии). Вкладки: Казна, Операции (по дням, по месяцам),
+//       Долги-боссы (спрайты, HP, удар с уроном, тактика, прогноз свободы, график), Бюджет-конверты, Копилки-банки,
+//       Такси (смена, неделя, машина), Капитал, Ещё. Починены пустые названия и прогресс долгов в старом обзоре.
+const APP_VERSION = '16.2';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -9113,830 +9119,637 @@ function AddDebtForm({ onSubmit, onCancel }) {
   );
 }
 
+// Оценка финансового здоровья 0–100 из долговой нагрузки, нормы сбережений, подушки, бюджета и денежного потока.
+function financeScore(finance, fm, health) {
+  const parts = [];
+  const hasDebts = (finance.debts || []).some(d => d.remaining > 0);
+  parts.push(health.income > 0 ? Math.max(0, Math.min(100, 100 - health.debtLoad * 2)) : (hasDebts ? 40 : 75));
+  if (health.income > 0) parts.push(Math.max(0, Math.min(100, health.savingsRate * 4)));
+  const goalM = finance.emergencyFundGoalMonths || 3;
+  parts.push(Number.isFinite(health.emergencyMonths) ? Math.max(0, Math.min(100, (health.emergencyMonths / goalM) * 100)) : 100);
+  if (health.budgetHealth !== null && health.budgetHealth !== undefined) parts.push(Math.max(0, Math.min(100, health.budgetHealth)));
+  parts.push(fm.cashFlow >= 0 ? 100 : 25);
+  return parts.reduce((s, x) => s + x, 0) / parts.length;
+}
+
+const DEBT_TACTICS = [
+  { key: 'avalanche', label: 'Лавина', desc: 'Сначала самый дорогой процент — меньше переплата' },
+  { key: 'snowball', label: 'Снежный ком', desc: 'Сначала самый маленький — быстрые победы' },
+  { key: 'cashflow', label: 'Поток', desc: 'Сначала самый большой платёж — освобождает деньги' },
+];
+
 function FinanceTab({ finance, garage, setFinanceMode, addTransaction, deleteTransaction, addIncomeSource, deleteIncomeSource, setDebtStrategy, addDebt, payDebt, deleteDebt, addSavingsGoal, contributeSaving, deleteSavingsGoal, setTaxiTarget, setTaxiCommission, logOrder, deleteOrder, addCustomAsset, deleteCustomAsset, setBudgetPlanItem, removeBudgetPlanItem, setDebtLoadThresholds, addGarageExpense, deleteGarageExpense }) {
-  const [showAddTx, setShowAddTx] = useState(false);
-  const [txType, setTxType] = useState('expense');
-  const [showAddIncomeSource, setShowAddIncomeSource] = useState(false);
+  useFinanceCss();
+  const [nav, setNav] = useState('overview');
+  const [sheet, setSheet] = useState(null);
+  const [opsMonth, setOpsMonth] = useState(0);
+  const [opsFilter, setOpsFilter] = useState('all');
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [payAmounts, setPayAmounts] = useState({});
+  const [hits, setHits] = useState({});
+  const [openDebt, setOpenDebt] = useState(null);
   const [showAddDebt, setShowAddDebt] = useState(false);
   const [showAddSaving, setShowAddSaving] = useState(false);
-  const [showAddAsset, setShowAddAsset] = useState(false);
-  const [showBudgetEdit, setShowBudgetEdit] = useState(false);
-  const [budgetMonthOffset, setBudgetMonthOffset] = useState(0); // 0 = этот месяц, 1 = следующий
-  const [payAmounts, setPayAmounts] = useState({});
   const [saveAmounts, setSaveAmounts] = useState({});
-  const [expandedSchedule, setExpandedSchedule] = useState(null);
-  const [expandedHistory, setExpandedHistory] = useState(null);
-  const [orderAmount, setOrderAmount] = useState('');
-  const [finNav, setFinNav] = useState('overview');
-  const [addMenu, setAddMenu] = useState(false);
-  const [carInc, setCarInc] = useState('');
-  const [carExpAmt, setCarExpAmt] = useState('');
-  const [carExpTitle, setCarExpTitle] = useState('');
+  const [showAddAsset, setShowAddAsset] = useState(false);
+  const [budgetOffset, setBudgetOffset] = useState(0);
+  const [budgetEdit, setBudgetEdit] = useState(false);
+  const [carTitle, setCarTitle] = useState('fuel');
+  const [carAmt, setCarAmt] = useState('');
+  const [showIncomeSrc, setShowIncomeSrc] = useState(false);
 
+  const now = new Date();
   const today = todayStr();
-  const todayStart = new Date(today + 'T00:00:00').getTime();
-  const todayOrders = finance.taxi.orders.filter(o => o.ts >= todayStart);
-  const todayTotal = todayOrders.reduce((s, o) => s + (o.net ?? o.amount), 0);
-  const last7 = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (6 - i));
-    const key = d.toISOString().slice(0, 10);
-    const start = new Date(key + 'T00:00:00').getTime();
-    const end = start + 86400000;
-    const sum = finance.taxi.orders.filter(o => o.ts >= start && o.ts < end).reduce((s, o) => s + (o.net ?? o.amount), 0);
-    return { key, sum, label: d.toLocaleDateString('ru-RU', { weekday: 'short' }) };
-  });
-
+  const night = now.getHours() >= 21 || now.getHours() < 6;
   const fm = financeMonthSummary(finance);
   const health = financialHealth({ finance, garage });
   const { assetBreakdown, totalAssets, totalLiabilities, netWorth } = computeNetWorth({ finance, garage });
-  const thisMonthTx = finance.transactions.filter(t => monthKeyOf(t.date) === fm.monthKey).slice().sort((a, b) => (b.date + b.ts) > (a.date + a.ts) ? 1 : -1);
-  const incomeBySource = {};
-  thisMonthTx.filter(t => t.type === 'income').forEach(t => { incomeBySource[t.category] = (incomeBySource[t.category] || 0) + t.amount; });
-  // Δ обязательств за месяц: сколько добавилось за счёт новых кредитов/долгов (source 'debt_taken')
-  // минус сколько реально погашено телом долга (принцип из history платежей всех долгов).
-  const debtGrowthThisMonth = thisMonthTx.filter(t => t.source === 'debt_taken').reduce((s, t) => s + t.amount, 0);
-  const debtPaidThisMonth = finance.debts.reduce((s, d) => s + (d.history || []).filter(h => monthKeyOf(h.date) === fm.monthKey).reduce((s2, h) => s2 + h.principal, 0), 0);
-  const actualByCategory = {};
-  thisMonthTx.filter(t => t.type === 'expense').forEach(t => { actualByCategory[t.category] = (actualByCategory[t.category] || 0) + t.amount; });
-  const sortedDebts = sortDebts(finance.debts, finance.strategy);
-  const budgetMonthKey = addMonthsToKey(fm.monthKey, budgetMonthOffset);
-  const isNextMonth = budgetMonthOffset !== 0;
-  const budgetPlanForMonth = (finance.budgetPlanByMonth && finance.budgetPlanByMonth[budgetMonthKey]) || {};
-  const plannedTotalForMonth = Object.values(budgetPlanForMonth).reduce((s, v) => s + (Number(v) || 0), 0);
-  const isAdvanced = finance.mode === 'advanced';
-  const txCategoryOptions = txType === 'income' ? INCOME_SOURCE_TYPES.map(t => ({ key: t.key, label: t.label })) : EXPENSE_CATEGORIES.filter(c => c.group !== 'fin');
+  const alive = sortDebts(finance.debts.filter(d => d.remaining > 0), finance.strategy);
+  const beaten = finance.debts.filter(d => d.remaining <= 0);
+  const dueOf = (d) => { const m = currentMonthlyDue(d); return m == null ? 0 : m; };
+  const monthlyOblig = alive.reduce((s, d) => s + dueOf(d), 0);
+  const planKey = fm.monthKey;
+  const planNow = (finance.budgetPlanByMonth && finance.budgetPlanByMonth[planKey]) || {};
+  const plannedNow = Object.values(planNow).reduce((s, v) => s + (Number(v) || 0), 0);
+  const monthTx = finance.transactions.filter(t => monthKeyOf(t.date) === fm.monthKey);
+  const actualByCat = {};
+  monthTx.filter(t => t.type === 'expense').forEach(t => { actualByCat[t.category] = (actualByCat[t.category] || 0) + t.amount; });
+  const reservedLeft = Math.max(0, plannedNow - fm.expenses);
+  const safe = financeSafeToSpend(finance, fm, monthlyOblig, reservedLeft);
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = daysInMonth - now.getDate() + 1;
+  const perDay = safe > 0 ? safe / daysLeft : 0;
+  const score = financeScore(finance, fm, health);
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6 - i));
+    const key = d.toISOString().slice(0, 10);
+    return { key, label: d.toLocaleDateString('ru-RU', { weekday: 'short' }).slice(0, 2), sum: finance.transactions.filter(t => t.type === 'expense' && t.date === key && t.source !== 'debt').reduce((s, t) => s + t.amount, 0) };
+  });
+  const weekTotal = week.reduce((s, d) => s + d.sum, 0);
+  const catRows = Object.entries(actualByCat).map(([k, v]) => ({ key: k, label: (EXPENSE_CATEGORIES.find(c => c.key === k) || {}).label || k, v })).sort((a, b) => b.v - a.v);
+  const recentCats = [...new Set(finance.transactions.filter(t => t.type === 'expense' && t.source === 'manual').slice(-20).reverse().map(t => t.category))].slice(0, 4);
+  const expenseCats = EXPENSE_CATEGORIES.filter(c => c.group !== 'fin' && c.group !== 'debt');
+  const incomeCats = INCOME_SOURCE_TYPES.filter(t => t.key !== 'loan').map(t => ({ key: t.key, label: t.label }));
+  const todayStart = new Date(today + 'T00:00:00').getTime();
+  const todayOrders = finance.taxi.orders.filter(o => o.ts >= todayStart);
+  const todayTaxi = todayOrders.reduce((s, o) => s + (o.net ?? o.amount), 0);
+  const usesTaxi = finance.taxi.orders.length > 0 || (finance.incomeSources || []).some(s => s.type === 'taxi');
+  const monthsToFree = alive.length ? Math.max(...alive.map(d => { const m = dueOf(d); return m > 0 ? Math.ceil(d.remaining / m) : 0; })) : 0;
+  const freeDate = monthsToFree > 0 ? new Date(now.getFullYear(), now.getMonth() + monthsToFree, 1) : null;
 
-  const monthlyOblig = sortedDebts.reduce((s, d) => s + (Number(d.monthlyPayment) || 0), 0);
-  const reservedLeft = Math.max(0, plannedTotalForMonth - fm.expenses);
-  const safeSpend = financeSafeToSpend(finance, fm, monthlyOblig, reservedLeft);
-  const catRows = Object.entries(actualByCategory).map(([k, v]) => ({
-    key: k, label: (EXPENSE_CATEGORIES.find(c => c.key === k) || {}).label || k, v,
-  })).sort((a, b) => b.v - a.v);
-  const topCats = catRows.slice(0, 4);
-  const otherCats = catRows.slice(4).reduce((s, r) => s + r.v, 0);
-  const soon = sortedDebts.filter(d => d.remaining > 0).slice(0, 3);
-  const recentTx = thisMonthTx.slice(0, 3);
+  function submitSheet(v) {
+    if (v.mode === 'order') { logOrder(v.amount); gameFeedback('COIN_GAIN', { coins: 1 }); }
+    else {
+      addTransaction({ type: v.mode, amount: v.amount, category: v.category, title: v.title || (v.mode === 'income' ? (INCOME_SOURCE_TYPES.find(t => t.key === v.category) || {}).label : (EXPENSE_CATEGORIES.find(c => c.key === v.category) || {}).label), date: v.date });
+      gameFeedback(v.mode === 'income' ? 'COIN_GAIN' : 'BUTTON_PRESS', { coins: 1 });
+    }
+    setSheet(null);
+  }
+  function hitBoss(d, amount) {
+    const a = Math.round(Number(amount) || 0);
+    if (a <= 0) return;
+    payDebt(d.id, a);
+    setHits(h => ({ ...h, [d.id]: { amount: a, k: Date.now() } }));
+    setPayAmounts(p => ({ ...p, [d.id]: '' }));
+    gameFeedback(a >= d.remaining ? 'ACHIEVEMENT_UNLOCK' : 'QUEST_COMPLETE', { xp: 20 });
+  }
+
   const tabs = [
-    { k: 'overview', l: 'Обзор' }, { k: 'expenses', l: 'Расходы' }, { k: 'debts', l: 'Долги' },
-    { k: 'budget', l: 'Бюджет' }, { k: 'capital', l: 'Капитал' }, { k: 'full', l: 'Ещё' },
+    { k: 'overview', l: 'Казна' }, { k: 'ops', l: 'Операции' }, { k: 'debts', l: `Долги${alive.length ? ' · ' + alive.length : ''}` },
+    { k: 'budget', l: 'Бюджет' }, { k: 'jars', l: 'Копилки' }, { k: 'taxi', l: 'Такси' }, { k: 'capital', l: 'Капитал' }, { k: 'more', l: 'Ещё' },
   ];
+  const btn = (bg, fg, extra) => ({ background: bg, color: fg, border: 'none', borderRadius: 12, padding: '11px 0', fontSize: 14, fontWeight: 700, ...extra });
+  const smallBtn = (color) => ({ background: COLORS.bgCard, color: color || COLORS.text, border: `1px solid ${color ? color + '55' : COLORS.border}`, borderRadius: 10, padding: '7px 10px', fontSize: 12, fontWeight: 700 });
+  const sectionTitle = (t, extra) => <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', margin: '4px 0 8px' }}><span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>{t}</span>{extra}</div>;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 2 }}>
-        {tabs.map(tb => (
-          <button key={tb.k} className="lrpg-btn" onClick={() => setFinNav(tb.k)} style={{
-            flexShrink: 0, padding: '8px 10px', borderRadius: 999, fontSize: 11,
-            background: finNav === tb.k ? 'linear-gradient(180deg,#b5654a,#a4412a)' : 'rgba(255,255,255,.05)', color: '#fff',
-          }}>{tb.l}</button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+        <div>
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Казна героя · {monthKeyLabel(fm.monthKey)}</div>
+          <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Финансы</div>
+        </div>
+        <GradeBadge score={score} size={48} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, margin: '0 -2px' }}>
+        {tabs.map(t => (
+          <button key={t.k} className="lrpg-btn" onClick={() => { gameFeedback('NAV'); setNav(t.k); }} aria-pressed={nav === t.k} style={{
+            flexShrink: 0, padding: '7px 12px', borderRadius: 99, fontSize: 13, fontWeight: 600,
+            background: nav === t.k ? COLORS.text : COLORS.bgCard, color: nav === t.k ? COLORS.bg : COLORS.text, border: `1px solid ${nav === t.k ? COLORS.text : COLORS.border}`,
+          }}>{t.l}</button>
         ))}
       </div>
 
-      {finNav === 'overview' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <Card style={{ border: `1px solid ${COLORS.gold}55` }}>
-            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Баланс</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: COLORS.gold }}>{fmtSum(finance.cashBalance)}</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginTop: 8, fontSize: 11 }}>
-              <div>Доходы<div style={{ color: COLORS.teal, fontWeight: 700 }}>+{fmtSum(fm.income)}</div></div>
-              <div>Расходы<div style={{ color: COLORS.crimson, fontWeight: 700 }}>−{fmtSum(fm.expenses)}</div></div>
-              <div>Платежи<div style={{ color: COLORS.orange, fontWeight: 700 }}>−{fmtSum(monthlyOblig)}</div></div>
-            </div>
-          </Card>
-          <Card style={{ border: `1px solid ${safeSpend >= 0 ? COLORS.teal : COLORS.crimson}66` }}>
-            <div style={{ fontSize: 11, color: COLORS.textMuted }}>Можно потратить</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: safeSpend >= 0 ? COLORS.teal : COLORS.crimson }}>{fmtSum(safeSpend)}</div>
-            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 4 }}>после обязательных платежей и плана бюджета</div>
-          </Card>
-          <Card>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>Машина · в общем балансе</div>
-            {(() => {
-              const now = new Date();
-              const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-              const expM = (garage.expenses || []).filter(e => e.ts >= monthStart).reduce((s, e) => s + e.amount, 0);
-              const incM = (finance.taxi.orders || []).filter(o => o.ts >= monthStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
-              return (
-                <div style={{ fontSize: 12, marginTop: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Доход с заказов</span><span style={{ color: COLORS.teal }}>+{fmtSum(incM)}</span></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Расходы на авто</span><span style={{ color: COLORS.crimson }}>−{fmtSum(expM)}</span></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>Итог месяца</span><span style={{ color: incM - expM >= 0 ? COLORS.teal : COLORS.crimson }}>{fmtSum(incM - expM)}</span></div>
+      {nav === 'overview' && (
+        <>
+          <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden' }}>
+            <TreasuryScene balance={finance.cashBalance} night={night} />
+            <div style={{ padding: '10px 14px 12px', borderTop: `1px solid ${COLORS.border}` }}>
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>В казне</div>
+              <div className="lrpg-num" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.1, color: finance.cashBalance < 0 ? COLORS.crimson : COLORS.text }}>{fmtMoney(finance.cashBalance)} <span style={{ fontSize: 14, color: COLORS.textMuted }}>сум</span></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+                <div style={{ background: safe >= 0 ? 'rgba(63,122,74,.08)' : 'rgba(164,65,42,.08)', borderRadius: 10, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>Можно потратить</div>
+                  <div className="lrpg-num" style={{ fontSize: 17, fontWeight: 800, color: safe >= 0 ? COLORS.green : COLORS.crimson }}>{fmtMoney(safe, true)}</div>
                 </div>
+                <div style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>В день до конца месяца</div>
+                  <div className="lrpg-num" style={{ fontSize: 17, fontWeight: 800 }}>{safe > 0 ? fmtMoney(perDay, true) : '0'} <span style={{ fontSize: 11, color: COLORS.textMuted, fontWeight: 600 }}>· {daysLeft} дн.</span></div>
+                </div>
+              </div>
+              <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 6 }}>После платежей по долгам ({fmtMoney(monthlyOblig, true)}) и остатка плана бюджета.</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: usesTaxi ? '1fr 1fr 1fr' : '1fr 1fr', gap: 8 }}>
+            <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setSheet('expense'); }} style={btn(COLORS.crimson, '#fbf9f4', { boxShadow: '0 3px 0 #7a2e1c' })}>− Расход</button>
+            <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setSheet('income'); }} style={btn(COLORS.green, '#fbf9f4', { boxShadow: '0 3px 0 #2c5a34' })}>+ Доход</button>
+            {usesTaxi && <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setSheet('order'); }} style={btn(COLORS.gold, '#fbf9f4', { boxShadow: '0 3px 0 #8a5a1a' })}>Заказ</button>}
+          </div>
+
+          <div className="lrpg-paper" style={{ padding: 12 }}>
+            {sectionTitle('Месяц', <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800, color: fm.cashFlow >= 0 ? COLORS.green : COLORS.crimson }}>{fm.cashFlow >= 0 ? '+' : ''}{fmtMoney(fm.cashFlow, true)}</span>)}
+            {(() => {
+              const total = Math.max(1, fm.income, fm.expenses + fm.debtPay + fm.savingsContrib);
+              const seg = (v, c) => v > 0 ? <span style={{ width: `${(v / total) * 100}%`, background: c, height: '100%' }} /> : null;
+              return (
+                <>
+                  <div style={{ display: 'flex', height: 10, borderRadius: 3, overflow: 'hidden', background: '#e6e0d3' }}>{seg(fm.income, COLORS.green)}</div>
+                  <div style={{ display: 'flex', height: 10, borderRadius: 3, overflow: 'hidden', background: '#e6e0d3', marginTop: 4 }}>{seg(fm.expenses - fm.debtPay > 0 ? fm.expenses - fm.debtPay : fm.expenses, COLORS.crimson)}{seg(fm.debtPay, '#7a2e1c')}{seg(fm.savingsContrib, COLORS.teal)}</div>
+                </>
               );
             })()}
-            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-              <input className="lrpg-input" type="number" placeholder="Заказ, сум" value={carInc} onChange={e => setCarInc(e.target.value)} style={{ flex: 1 }} />
-              <button className="lrpg-btn lrpg-cta" style={{ padding: '8px 10px', fontSize: 11 }} onClick={() => { const a = Number(carInc); if (a > 0 && logOrder) { logOrder(a); setCarInc(''); } }}>В баланс</button>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px 12px', marginTop: 8, fontSize: 12.5 }}>
+              <span style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: COLORS.textMuted }}>Доходы</span><b style={{ color: COLORS.green }}>+{fmtMoney(fm.income, true)}</b></span>
+              <span style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: COLORS.textMuted }}>Расходы</span><b style={{ color: COLORS.crimson }}>−{fmtMoney(fm.expenses, true)}</b></span>
+              <span style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: COLORS.textMuted }}>Долги</span><b style={{ color: '#7a2e1c' }}>−{fmtMoney(fm.debtPay, true)}</b></span>
+              <span style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: COLORS.textMuted }}>В копилки</span><b style={{ color: COLORS.teal }}>{fmtMoney(fm.savingsContrib, true)}</b></span>
             </div>
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <input className="lrpg-input" placeholder="Бензин / мойка" value={carExpTitle} onChange={e => setCarExpTitle(e.target.value)} style={{ flex: 1.2 }} />
-              <input className="lrpg-input" type="number" placeholder="Сум" value={carExpAmt} onChange={e => setCarExpAmt(e.target.value)} style={{ flex: 0.8 }} />
-              <button className="lrpg-btn" style={{ padding: '8px 10px', fontSize: 11, background: COLORS.bgCardAlt }} onClick={() => { const a = Number(carExpAmt); if (a > 0 && addGarageExpense) { addGarageExpense(carExpTitle.trim() || 'Машина', a, 'fuel'); setCarExpAmt(''); setCarExpTitle(''); } }}>Списать</button>
-            </div>
-            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 6 }}>Пишется в доходы/расходы и в «можно потратить».</div>
-          </Card>
-          <Card>
-            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Расходы месяца</div>
-            {topCats.map(c => (
-              <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
-                <span>{c.label}</span><span>{fmtSum(c.v)}</span>
-              </div>
-            ))}
-            {otherCats > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span>Другое</span><span>{fmtSum(otherCats)}</span></div>}
-            <button className="lrpg-btn" onClick={() => setFinNav('expenses')} style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>Показать все</button>
-          </Card>
-          <Card>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>Обязательства · {sortedDebts.filter(d => d.remaining > 0).length} шт · {fmtSum(monthlyOblig)} / мес</div>
-            {soon[0] && <div style={{ fontSize: 12, marginTop: 6 }}>Ближайший: {soon[0].name} · {fmtSum(soon[0].monthlyPayment || soon[0].remaining)}</div>}
-            <button className="lrpg-btn" onClick={() => setFinNav('debts')} style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>Все обязательства</button>
-          </Card>
-          <Card>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>Бюджет</div>
-            <div style={{ fontSize: 12 }}>{fmtSum(fm.expenses)} / {fmtSum(plannedTotalForMonth || 0)}</div>
-            {plannedTotalForMonth > 0 && <Bar value={Math.min(100, fm.expenses / plannedTotalForMonth * 100)} max={100} color={fm.expenses > plannedTotalForMonth ? COLORS.crimson : COLORS.teal} />}
-            <button className="lrpg-btn" onClick={() => setFinNav('budget')} style={{ marginTop: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 10px', fontSize: 11 }}>План</button>
-          </Card>
-          <Card>
-            <div style={{ fontSize: 12, fontWeight: 800 }}>Капитал</div>
-            <div style={{ fontSize: 12 }}>Активы {fmtSum(totalAssets)}</div>
-            <div style={{ fontSize: 12 }}>Долги −{fmtSum(totalLiabilities)}</div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: COLORS.gold }}>{fmtSum(netWorth)}</div>
-          </Card>
-          {isAdvanced && (
-            <Card>
-              <div style={{ fontSize: 12, fontWeight: 800 }}>Состояние</div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Нагрузка долга {health.debtZone.label} · {Math.round(health.debtLoad || 0)}%</div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Норма сбережений {Math.round(health.savingsRate || 0)}%</div>
-              <div style={{ fontSize: 11, color: COLORS.textMuted }}>Подушка {health.emergencyMonths === Infinity ? '∞' : (health.emergencyMonths || 0).toFixed ? health.emergencyMonths.toFixed(1) : health.emergencyMonths} мес</div>
-            </Card>
-          )}
-          <Card>
-            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 4 }}>Недавно</div>
-            {recentTx.length === 0 && <div style={{ fontSize: 11, color: COLORS.textMuted }}>Пока пусто</div>}
-            {recentTx.map(tx => (
-              <div key={tx.id || tx.ts} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                <span>{tx.title || tx.category}</span>
-                <span style={{ color: tx.type === 'income' ? COLORS.teal : COLORS.crimson }}>{tx.type === 'income' ? '+' : '−'}{fmtSum(tx.amount)}</span>
-              </div>
-            ))}
-          </Card>
-          <button className="lrpg-btn lrpg-cta" onClick={() => { setAddMenu(v => !v); }}>+ Добавить</button>
-          {addMenu && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-              <button className="lrpg-btn" onClick={() => { setTxType('expense'); setShowAddTx(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Расход</button>
-              <button className="lrpg-btn" onClick={() => { setTxType('income'); setShowAddTx(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Доход</button>
-              <button className="lrpg-btn" onClick={() => { setShowAddDebt(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Долг</button>
-              <button className="lrpg-btn" onClick={() => { setShowAddAsset(true); setAddMenu(false); }} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '10px' }}>Актив</button>
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {['simple', 'advanced'].map(m => (
-              <button key={m} className="lrpg-btn" onClick={() => setFinanceMode(m)} style={{ fontSize: 10, padding: '6px 10px', borderRadius: 8, background: finance.mode === m ? COLORS.violet : COLORS.bgCardAlt, color: '#fff' }}>{m === 'simple' ? 'Просто' : 'Подробно'}</button>
-            ))}
           </div>
-        </div>
-      )}
 
-      {finNav === 'expenses' && (
-        <Card>
-          <div style={{ fontWeight: 800 }}>Расходы · {fmtSum(fm.expenses)}</div>
-          {catRows.map(c => (
-            <div key={c.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 6 }}>
-              <span>{c.label}</span><span>{fmtSum(c.v)}</span>
-            </div>
-          ))}
-          <div style={{ marginTop: 10, fontSize: 11, color: COLORS.textMuted }}>Последние</div>
-          {thisMonthTx.filter(x => x.type === 'expense').slice(0, 12).map(tx => (
-            <div key={tx.id || tx.ts} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
-              <span>{tx.title || tx.category}</span>
-              <span style={{ color: COLORS.crimson }}>−{fmtSum(tx.amount)}</span>
-            </div>
-          ))}
-        </Card>
-      )}
+          <div className="lrpg-paper" style={{ padding: 12 }}>
+            {sectionTitle('Траты за неделю', <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800 }}>{fmtMoney(weekTotal, true)}</span>)}
+            <WeekBars data={week} />
+            {catRows.length > 0 && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {catRows.slice(0, 4).map(c => (
+                  <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <CatBadge cat={c.key} size={26} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}><span>{c.label}</span><b>{fmtMoney(c.v, true)}</b></div>
+                      <div style={{ height: 4, background: '#e6e0d3', borderRadius: 2, marginTop: 3 }}><div style={{ width: `${(c.v / catRows[0].v) * 100}%`, height: '100%', background: CAT_COLOR[c.key] || COLORS.textMuted, borderRadius: 2 }} /></div>
+                    </div>
+                  </div>
+                ))}
+                <button className="lrpg-btn" onClick={() => setNav('ops')} style={{ ...smallBtn(), alignSelf: 'flex-start', marginTop: 2 }}>Все операции →</button>
+              </div>
+            )}
+          </div>
 
-      {finNav === 'debts' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Card>
-            <div style={{ fontWeight: 800 }}>Долги · {fmtSum(totalLiabilities)}</div>
-            <div style={{ fontSize: 12 }}>В месяц {fmtSum(monthlyOblig)}</div>
-          </Card>
-          {sortedDebts.map(d => (
-            <Card key={d.id}>
-              <div style={{ fontWeight: 700 }}>{d.name}</div>
-              <div style={{ fontSize: 12 }}>Остаток {fmtSum(d.remaining)} · платёж {fmtSum(d.monthlyPayment)}</div>
-              <Bar value={d.original ? Math.max(0, 100 - d.remaining / d.original * 100) : 0} max={100} color={COLORS.gold} />
-              <button className="lrpg-btn lrpg-cta" style={{ marginTop: 6, padding: '6px 10px', fontSize: 11 }} onClick={() => payDebt(d.id, d.monthlyPayment || 0)}>Внести платёж</button>
-            </Card>
-          ))}
-          {sortedDebts.length === 0 && <Card><div style={{ fontSize: 12, color: COLORS.textMuted }}>Долгов нет</div></Card>}
-        </div>
-      )}
+          {alive[0] && (
+            <button type="button" className="lrpg-btn lrpg-paper" onClick={() => setNav('debts')} style={{ padding: 12, textAlign: 'left', display: 'flex', gap: 12, alignItems: 'center' }}>
+              <DebtBossSprite category={alive[0].category} size={52} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.crimson }}>Главный босс · {DEBT_TACTICS.find(t => t.key === finance.strategy)?.label || 'тактика'}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{alive[0].title}</div>
+                <div style={{ margin: '5px 0 3px' }}><HpBar value={alive[0].remaining} max={alive[0].total || alive[0].remaining} height={7} /></div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted }}>HP {fmtMoney(alive[0].remaining, true)}{freeDate ? ` · свобода к ${freeDate.toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })}` : ''}</div>
+              </div>
+            </button>
+          )}
 
-      {finNav === 'budget' && (
-        <Card>
-          <div style={{ fontWeight: 800 }}>Бюджет {monthRuLabel(budgetMonthKey)}</div>
-          {EXPENSE_CATEGORIES.filter(c => c.group !== 'fin').slice(0, 10).map(c => {
-            const used = actualByCategory[c.key] || 0;
-            const lim = Number(budgetPlanForMonth[c.key] || 0);
-            return (
-              <div key={c.key} style={{ marginTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                  <span>{c.label}</span><span>{fmtSum(used)}{lim ? ' / ' + fmtSum(lim) : ''}</span>
+          <div className="lrpg-paper" style={{ padding: 12 }}>
+            {sectionTitle('Здоровье казны', <GradeBadge score={score} size={34} />)}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+              {[
+                { l: 'Долговая нагрузка', v: health.income > 0 ? `${Math.round(health.debtLoad)}%` : '—', c: health.debtZone.color, n: health.debtZone.label },
+                { l: 'Норма сбережений', v: health.income > 0 ? `${Math.round(health.savingsRate)}%` : '—', c: COLORS.teal, n: 'цель 10–20%' },
+                { l: 'Подушка', v: Number.isFinite(health.emergencyMonths) ? `${health.emergencyMonths.toFixed(1)} мес` : '∞', c: COLORS.green, n: `цель ${finance.emergencyFundGoalMonths} мес` },
+                { l: 'Бюджет', v: health.budgetHealth == null ? '—' : `${Math.round(health.budgetHealth)}%`, c: COLORS.gold, n: health.budgetHealth == null ? 'план не задан' : 'в рамках плана' },
+              ].map(x => (
+                <div key={x.l} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>{x.l}</div>
+                  <div className="lrpg-num" style={{ fontSize: 17, fontWeight: 800, color: x.c }}>{x.v}</div>
+                  <div style={{ fontSize: 10.5, color: COLORS.textMuted }}>{x.n}</div>
                 </div>
-                {lim > 0 && <Bar value={Math.min(100, used / lim * 100)} max={100} color={used > lim ? COLORS.crimson : COLORS.teal} />}
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {nav === 'ops' && (() => {
+        const mk = addMonthsToKey(fm.monthKey, -opsMonth);
+        const fmM = financeMonthSummary(finance, mk);
+        const list = finance.transactions.filter(t => monthKeyOf(t.date) === mk && (opsFilter === 'all' || t.type === opsFilter))
+          .slice().sort((a, b) => (b.date + String(b.ts).padStart(15, '0')) > (a.date + String(a.ts).padStart(15, '0')) ? 1 : -1);
+        return (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <button className="lrpg-btn" aria-label="Прошлый месяц" onClick={() => setOpsMonth(m => Math.min(23, m + 1))} style={smallBtn()}>←</button>
+              <span style={{ fontSize: 15, fontWeight: 700, textTransform: 'capitalize' }}>{monthKeyLabel(mk)}</span>
+              <button className="lrpg-btn" aria-label="Следующий месяц" disabled={opsMonth === 0} onClick={() => setOpsMonth(m => Math.max(0, m - 1))} style={{ ...smallBtn(), opacity: opsMonth === 0 ? .4 : 1 }}>→</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+              {[['all', 'Все', fmM.cashFlow, COLORS.text], ['income', 'Доходы', fmM.income, COLORS.green], ['expense', 'Расходы', fmM.expenses, COLORS.crimson]].map(([k, l, v, c]) => (
+                <button key={k} className="lrpg-btn lrpg-paper" onClick={() => setOpsFilter(k)} aria-pressed={opsFilter === k} style={{ padding: '8px 10px', textAlign: 'left', borderColor: opsFilter === k ? COLORS.text : undefined, boxShadow: opsFilter === k ? `inset 0 0 0 1px ${COLORS.text}` : undefined }}>
+                  <div style={{ fontSize: 11, color: COLORS.textMuted }}>{l}</div>
+                  <div className="lrpg-num" style={{ fontSize: 14.5, fontWeight: 800, color: c }}>{fmtMoney(v, true)}</div>
+                </button>
+              ))}
+            </div>
+            {list.length === 0 && <div className="lrpg-paper" style={{ padding: 14, fontSize: 13.5, color: COLORS.textMuted }}>Операций нет. Нажми «− Расход» или «+ Доход» в казне.</div>}
+            {list.map((t, i) => {
+              const newDay = i === 0 || list[i - 1].date !== t.date;
+              return (
+                <React.Fragment key={t.id}>
+                  {newDay && <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, marginTop: 4 }}>{t.date === today ? 'Сегодня' : new Date(t.date + 'T12:00:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' })}</div>}
+                  <div className="lrpg-paper" style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <CatBadge cat={t.category} size={30} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted }}>{(t.type === 'income' ? INCOME_SOURCE_TYPES.find(x => x.key === t.category) : EXPENSE_CATEGORIES.find(x => x.key === t.category))?.label || t.category}{t.source && t.source !== 'manual' ? ' · авто' : ''}</div>
+                    </div>
+                    <span className="lrpg-num" style={{ fontSize: 14, fontWeight: 800, color: t.type === 'income' ? COLORS.green : COLORS.crimson, whiteSpace: 'nowrap' }}>{t.type === 'income' ? '+' : '−'}{fmtMoney(t.amount)}</span>
+                    {(!t.source || t.source === 'manual') && (confirmDel === t.id
+                      ? <button className="lrpg-btn" onClick={() => { deleteTransaction(t.id); setConfirmDel(null); }} style={{ ...smallBtn(COLORS.crimson), padding: '5px 8px' }}>Удалить</button>
+                      : <button className="lrpg-btn" aria-label="Удалить операцию" onClick={() => { setConfirmDel(t.id); setTimeout(() => setConfirmDel(c => c === t.id ? null : c), 3000); }} style={{ background: 'none', padding: 4 }}><Trash2 size={14} color={COLORS.textMuted} /></button>)}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </>
+        );
+      })()}
+
+      {nav === 'debts' && (
+        <>
+          <div className="lrpg-paper" style={{ padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Логово долгов</span>
+              <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800, color: COLORS.crimson }}>HP {fmtMoney(totalLiabilities, true)}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginTop: 8 }}>
+              {[['Живых', alive.length], ['Повержено', beaten.length], ['В месяц', fmtMoney(monthlyOblig, true)]].map(([l, v]) => (
+                <div key={l} style={{ background: COLORS.bgCardAlt, borderRadius: 10, padding: '7px 8px' }}><div style={{ fontSize: 10.5, color: COLORS.textMuted }}>{l}</div><div className="lrpg-num" style={{ fontSize: 15, fontWeight: 800 }}>{v}</div></div>
+              ))}
+            </div>
+            {freeDate && <div style={{ fontSize: 12.5, marginTop: 8 }}>При нынешних платежах свобода от долгов — <b>{freeDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</b> ({monthsToFree} мес.).</div>}
+            {alive.length > 1 && (
+              <>
+                <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '10px 0 6px' }}>Тактика боя</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
+                  {DEBT_TACTICS.map(t => (
+                    <button key={t.key} className="lrpg-btn" onClick={() => { gameFeedback('BUTTON_PRESS'); setDebtStrategy(t.key); }} aria-pressed={finance.strategy === t.key} style={{ padding: '7px 6px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, background: finance.strategy === t.key ? COLORS.text : COLORS.bgCard, color: finance.strategy === t.key ? COLORS.bg : COLORS.text, border: `1px solid ${finance.strategy === t.key ? COLORS.text : COLORS.border}` }}>{t.label}</button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11.5, color: COLORS.textMuted, marginTop: 5 }}>{DEBT_TACTICS.find(t => t.key === finance.strategy)?.desc}. Цель тактики — первый босс в списке.</div>
+              </>
+            )}
+            <button className="lrpg-btn" onClick={() => setShowAddDebt(v => !v)} style={{ ...smallBtn(COLORS.crimson), marginTop: 10, width: '100%' }}>{showAddDebt ? 'Закрыть' : '+ Новый долг'}</button>
+          </div>
+          {showAddDebt && <AddDebtForm onSubmit={v => { addDebt(v); setShowAddDebt(false); }} onCancel={() => setShowAddDebt(false)} />}
+          {alive.length === 0 && !showAddDebt && <div className="lrpg-paper" style={{ padding: 14, fontSize: 13.5, color: COLORS.textMuted }}>Долгов нет — логово пустует. Так держать!</div>}
+          {alive.map((d, i) => {
+            const due = dueOf(d);
+            const left = due > 0 ? Math.ceil(d.remaining / due) : null;
+            const overdue = d.loanType === 'simple' && d.dueDate && d.dueDate < today;
+            const isLoan = d.loanType === 'annuity' || d.loanType === 'differentiated';
+            const hit = hits[d.id];
+            const open = openDebt === d.id;
+            const schedule = open && isLoan ? (d.loanType === 'differentiated' ? buildDifferentiatedSchedule(d.total, d.interestRate, d.termMonths) : buildAmortizationSchedule(d.total, d.interestRate, d.termMonths)).slice(d.monthsElapsed || 0) : null;
+            return (
+              <div key={d.id} className="lrpg-paper lrpg-stagger" style={{ padding: 12, borderColor: overdue ? COLORS.crimson : i === 0 ? '#e2b9a8' : undefined, background: i === 0 ? '#fbf3ee' : undefined }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div style={{ position: 'relative' }}>
+                    <DebtBossSprite category={d.category} size={58} hitKey={hit && hit.k} />
+                    {hit && <DamagePop amount={hit.amount} k={hit.k} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.crimson }}>{i === 0 && alive.length > 1 ? 'цель тактики · ' : ''}{(DEBT_CATEGORY_OPTIONS.find(o => o.key === d.category) || {}).label || 'долг'}{d.interestRate ? ` · ${d.interestRate}%` : ''}</div>
+                    <div style={{ fontSize: 15.5, fontWeight: 700, lineHeight: 1.2 }}>{d.title}</div>
+                    <div style={{ marginTop: 6 }}><HpBar value={d.remaining} max={d.total || d.remaining} /></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: COLORS.textMuted, marginTop: 3 }}>
+                      <span>HP {fmtMoney(d.remaining)} / {fmtMoney(d.total, true)}</span>
+                      <span style={{ color: overdue ? COLORS.crimson : COLORS.textMuted }}>{overdue ? 'просрочен!' : left ? `≈ ${left} мес.` : d.dueDate ? `до ${d.dueDate}` : ''}</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                  {due > 0 && <button className="lrpg-btn" onClick={() => hitBoss(d, Math.min(due, d.remaining + d.remaining * ((d.interestRate || 0) / 1200)))} style={{ ...btn(COLORS.crimson, '#fbf9f4', { padding: '9px 10px', fontSize: 13, boxShadow: '0 3px 0 #7a2e1c', whiteSpace: 'nowrap' }) }}>Платёж {fmtMoney(due, true)}</button>}
+                  <input className="lrpg-input" inputMode="numeric" placeholder="Своя сумма" value={payAmounts[d.id] || ''} onChange={e => setPayAmounts(p => ({ ...p, [d.id]: e.target.value.replace(/[^\d]/g, '') }))} style={{ flex: 1 }} />
+                  <button className="lrpg-btn" disabled={!Number(payAmounts[d.id])} onClick={() => hitBoss(d, payAmounts[d.id])} style={{ ...smallBtn(COLORS.crimson), opacity: Number(payAmounts[d.id]) ? 1 : .5 }}>Удар</button>
+                </div>
+                <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 12 }}>
+                  {(isLoan || (d.history && d.history.length > 0)) && <button className="lrpg-btn" onClick={() => setOpenDebt(open ? null : d.id)} style={{ background: 'none', color: COLORS.teal, fontWeight: 700, padding: 0 }}>{open ? 'Скрыть детали' : `Детали${d.history && d.history.length ? ` · ударов ${d.history.length}` : ''}`}</button>}
+                  {confirmDel === d.id
+                    ? <button className="lrpg-btn" onClick={() => { deleteDebt(d.id); setConfirmDel(null); }} style={{ background: 'none', color: COLORS.crimson, fontWeight: 700, padding: 0, marginLeft: 'auto' }}>Точно удалить?</button>
+                    : <button className="lrpg-btn" onClick={() => { setConfirmDel(d.id); setTimeout(() => setConfirmDel(c => c === d.id ? null : c), 3000); }} style={{ background: 'none', color: COLORS.textMuted, padding: 0, marginLeft: 'auto' }}>Удалить</button>}
+                </div>
+                {open && (
+                  <div style={{ marginTop: 8, fontSize: 12 }}>
+                    {schedule && schedule.length > 0 && (
+                      <>
+                        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, marginBottom: 4 }}>График · переплата {fmtMoney(schedule.reduce((s, r) => s + r.interest, 0), true)}</div>
+                        <div style={{ maxHeight: 160, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
+                          {schedule.map(r => (
+                            <div key={r.month} style={{ display: 'grid', gridTemplateColumns: '0.5fr 1fr 1fr 1fr', padding: '4px 8px', fontSize: 11.5, borderBottom: `1px solid ${COLORS.border}` }}>
+                              <span>{r.month}</span><span>{fmtMoney(r.payment, true)}</span><span style={{ color: COLORS.crimson }}>%{fmtMoney(r.interest, true)}</span><span>{fmtMoney(r.balance, true)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    {d.history && d.history.length > 0 && (
+                      <>
+                        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, margin: '8px 0 4px' }}>Удары</div>
+                        {d.history.slice().reverse().slice(0, 12).map(h => (
+                          <div key={h.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: `1px dashed ${COLORS.border}` }}>
+                            <span style={{ color: COLORS.textMuted }}>{h.date}</span><span>−{fmtMoney(h.principal)} HP</span><span style={{ color: COLORS.crimson }}>% {fmtMoney(h.interest)}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
-          <button className="lrpg-btn" onClick={() => setShowBudgetEdit(true)} style={{ marginTop: 10, background: COLORS.bgCardAlt, borderRadius: 8, padding: '8px 10px' }}>Править план</button>
-        </Card>
-      )}
-
-      {finNav === 'capital' && (
-        <Card>
-          <div style={{ fontWeight: 800 }}>Капитал {fmtSum(netWorth)}</div>
-          {assetBreakdown.map(a => (
-            <div key={a.key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 6 }}>
-              <span>{a.icon} {a.label}</span><span>{fmtSum(a.value)}</span>
-            </div>
-          ))}
-          <div style={{ marginTop: 8, fontSize: 12 }}>Обязательства −{fmtSum(totalLiabilities)}</div>
-        </Card>
-      )}
-
-      {(finNav === 'full' || showAddTx || showAddDebt || showAddAsset || showBudgetEdit || showAddIncomeSource || showAddSaving) && (
-    <div style={{ display: finNav === 'full' || showAddTx || showAddDebt || showAddAsset || showBudgetEdit ? 'flex' : 'none', flexDirection: 'column', gap: 16 }}>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Wallet size={15} color={COLORS.gold} /> Полный раздел</span>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {['simple', 'advanced'].map(m => (
-              <button key={m} className="lrpg-btn" onClick={() => setFinanceMode(m)} style={{
-                fontSize: 10, padding: '3px 8px', borderRadius: 6, fontWeight: 700,
-                background: finance.mode === m ? COLORS.violet : COLORS.bgCardAlt,
-                color: finance.mode === m ? '#fff' : COLORS.textMuted,
-              }}>
-                {m === 'simple' ? 'Просто' : 'Подробно'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-            <span style={{ color: COLORS.textMuted }}>💵 Cash Balance</span>
-            <span style={{ fontWeight: 700, color: finance.cashBalance >= 0 ? COLORS.text : COLORS.crimson }}>{finance.cashBalance}</span>
-          </div>
-          <div style={{ borderTop: `1px dashed ${COLORS.border}`, margin: '6px 0 8px' }} />
-          {[
-            ['Доход за месяц', fm.income, COLORS.teal],
-            ['Расходы за месяц', fm.expenses, COLORS.crimson],
-            ['Платежи по долгам', fm.debtPay, COLORS.crimson],
-            ['Накопления', fm.savingsContrib, COLORS.gold],
-          ].map(([label, val, color]) => (
-            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
-              <span style={{ color: COLORS.textMuted }}>{label}</span><span style={{ color }}>{val}</span>
-            </div>
-          ))}
-          {Object.keys(incomeBySource).length > 0 && (
-            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}` }}>
-              <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textTransform: 'uppercase' }}>Доход за месяц по источникам</div>
-              {Object.entries(incomeBySource).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
-                <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 2 }}>
-                  <span style={{ color: COLORS.textMuted }}>{INCOME_SOURCE_TYPES.find(t => t.key === cat)?.label || cat}</span>
-                  <span style={{ color: COLORS.teal }}>{amt}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 13, fontWeight: 700 }}>
-            <span>Свободный остаток</span>
-            <span style={{ color: fm.cashFlow >= 0 ? COLORS.teal : COLORS.crimson }}>{fm.cashFlow}</span>
-          </div>
-          <div style={{ fontSize: 11, marginTop: 4, color: fm.cashFlow >= 0 ? COLORS.teal : COLORS.crimson, fontWeight: 700 }}>
-            {fm.cashFlow >= 0 ? 'SURPLUS — профицит' : 'DEFICIT — дефицит'}
-          </div>
-        </Card>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <HeartPulse size={15} color={COLORS.teal} /> Финансовое здоровье
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <Card style={{ padding: 10 }}>
-            <div style={{ fontSize: 10, color: COLORS.textMuted }}>💳 Долговая нагрузка</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: health.debtZone.color, marginTop: 2 }}>{health.income > 0 ? `${health.debtLoad.toFixed(1)}%` : '—'}</div>
-            <div style={{ fontSize: 10, color: health.debtZone.color, marginTop: 2 }}>{health.debtZone.emoji} {health.debtZone.label}</div>
-            {isAdvanced && (
-              <div style={{ display: 'flex', gap: 3, marginTop: 6 }}>
-                {[['low', 'до'], ['medium', 'до'], ['high', 'до']].map(([k]) => (
-                  <input key={k} className="lrpg-input" type="number" min={0} max={100} defaultValue={finance.debtLoadThresholds[k]}
-                    onBlur={e => setDebtLoadThresholds({ [k]: Number(e.target.value) || 0 })}
-                    style={{ width: 40, fontSize: 10, padding: '3px 4px' }} title={`Порог "${k}", %`} />
+          {beaten.length > 0 && (
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.gold, marginBottom: 6 }}>Поверженные</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                {beaten.map(d => (
+                  <div key={d.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 70 }}>
+                    <DebtBossSprite category={d.category} defeated size={40} />
+                    <span style={{ fontSize: 10.5, color: COLORS.textMuted, textAlign: 'center', lineHeight: 1.15, marginTop: 2 }}>{d.title}</span>
+                  </div>
                 ))}
               </div>
-            )}
-          </Card>
-          <Card style={{ padding: 10 }}>
-            <div style={{ fontSize: 10, color: COLORS.textMuted }}>📈 Норма накоплений</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.gold, marginTop: 2 }}>{health.income > 0 ? `${health.savingsRate.toFixed(1)}%` : '—'}</div>
-            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>от дохода за месяц</div>
-          </Card>
-          <Card style={{ padding: 10 }}>
-            <div style={{ fontSize: 10, color: COLORS.textMuted }}>🛡️ Финансовая подушка</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: COLORS.teal, marginTop: 2 }}>
-              {Number.isFinite(health.emergencyMonths) ? health.emergencyMonths.toFixed(2) : '∞'} / {finance.emergencyFundGoalMonths} мес.
             </div>
-            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>покрытие обязательных расходов</div>
-          </Card>
-          <Card style={{ padding: 10 }}>
-            <div style={{ fontSize: 10, color: COLORS.textMuted }}>📊 Здоровье бюджета</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: health.budgetHealth === null ? COLORS.textMuted : (health.budgetHealth >= 80 ? COLORS.teal : health.budgetHealth >= 50 ? COLORS.gold : COLORS.crimson), marginTop: 2 }}>
-              {health.budgetHealth === null ? '—' : `${Math.round(health.budgetHealth)}%`}
-            </div>
-            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{health.budgetHealth === null ? 'план не задан' : 'факт vs план'}</div>
-          </Card>
-        </div>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Gem size={15} color={COLORS.violet} /> Активы и капитал
-        </div>
-        <Card>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700 }}>
-            <span>NET WORTH</span>
-            <span style={{ color: netWorth >= 0 ? COLORS.teal : COLORS.crimson }}>{netWorth}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: COLORS.textMuted, marginTop: 8 }}>
-            <span>Активы</span><span style={{ color: COLORS.teal }}>{totalAssets}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: COLORS.textMuted, marginTop: 3 }}>
-            <span>Обязательства</span><span style={{ color: COLORS.crimson }}>{totalLiabilities}</span>
-          </div>
-          <div style={{ borderTop: `1px dashed ${COLORS.border}`, margin: '8px 0' }} />
-          {assetBreakdown.map(a => (
-            <div key={a.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginTop: 4 }}>
-              <span>{a.icon} {a.label}{!a.auto && <button className="lrpg-btn" onClick={() => deleteCustomAsset(a.id)} style={{ background: 'none', marginLeft: 6 }}><Trash2 size={11} color={COLORS.textMuted} /></button>}</span>
-              <span>{a.value}</span>
-            </div>
-          ))}
-          {garage.currentValue === 0 && (
-            <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 8 }}>Укажи стоимость машины во вкладке «Гараж», чтобы она попала в Net Worth.</div>
           )}
-          {finance.netWorthHistory.length > 1 && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto' }}>
-              {finance.netWorthHistory.slice(-6).map(h => (
-                <div key={h.month} style={{ fontSize: 10, textAlign: 'center', flexShrink: 0, background: COLORS.bgCardAlt, borderRadius: 6, padding: '4px 8px' }}>
-                  <div style={{ color: COLORS.textMuted }}>{h.month.slice(5)}</div>
-                  <div style={{ fontWeight: 700, color: h.netWorth >= 0 ? COLORS.teal : COLORS.crimson }}>{h.netWorth}</div>
-                </div>
+        </>
+      )}
+
+      {nav === 'budget' && (() => {
+        const mk = addMonthsToKey(fm.monthKey, budgetOffset);
+        const plan = (finance.budgetPlanByMonth && finance.budgetPlanByMonth[mk]) || {};
+        const total = Object.values(plan).reduce((s, v) => s + (Number(v) || 0), 0);
+        const spent = budgetOffset ? 0 : expenseCats.reduce((s, c) => s + (actualByCat[c.key] || 0), 0);
+        const rows = expenseCats.filter(c => budgetEdit || plan[c.key] !== undefined || (!budgetOffset && actualByCat[c.key]));
+        return (
+          <>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[[0, 'Этот месяц'], [1, 'Следующий']].map(([o, l]) => (
+                <button key={o} className="lrpg-btn" onClick={() => setBudgetOffset(o)} aria-pressed={budgetOffset === o} style={{ flex: 1, padding: '8px 0', borderRadius: 10, fontSize: 13, fontWeight: 700, background: budgetOffset === o ? COLORS.text : COLORS.bgCard, color: budgetOffset === o ? COLORS.bg : COLORS.text, border: `1px solid ${budgetOffset === o ? COLORS.text : COLORS.border}` }}>{l}</button>
               ))}
             </div>
-          )}
-          <button className="lrpg-btn" onClick={() => setShowAddAsset(v => !v)} style={{ marginTop: 10, background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить актив</button>
-          {showAddAsset && (
-            <div style={{ marginTop: 8 }}>
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, textTransform: 'capitalize' }}>{monthKeyLabel(mk)}</span>
+                <button className="lrpg-btn" onClick={() => setBudgetEdit(v => !v)} style={smallBtn(COLORS.gold)}>{budgetEdit ? 'Готово' : 'Настроить план'}</button>
+              </div>
+              {total > 0 && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 8 }}><span>Потрачено {fmtMoney(spent, true)} из {fmtMoney(total, true)}</span><b style={{ color: spent > total ? COLORS.crimson : COLORS.green }}>{spent > total ? 'перерасход' : `осталось ${fmtMoney(total - spent, true)}`}</b></div>
+                  <div style={{ height: 8, background: '#e6e0d3', borderRadius: 4, marginTop: 5, overflow: 'hidden' }}><div style={{ width: `${Math.min(100, (spent / total) * 100)}%`, height: '100%', background: spent > total ? COLORS.crimson : COLORS.green }} /></div>
+                </>
+              )}
+              {total === 0 && !budgetEdit && <div style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 8 }}>План не задан. Разложи деньги по «конвертам» — и «Можно потратить» станет точнее.</div>}
+            </div>
+            {rows.map(c => {
+              const lim = Number(plan[c.key] || 0);
+              const used = budgetOffset ? 0 : (actualByCat[c.key] || 0);
+              const pct = lim > 0 ? used / lim : 0;
+              return (
+                <div key={c.key} className="lrpg-paper" style={{ padding: '9px 10px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <CatBadge cat={c.key} size={30} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, fontSize: 13 }}>
+                      <span style={{ fontWeight: 600 }}>{c.label}</span>
+                      {!budgetEdit && <span className="lrpg-num" style={{ color: lim && used > lim ? COLORS.crimson : COLORS.textMuted }}>{fmtMoney(used, true)}{lim ? ` / ${fmtMoney(lim, true)}` : ''}</span>}
+                    </div>
+                    {!budgetEdit && lim > 0 && <div style={{ height: 6, background: '#e6e0d3', borderRadius: 3, marginTop: 4, overflow: 'hidden' }}><div style={{ width: `${Math.min(100, pct * 100)}%`, height: '100%', background: pct > 1 ? COLORS.crimson : pct > 0.8 ? COLORS.gold : COLORS.green }} /></div>}
+                  </div>
+                  {budgetEdit && <input className="lrpg-input" inputMode="numeric" placeholder="Лимит" defaultValue={plan[c.key] || ''} aria-label={`Лимит: ${c.label}`}
+                    onBlur={e => { const v = e.target.value.replace(/[^\d]/g, ''); if (v) setBudgetPlanItem(c.key, v, mk); else removeBudgetPlanItem(c.key, mk); }} style={{ width: 110 }} />}
+                </div>
+              );
+            })}
+          </>
+        );
+      })()}
+
+      {nav === 'jars' && (
+        <>
+          <button className="lrpg-btn" onClick={() => setShowAddSaving(v => !v)} style={{ ...btn(COLORS.teal, '#fbf9f4', { boxShadow: '0 3px 0 #1f4a4c' }) }}>{showAddSaving ? 'Закрыть' : '+ Новая копилка'}</button>
+          {showAddSaving && (
+            <div className="lrpg-paper" style={{ padding: 12 }}>
               <AddInlineForm
                 fields={[
-                  { key: 'name', placeholder: 'Название (напр. «Депозит в банке»)', required: true },
-                  { key: 'type', type: 'select', options: ASSET_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'investments' },
-                  { key: 'value', placeholder: 'Стоимость', type: 'number', default: 0, required: true },
-                  { key: 'liquid', type: 'checkbox', label: 'Ликвидный (легко обналичить)' },
+                  { key: 'title', placeholder: 'На что копим', required: true },
+                  { key: 'target', placeholder: 'Сколько нужно', type: 'number', default: 0 },
+                  { key: 'type', type: 'select', options: SAVINGS_GOAL_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'goal' },
                 ]}
-                onSubmit={v => { addCustomAsset(v); setShowAddAsset(false); }}
+                onSubmit={v => { addSavingsGoal({ title: v.title.trim(), target: Number(v.target) || 0, type: v.type }); setShowAddSaving(false); gameFeedback('ITEM_UNLOCK'); }}
               />
             </div>
           )}
-        </Card>
-      </div>
+          {finance.savingsGoals.length === 0 && !showAddSaving && <div className="lrpg-paper" style={{ padding: 14, fontSize: 13.5, color: COLORS.textMuted }}>Копилок нет. Начни с подушки безопасности на {finance.emergencyFundGoalMonths} месяца расходов.</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+            {finance.savingsGoals.map(g => {
+              const pct = g.target > 0 ? g.saved / g.target : 0;
+              const done = g.target > 0 && g.saved >= g.target;
+              const color = g.type === 'emergency' ? COLORS.teal : '#c48a2a';
+              return (
+                <div key={g.id} className="lrpg-paper" style={{ padding: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', borderColor: done ? COLORS.gold : undefined }}>
+                  <PiggyJar pct={pct} color={color} size={50} done={done} />
+                  <div style={{ fontSize: 13.5, fontWeight: 700, marginTop: 6, lineHeight: 1.2 }}>{g.title}</div>
+                  <div className="lrpg-mono" style={{ fontSize: 8, color }}>{g.type === 'emergency' ? 'подушка' : 'копилка'} · {Math.round(pct * 100)}%</div>
+                  <div className="lrpg-num" style={{ fontSize: 12, marginTop: 3 }}>{fmtMoney(g.saved, true)} / {fmtMoney(g.target, true)}</div>
+                  {!done ? (
+                    <div style={{ display: 'flex', gap: 4, marginTop: 6, width: '100%' }}>
+                      <input className="lrpg-input" inputMode="numeric" placeholder="Сумма" value={saveAmounts[g.id] || ''} onChange={e => setSaveAmounts(v => ({ ...v, [g.id]: e.target.value.replace(/[^\d]/g, '') }))} style={{ flex: 1, padding: '6px 8px', fontSize: 13 }} />
+                      <button className="lrpg-btn" disabled={!Number(saveAmounts[g.id])} onClick={() => { contributeSaving(g.id, Number(saveAmounts[g.id])); setSaveAmounts(v => ({ ...v, [g.id]: '' })); gameFeedback('COIN_GAIN', { coins: 1 }); }} style={{ background: color, color: '#fbf9f4', border: 'none', borderRadius: 8, padding: '0 10px', fontWeight: 800, opacity: Number(saveAmounts[g.id]) ? 1 : .5 }}>+</button>
+                    </div>
+                  ) : <div style={{ fontSize: 12, color: COLORS.gold, fontWeight: 700, marginTop: 6 }}>Накоплено!</div>}
+                  {confirmDel === g.id
+                    ? <button className="lrpg-btn" onClick={() => { deleteSavingsGoal(g.id); setConfirmDel(null); }} style={{ background: 'none', color: COLORS.crimson, fontSize: 11.5, fontWeight: 700, marginTop: 6 }}>Точно удалить?</button>
+                    : <button className="lrpg-btn" onClick={() => { setConfirmDel(g.id); setTimeout(() => setConfirmDel(c => c === g.id ? null : c), 3000); }} style={{ background: 'none', color: COLORS.textMuted, fontSize: 11.5, marginTop: 6 }}>удалить</button>}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 12, color: COLORS.textMuted }}>Деньги в копилку уходят из казны — так баланс остаётся честным.</div>
+        </>
+      )}
 
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} color={COLORS.gold} /> Бюджет — {monthKeyLabel(budgetMonthKey)}</span>
-          <button className="lrpg-btn" onClick={() => setShowBudgetEdit(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700 }}>{showBudgetEdit ? 'Готово' : 'Настроить'}</button>
-        </div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-          <button className="lrpg-btn" onClick={() => setBudgetMonthOffset(0)} style={{
-            flex: 1, background: budgetMonthOffset === 0 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 0 ? '#fbf9f4' : COLORS.textMuted,
-            borderRadius: 8, padding: '6px 0', fontSize: 11, fontWeight: 700,
-          }}>Этот месяц</button>
-          <button className="lrpg-btn" onClick={() => setBudgetMonthOffset(1)} style={{
-            flex: 1, background: budgetMonthOffset === 1 ? COLORS.violet : COLORS.bgCardAlt, color: budgetMonthOffset === 1 ? '#fbf9f4' : COLORS.textMuted,
-            borderRadius: 8, padding: '6px 0', fontSize: 11, fontWeight: 700,
-          }}>Следующий месяц</button>
-        </div>
-        <Card>
-          {Object.keys(budgetPlanForMonth).length === 0 && !showBudgetEdit && (
-            <div style={{ fontSize: 12, color: COLORS.textMuted }}>{isNextMonth ? 'План на следующий месяц ещё не задан. Нажми «Настроить», чтобы спланировать заранее.' : 'План не задан. Нажми «Настроить», чтобы задать план по категориям.'}</div>
-          )}
-          {EXPENSE_CATEGORIES.filter(c => c.group !== 'fin' && c.group !== 'debt').map(c => {
-            const planned = budgetPlanForMonth[c.key];
-            const actual = isNextMonth ? 0 : (actualByCategory[c.key] || 0);
-            if (!showBudgetEdit && planned === undefined) return null;
-            const diff = (planned || 0) - actual;
-            return (
-              <div key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 11, flex: 1 }}>{c.label}</span>
-                {showBudgetEdit ? (
-                  <input className="lrpg-input" type="number" min={0} placeholder="План" value={planned || ''}
-                    onChange={e => e.target.value ? setBudgetPlanItem(c.key, e.target.value, budgetMonthKey) : removeBudgetPlanItem(c.key, budgetMonthKey)}
-                    style={{ width: 90, fontSize: 11, padding: '4px 6px' }} />
-                ) : isNextMonth ? (
-                  <span style={{ fontSize: 11, color: COLORS.text, width: 60, textAlign: 'right' }}>{planned}</span>
-                ) : (
-                  <>
-                    <span style={{ fontSize: 11, color: COLORS.textMuted, width: 60, textAlign: 'right' }}>{planned}</span>
-                    <span style={{ fontSize: 11, width: 60, textAlign: 'right' }}>{actual}</span>
-                    <span style={{ fontSize: 11, width: 60, textAlign: 'right', color: diff >= 0 ? COLORS.teal : COLORS.crimson }}>{diff}</span>
-                  </>
-                )}
+      {nav === 'taxi' && (() => {
+        const target = finance.taxi.dailyTarget || 0;
+        const pct = target ? Math.min(1, todayTaxi / target) : 0;
+        const weekTaxi = Array.from({ length: 7 }, (_, i) => {
+          const d = new Date(); d.setDate(d.getDate() - (6 - i));
+          const key = d.toISOString().slice(0, 10);
+          const st = new Date(key + 'T00:00:00').getTime();
+          return { key, label: d.toLocaleDateString('ru-RU', { weekday: 'short' }).slice(0, 2), sum: finance.taxi.orders.filter(o => o.ts >= st && o.ts < st + 86400000).reduce((s, o) => s + (o.net ?? o.amount), 0) };
+        });
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+        const carExpM = (garage.expenses || []).filter(e => e.ts >= monthStart).reduce((s, e) => s + e.amount, 0);
+        const taxiM = finance.taxi.orders.filter(o => o.ts >= monthStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
+        return (
+          <>
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Смена сегодня</span>
+                <span className="lrpg-num" style={{ fontSize: 13, color: COLORS.textMuted }}>{todayOrders.length} {plural(todayOrders.length, 'заказ', 'заказа', 'заказов')}</span>
               </div>
-            );
-          })}
-          {!showBudgetEdit && !isNextMonth && Object.keys(budgetPlanForMonth).length > 0 && (
-            <div style={{ display: 'flex', gap: 8, fontSize: 9, color: COLORS.textMuted, justifyContent: 'flex-end', marginTop: 4 }}>
-              <span style={{ width: 60, textAlign: 'right' }}>План</span><span style={{ width: 60, textAlign: 'right' }}>Факт</span><span style={{ width: 60, textAlign: 'right' }}>Разница</span>
+              <div className="lrpg-num" style={{ fontSize: 26, fontWeight: 800, marginTop: 4 }}>{fmtMoney(todayTaxi)} <span style={{ fontSize: 13, color: COLORS.textMuted }}>/ {fmtMoney(target)}</span></div>
+              <div style={{ position: 'relative', height: 14, background: '#e6e0d3', borderRadius: 4, marginTop: 6, overflow: 'hidden' }}>
+                <div className="ag-fill" style={{ width: `${pct * 100}%`, height: '100%', background: pct >= 1 ? COLORS.gold : COLORS.teal }} />
+              </div>
+              <div style={{ fontSize: 12.5, marginTop: 6, color: pct >= 1 ? COLORS.gold : COLORS.textMuted, fontWeight: pct >= 1 ? 700 : 400 }}>{pct >= 1 ? 'План смены выполнен — всё сверху это бонус!' : `До плана ${fmtMoney(Math.max(0, target - todayTaxi))}`}</div>
+              <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setSheet('order'); }} style={{ ...btn(COLORS.gold, '#fbf9f4', { boxShadow: '0 3px 0 #8a5a1a', width: '100%', marginTop: 10 }) }}>+ Заказ</button>
             </div>
-          )}
-          {plannedTotalForMonth > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, paddingTop: 8, borderTop: `1px dashed ${COLORS.border}`, fontSize: 12, fontWeight: 700 }}>
-              <span>Итого план</span><span>{plannedTotalForMonth}</span>
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              {sectionTitle('Неделя', <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800, color: COLORS.teal }}>{fmtMoney(weekTaxi.reduce((s, d) => s + d.sum, 0), true)}</span>)}
+              <WeekBars data={weekTaxi} color={COLORS.teal} />
             </div>
-          )}
-        </Card>
-      </div>
+            {todayOrders.length > 0 && (
+              <div className="lrpg-paper" style={{ padding: '6px 12px' }}>
+                {todayOrders.slice().reverse().map(o => (
+                  <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: `1px dashed ${COLORS.border}`, fontSize: 13 }}>
+                    <span style={{ color: COLORS.textMuted, width: 44 }}>{new Date(o.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span style={{ flex: 1, color: COLORS.textMuted, fontSize: 11.5 }}>{fmtMoney(o.amount)}{o.commission ? ` − ${fmtMoney(o.commission)}` : ''}</span>
+                    <b style={{ color: COLORS.green }}>+{fmtMoney(o.net ?? o.amount)}</b>
+                    <button className="lrpg-btn" aria-label="Удалить заказ" onClick={() => deleteOrder(o.id)} style={{ background: 'none', padding: 2 }}><Trash2 size={13} color={COLORS.textMuted} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              {sectionTitle('Машина · месяц', <span className="lrpg-num" style={{ fontSize: 13, fontWeight: 800, color: taxiM - carExpM >= 0 ? COLORS.green : COLORS.crimson }}>{taxiM - carExpM >= 0 ? '+' : ''}{fmtMoney(taxiM - carExpM, true)}</span>)}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span style={{ color: COLORS.textMuted }}>Заработано заказами</span><b style={{ color: COLORS.green }}>+{fmtMoney(taxiM, true)}</b></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 3 }}><span style={{ color: COLORS.textMuted }}>Расходы на машину</span><b style={{ color: COLORS.crimson }}>−{fmtMoney(carExpM, true)}</b></div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                {GARAGE_EXPENSE_CATEGORIES.map(c => (
+                  <button key={c.key} className="lrpg-btn" onClick={() => setCarTitle(c.key)} aria-pressed={carTitle === c.key} style={{ padding: '6px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600, background: carTitle === c.key ? COLORS.text : COLORS.bgCard, color: carTitle === c.key ? COLORS.bg : COLORS.text, border: `1px solid ${carTitle === c.key ? COLORS.text : COLORS.border}` }}>{c.label}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <input className="lrpg-input" inputMode="numeric" placeholder="Сумма" value={carAmt} onChange={e => setCarAmt(e.target.value.replace(/[^\d]/g, ''))} style={{ flex: 1 }} />
+                <button className="lrpg-btn" disabled={!Number(carAmt)} onClick={() => { addGarageExpense((GARAGE_EXPENSE_CATEGORIES.find(c => c.key === carTitle) || {}).label || 'Машина', Number(carAmt), carTitle); setCarAmt(''); gameFeedback('BUTTON_PRESS'); }} style={{ ...smallBtn(COLORS.crimson), opacity: Number(carAmt) ? 1 : .5 }}>Записать</button>
+              </div>
+            </div>
+            <div className="lrpg-paper" style={{ padding: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <label style={{ fontSize: 12, color: COLORS.textMuted }}>План смены, сум
+                <input className="lrpg-input" inputMode="numeric" value={finance.taxi.dailyTarget || ''} onChange={e => setTaxiTarget(Number(e.target.value.replace(/[^\d]/g, '')) || 0)} style={{ marginTop: 4 }} />
+              </label>
+              <label style={{ fontSize: 12, color: COLORS.textMuted }}>Комиссия парка, %
+                <input className="lrpg-input" inputMode="numeric" value={finance.taxi.commissionPct ?? 9} onChange={e => setTaxiCommission(Number(e.target.value.replace(/[^\d]/g, '')) || 0)} style={{ marginTop: 4 }} />
+              </label>
+            </div>
+          </>
+        );
+      })()}
 
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><TrendingDown size={15} color={COLORS.violet} /> Операции</span>
-          <button className="lrpg-btn" onClick={() => setShowAddTx(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
-        </div>
-        {showAddTx && (
-          <Card style={{ marginBottom: 8 }}>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-              {[['income', 'Доход'], ['expense', 'Расход']].map(([k, l]) => (
-                <button key={k} className="lrpg-btn" onClick={() => setTxType(k)} style={{
-                  flex: 1, padding: '6px 0', borderRadius: 8, fontWeight: 700, fontSize: 12,
-                  background: txType === k ? (k === 'income' ? COLORS.teal : COLORS.crimson) : COLORS.bgCardAlt,
-                  color: txType === k ? '#fbf9f4' : COLORS.textMuted,
-                }}>{l}</button>
+      {nav === 'capital' && (() => {
+        const hist = (finance.netWorthHistory || []).slice(-12);
+        const maxA = Math.max(1, ...assetBreakdown.map(a => Math.abs(a.value)));
+        return (
+          <>
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted }}>Чистый капитал</div>
+              <div className="lrpg-num" style={{ fontSize: 28, fontWeight: 800, color: netWorth >= 0 ? COLORS.text : COLORS.crimson }}>{fmtMoney(netWorth)} <span style={{ fontSize: 13, color: COLORS.textMuted }}>сум</span></div>
+              <div style={{ display: 'flex', gap: 14, fontSize: 12.5, marginTop: 4 }}>
+                <span>Активы <b style={{ color: COLORS.green }}>{fmtMoney(totalAssets, true)}</b></span>
+                <span>Долги <b style={{ color: COLORS.crimson }}>−{fmtMoney(totalLiabilities, true)}</b></span>
+              </div>
+              {hist.length >= 2 && (
+                <div style={{ height: 90, marginTop: 8 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={hist.map(h => ({ m: h.month, v: Math.round(h.netWorth) }))}>
+                      <XAxis dataKey="m" tick={{ fontSize: 9, fill: COLORS.textMuted }} />
+                      <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} />
+                      <Line type="stepAfter" dataKey="v" name="Капитал" stroke={COLORS.gold} strokeWidth={2.5} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+            <div className="lrpg-paper" style={{ padding: 12 }}>
+              {sectionTitle('Из чего состоит', <button className="lrpg-btn" onClick={() => setShowAddAsset(v => !v)} style={smallBtn(COLORS.gold)}>{showAddAsset ? 'Закрыть' : '+ Актив'}</button>)}
+              {showAddAsset && (
+                <div style={{ marginBottom: 10 }}>
+                  <AddInlineForm
+                    fields={[
+                      { key: 'name', placeholder: 'Название (депозит, золото…)', required: true },
+                      { key: 'value', placeholder: 'Стоимость', type: 'number', default: 0 },
+                      { key: 'type', type: 'select', options: ASSET_TYPES.map(t => ({ value: t.key, label: t.label })), default: ASSET_TYPES[0].key },
+                    ]}
+                    onSubmit={v => { addCustomAsset({ name: v.name, value: Number(v.value) || 0, type: v.type }); setShowAddAsset(false); }}
+                  />
+                </div>
+              )}
+              {assetBreakdown.map(a => (
+                <div key={a.key} style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}>
+                    <span>{a.label}{!a.auto && <button className="lrpg-btn" aria-label="Удалить актив" onClick={() => deleteCustomAsset(a.id)} style={{ background: 'none', marginLeft: 6, padding: 0 }}><Trash2 size={11} color={COLORS.textMuted} /></button>}</span>
+                    <b className="lrpg-num">{fmtMoney(a.value, true)}</b>
+                  </div>
+                  <div style={{ height: 6, background: '#e6e0d3', borderRadius: 3, marginTop: 3, overflow: 'hidden' }}><div style={{ width: `${(Math.max(0, a.value) / maxA) * 100}%`, height: '100%', background: a.liquid ? COLORS.teal : COLORS.gold }} /></div>
+                </div>
               ))}
             </div>
-            <AddInlineForm
-              key={txType}
-              fields={[
-                { key: 'title', placeholder: 'Название (необязательно)' },
-                { key: 'amount', placeholder: 'Сумма', type: 'number', default: 0, required: true },
-                { key: 'category', type: 'select', options: txCategoryOptions.map(c => ({ value: c.key, label: c.label })), default: txCategoryOptions[0]?.key },
-                ...(isAdvanced ? [
-                  { key: 'date', type: 'date', default: today },
-                  { key: 'essential', type: 'checkbox', label: 'Обязательный расход' },
-                  { key: 'recurring', type: 'checkbox', label: 'Повторяющийся' },
-                ] : []),
-              ]}
-              onSubmit={v => {
-                addTransaction({ type: txType, title: v.title, amount: v.amount, category: v.category, date: v.date, essential: v.essential, recurring: v.recurring });
-                setShowAddTx(false);
-              }}
-            />
-          </Card>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {thisMonthTx.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>За этот месяц операций пока нет.</div></Card>}
-          {thisMonthTx.slice(0, 30).map(t => {
-            const catLabel = t.type === 'income'
-              ? (INCOME_SOURCE_TYPES.find(c => c.key === t.category)?.label || t.category)
-              : (EXPENSE_CATEGORIES.find(c => c.key === t.category)?.label || t.category);
-            return (
-              <Card key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{catLabel} · {t.date}</div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  <span style={{ fontWeight: 700, fontSize: 13, color: t.type === 'income' ? COLORS.teal : COLORS.crimson }}>{t.type === 'income' ? '+' : '-'}{t.amount}</span>
-                  <button className="lrpg-btn" onClick={() => deleteTransaction(t.id)} style={{ background: 'none' }}><Trash2 size={13} color={COLORS.textMuted} /></button>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
+          </>
+        );
+      })()}
 
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Briefcase size={15} color={COLORS.gold} /> Источники дохода</span>
-          <button className="lrpg-btn" onClick={() => setShowAddIncomeSource(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
-        </div>
-        {showAddIncomeSource && (
-          <AddInlineForm
-            fields={[
-              { key: 'name', placeholder: 'Название источника', required: true },
-              { key: 'type', type: 'select', options: INCOME_SOURCE_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'salary' },
-              { key: 'amount', placeholder: 'Сумма (для фикс. дохода)', type: 'number', default: 0 },
-              { key: 'fixed', type: 'checkbox', label: 'Фиксированный доход (не переменный)' },
-            ]}
-            onSubmit={v => { addIncomeSource(v); setShowAddIncomeSource(false); }}
-          />
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-          {finance.incomeSources.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Источников дохода пока нет.</div></Card>}
-          {finance.incomeSources.map(s => {
-            const typeInfo = INCOME_SOURCE_TYPES.find(t => t.key === s.type) || INCOME_SOURCE_TYPES[4];
-            return (
-              <Card key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700 }}>{typeInfo.icon} {s.name}</div>
-                  <div style={{ fontSize: 10, color: COLORS.textMuted, marginTop: 2 }}>{s.fixed ? `${s.amount} / ${s.frequency === 'monthly' ? 'месяц' : s.frequency}` : 'переменный доход'}</div>
-                </div>
-                <button className="lrpg-btn" onClick={() => deleteIncomeSource(s.id)} style={{ background: 'none' }}><Trash2 size={13} color={COLORS.textMuted} /></button>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Car size={15} color={COLORS.teal} /> Такси / Заказы
-        </div>
-        <Card style={{ background: `linear-gradient(135deg, ${COLORS.tealSoft}, ${COLORS.bgCard})` }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span style={{ fontSize: 12, color: COLORS.textMuted }}>Сегодня заработано</span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: COLORS.teal }}>{todayTotal} / {finance.taxi.dailyTarget}</span>
-          </div>
-          <Bar value={todayTotal} max={finance.taxi.dailyTarget} color={COLORS.teal} />
-          {todayTotal >= finance.taxi.dailyTarget && (
-            <div style={{ fontSize: 12, color: COLORS.gold, marginTop: 6, fontWeight: 700 }}>🎯 Дневная цель выполнена — можно закрывать смену или бить рекорд!</div>
-          )}
-          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-            <input className="lrpg-input" type="number" min={0} placeholder="Сумма заказа" value={orderAmount}
-              onChange={e => setOrderAmount(e.target.value)} />
-            <button className="lrpg-btn" onClick={() => { logOrder(Number(orderAmount) || 0); setOrderAmount(''); }}
-              style={{ background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '0 16px', fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap' }}>
-              + Заказ
-            </button>
-          </div>
-          {Number(orderAmount) > 0 && (
-            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Комиссия {finance.taxi.commissionPct ?? 9}%: −{Math.round(Number(orderAmount) * (finance.taxi.commissionPct ?? 9) / 100)}</span>
-              <span style={{ color: COLORS.teal, fontWeight: 700 }}>На руки: {Number(orderAmount) - Math.round(Number(orderAmount) * (finance.taxi.commissionPct ?? 9) / 100)}</span>
-            </div>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
-            <span style={{ fontSize: 11, color: COLORS.textMuted }}>Цель на день:</span>
-            <input className="lrpg-input" type="number" min={0} value={finance.taxi.dailyTarget || ''}
-              onChange={e => setTaxiTarget(e.target.value === '' ? 0 : Number(e.target.value))} style={{ maxWidth: 110, padding: '4px 8px' }} />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-            <span style={{ fontSize: 11, color: COLORS.textMuted }}>Комиссия таксопарка, %:</span>
-            <input className="lrpg-input" type="number" min={0} max={100} value={finance.taxi.commissionPct ?? 9}
-              onChange={e => setTaxiCommission(e.target.value === '' ? 0 : Number(e.target.value))} style={{ maxWidth: 70, padding: '4px 8px' }} />
-          </div>
-        </Card>
-
-        <div style={{ height: 100, marginTop: 10 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={last7.map(d => ({ label: d.label, sum: d.sum }))}>
-              <XAxis dataKey="label" tick={{ fill: COLORS.textMuted, fontSize: 9 }} />
-              <YAxis tick={{ fill: COLORS.textMuted, fontSize: 9 }} width={30} />
-              <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} labelStyle={{ color: COLORS.text }} />
-              <RBar dataKey="sum" fill={COLORS.teal} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {todayOrders.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-            {todayOrders.slice().reverse().map(o => (
-              <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, padding: '6px 10px', background: COLORS.bgCardAlt, borderRadius: 8 }}>
-                <span style={{ color: COLORS.textMuted }}>{new Date(o.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
-                <span style={{ fontSize: 10, color: COLORS.textMuted }}>{o.amount}{o.commission ? ` − ${o.commission}` : ''}</span>
-                <span style={{ fontWeight: 700, color: COLORS.teal }}>+{o.net ?? o.amount}</span>
-                <button className="lrpg-btn" onClick={() => deleteOrder(o.id)} style={{ background: 'none' }}><Trash2 size={12} color={COLORS.textMuted} /></button>
+      {nav === 'more' && (
+        <>
+          <div className="lrpg-paper" style={{ padding: 12 }}>
+            {sectionTitle('Источники дохода', <button className="lrpg-btn" onClick={() => setShowIncomeSrc(v => !v)} style={smallBtn(COLORS.gold)}>{showIncomeSrc ? 'Закрыть' : '+ Источник'}</button>)}
+            {showIncomeSrc && (
+              <div style={{ marginBottom: 8 }}>
+                <AddInlineForm
+                  fields={[
+                    { key: 'name', placeholder: 'Название', required: true },
+                    { key: 'type', type: 'select', options: INCOME_SOURCE_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'salary' },
+                    { key: 'amount', placeholder: 'Сумма (если фиксированная)', type: 'number', default: 0 },
+                  ]}
+                  onSubmit={v => { addIncomeSource({ name: v.name, type: v.type, amount: Number(v.amount) || 0, fixed: Number(v.amount) > 0, frequency: 'monthly' }); setShowIncomeSrc(false); }}
+                />
+              </div>
+            )}
+            {(finance.incomeSources || []).length === 0 && <div style={{ fontSize: 13, color: COLORS.textMuted }}>Пока нет. Добавь, откуда приходят деньги: работа, такси, YouTube.</div>}
+            {(finance.incomeSources || []).map(s => (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderTop: `1px dashed ${COLORS.border}` }}>
+                <CatBadge cat={s.type} size={28} />
+                <span style={{ flex: 1, fontSize: 13.5 }}>{s.name}</span>
+                {s.amount ? <b className="lrpg-num" style={{ fontSize: 12.5 }}>{fmtMoney(s.amount, true)}</b> : null}
+                <button className="lrpg-btn" aria-label="Удалить источник" onClick={() => deleteIncomeSource(s.id)} style={{ background: 'none', padding: 2 }}><Trash2 size={13} color={COLORS.textMuted} /></button>
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Skull size={15} color={COLORS.crimson} /> Debt Bosses</span>
-          <button className="lrpg-btn" onClick={() => setShowAddDebt(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <Card style={{ flex: 1, padding: 8, textAlign: 'center' }}>
-            <div style={{ fontSize: 9, color: COLORS.textMuted }}>У меня есть</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: finance.cashBalance >= 0 ? COLORS.text : COLORS.crimson }}>{finance.cashBalance}</div>
-          </Card>
-          <Card style={{ flex: 1, padding: 8, textAlign: 'center' }}>
-            <div style={{ fontSize: 9, color: COLORS.textMuted }}>Всего обязательств</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: COLORS.crimson }}>{totalLiabilities}</div>
-          </Card>
-          <Card style={{ flex: 1, padding: 8, textAlign: 'center' }}>
-            <div style={{ fontSize: 9, color: COLORS.textMuted }}>Баланс минус долги</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: (finance.cashBalance - totalLiabilities) >= 0 ? COLORS.teal : COLORS.crimson }}>{finance.cashBalance - totalLiabilities}</div>
-          </Card>
-        </div>
-        <Card style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 10, color: COLORS.textMuted, marginBottom: 4, textTransform: 'uppercase' }}>Обязательства за этот месяц</div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-            <span style={{ color: COLORS.textMuted }}>Взято новых кредитов/долгов</span><span style={{ color: COLORS.crimson }}>+{debtGrowthThisMonth}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 3 }}>
-            <span style={{ color: COLORS.textMuted }}>Погашено тела долга</span><span style={{ color: COLORS.teal }}>-{debtPaidThisMonth}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4, paddingTop: 4, borderTop: `1px dashed ${COLORS.border}`, fontWeight: 700 }}>
-            <span>Итого изменение</span>
-            <span style={{ color: (debtGrowthThisMonth - debtPaidThisMonth) <= 0 ? COLORS.teal : COLORS.crimson }}>{debtGrowthThisMonth - debtPaidThisMonth >= 0 ? '+' : ''}{debtGrowthThisMonth - debtPaidThisMonth}</span>
-          </div>
-        </Card>
-        <ObligationsSummaryCard debts={finance.debts} />
-        {showAddDebt && (
-          <AddDebtForm
-            onSubmit={v => { addDebt(v); setShowAddDebt(false); }}
-            onCancel={() => setShowAddDebt(false)}
-          />
-        )}
-        {finance.debts.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '8px 0' }}>
-            {DEBT_STRATEGIES.map(s => (
-              <button key={s.key} className="lrpg-btn" onClick={() => setDebtStrategy(s.key)} style={{
-                background: finance.strategy === s.key ? COLORS.gold : COLORS.bgCardAlt,
-                color: finance.strategy === s.key ? '#fbf9f4' : COLORS.textMuted,
-                borderRadius: 999, padding: '5px 10px', fontSize: 11, fontWeight: 700,
-                border: `1px solid ${finance.strategy === s.key ? COLORS.gold : COLORS.border}`,
-              }}>{s.label}</button>
-            ))}
-          </div>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {finance.debts.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Долгов нет — красота.</div></Card>}
-          {sortedDebts.map((d, i) => {
-            const defeated = d.remaining <= 0;
-            const isLoan = d.loanType === 'annuity' || d.loanType === 'differentiated';
-            const schedule = isLoan && expandedSchedule === d.id
-              ? (d.loanType === 'differentiated' ? buildDifferentiatedSchedule(d.total, d.interestRate, d.termMonths) : buildAmortizationSchedule(d.total, d.interestRate, d.termMonths))
-              : null;
-            const scheduleFromNow = schedule ? schedule.slice(d.monthsElapsed || 0) : null;
-            const monthlyDue = currentMonthlyDue(d);
-            const totalInterest = isLoan && d.loanType === 'annuity' ? Math.round(d.monthlyPayment * d.termMonths - d.total)
-              : isLoan ? Math.round(buildDifferentiatedSchedule(d.total, d.interestRate, d.termMonths).reduce((s, r) => s + r.interest, 0)) : 0;
-            const overdue = d.loanType === 'simple' && d.dueDate && d.dueDate < todayStr() && !defeated;
-            return (
-              <Card key={d.id} style={{ opacity: defeated ? 0.6 : 1, border: overdue ? `1px solid ${COLORS.crimson}` : undefined }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{!defeated ? `#${i + 1} ` : ''}{d.title} {defeated && '💀'}</div>
-                    {isLoan ? (
-                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-                        Платёж {Math.round(monthlyDue)}/мес{d.loanType === 'differentiated' ? ' (уменьшается)' : ''}{d.interestRate ? ` · ${d.interestRate}% годовых` : ''}{d.termMonths ? ` · ${d.monthsElapsed || 0}/${d.termMonths} мес.` : ''}{d.paymentDueDay ? ` · до ${d.paymentDueDay} числа` : ''}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: 11, color: overdue ? COLORS.crimson : COLORS.textMuted, marginTop: 2 }}>
-                        {d.dueDate ? `${overdue ? 'Просрочен, ' : ''}вернуть до ${d.dueDate}` : 'Простой долг, без срока'}
-                      </div>
-                    )}
-                    {isLoan && <div style={{ fontSize: 11, color: COLORS.crimson, marginTop: 2 }}>Переплата за весь срок: {totalInterest}</div>}
-                  </div>
-                  <button className="lrpg-btn" onClick={() => deleteDebt(d.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <Bar value={d.remaining} max={d.total} color={defeated ? COLORS.gold : COLORS.crimson} />
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>HP {Math.round(d.remaining)} / {d.total}</div>
-                </div>
-                {!defeated && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <input className="lrpg-input" type="number" min={0} placeholder="Сумма удара" value={payAmounts[d.id] || ''}
-                      onChange={e => setPayAmounts(v => ({ ...v, [d.id]: Number(e.target.value) }))} />
-                    <button className="lrpg-btn" onClick={() => { payDebt(d.id, payAmounts[d.id] || 0); setPayAmounts(v => ({ ...v, [d.id]: '' })); }}
-                      style={{ background: COLORS.crimson, color: '#fff', borderRadius: 8, padding: '0 14px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>
-                      Атака
-                    </button>
-                  </div>
-                )}
-                {isLoan && (
-                  <div
-                    onClick={() => setExpandedSchedule(expandedSchedule === d.id ? null : d.id)}
-                    style={{ fontSize: 11, color: COLORS.violet, marginTop: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
-                  >
-                    {expandedSchedule === d.id ? 'Скрыть график платежей' : 'Показать график платежей'} <ChevronRight size={12} style={{ transform: expandedSchedule === d.id ? 'rotate(90deg)' : 'none' }} />
-                  </div>
-                )}
-                {scheduleFromNow && scheduleFromNow.length > 0 && (
-                  <>
-                    <div style={{ marginTop: 8, height: 140 }}>
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={scheduleFromNow.map(r => ({ month: r.month, Остаток: Math.round(r.balance), Платёж: Math.round(r.payment) }))}>
-                          <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} />
-                          <XAxis dataKey="month" tick={{ fontSize: 9, fill: COLORS.textMuted }} />
-                          <YAxis tick={{ fontSize: 9, fill: COLORS.textMuted }} width={40} />
-                          <Tooltip contentStyle={{ background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, fontSize: 11 }} />
-                          <Line type="monotone" dataKey="Остаток" stroke={COLORS.crimson} strokeWidth={2} dot={false} />
-                          <Line type="monotone" dataKey="Платёж" stroke={COLORS.gold} strokeWidth={2} dot={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div style={{ marginTop: 8, maxHeight: 180, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '0.6fr 1fr 1fr 1fr 1fr', fontSize: 10, color: COLORS.textMuted, padding: '4px 8px', borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, background: COLORS.bgCard }}>
-                        <span>#</span><span>Платёж</span><span>%</span><span>Долг</span><span>Остаток</span>
-                      </div>
-                      {scheduleFromNow.map(row => (
-                        <div key={row.month} style={{ display: 'grid', gridTemplateColumns: '0.6fr 1fr 1fr 1fr 1fr', fontSize: 11, padding: '4px 8px' }}>
-                          <span>{row.month}</span>
-                          <span>{Math.round(row.payment)}</span>
-                          <span style={{ color: COLORS.crimson }}>{Math.round(row.interest)}</span>
-                          <span style={{ color: COLORS.teal }}>{Math.round(row.principalPart)}</span>
-                          <span>{Math.round(row.balance)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-                {d.history && d.history.length > 0 && (
-                  <div
-                    onClick={() => setExpandedHistory(expandedHistory === d.id ? null : d.id)}
-                    style={{ fontSize: 11, color: COLORS.teal, marginTop: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}
-                  >
-                    {expandedHistory === d.id ? 'Скрыть историю платежей' : `История платежей (${d.history.length})`} <ChevronRight size={12} style={{ transform: expandedHistory === d.id ? 'rotate(90deg)' : 'none' }} />
-                  </div>
-                )}
-                {expandedHistory === d.id && d.history && (
-                  <div style={{ marginTop: 8, maxHeight: 180, overflowY: 'auto', border: `1px solid ${COLORS.border}`, borderRadius: 8 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', fontSize: 10, color: COLORS.textMuted, padding: '4px 8px', borderBottom: `1px solid ${COLORS.border}`, position: 'sticky', top: 0, background: COLORS.bgCard }}>
-                      <span>Дата</span><span>Платёж</span><span>%</span><span>Тело</span><span>Остаток</span>
-                    </div>
-                    {d.history.slice().reverse().map(row => (
-                      <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', fontSize: 11, padding: '4px 8px' }}>
-                        <span>{row.date}</span>
-                        <span>{row.totalPayment}</span>
-                        <span style={{ color: COLORS.crimson }}>{row.interest}</span>
-                        <span style={{ color: COLORS.teal }}>{row.principal}</span>
-                        <span>{row.remainingAfter}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><PiggyBank size={15} color={COLORS.teal} /> Финансовые цели</span>
-          <button className="lrpg-btn" onClick={() => setShowAddSaving(v => !v)} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 3 }}><Plus size={13} />Добавить</button>
-        </div>
-        {showAddSaving && (
-          <AddInlineForm
-            fields={[
-              { key: 'title', placeholder: 'На что копим', required: true },
-              { key: 'target', placeholder: 'Целевая сумма', type: 'number', default: 0 },
-              { key: 'type', type: 'select', options: SAVINGS_GOAL_TYPES.map(t => ({ value: t.key, label: t.label })), default: 'goal' },
-            ]}
-            onSubmit={v => { addSavingsGoal({ title: v.title.trim(), target: Number(v.target) || 0, type: v.type }); setShowAddSaving(false); }}
-          />
-        )}
-        {health.emergencySavings > 0 && (
-          <Card style={{ marginTop: 8, border: `1px solid ${COLORS.teal}55` }}>
-            <div style={{ fontSize: 11, color: COLORS.textMuted }}>🛡️ Emergency Fund coverage</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.teal, marginTop: 2 }}>
-              {Number.isFinite(health.emergencyMonths) ? health.emergencyMonths.toFixed(2) : '∞'} / {finance.emergencyFundGoalMonths} мес. обязательных расходов
+          <div className="lrpg-paper" style={{ padding: 12 }}>
+            {sectionTitle('Пороги долговой нагрузки')}
+            <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>Сколько % дохода уходит на долги, чтобы считать нагрузку низкой / средней / высокой.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
+              {[['low', 'Низкая до'], ['medium', 'Средняя до'], ['high', 'Высокая от']].map(([k, l]) => (
+                <label key={k} style={{ fontSize: 11.5, color: COLORS.textMuted }}>{l}
+                  <input className="lrpg-input" inputMode="numeric" defaultValue={finance.debtLoadThresholds[k]} onBlur={e => setDebtLoadThresholds({ [k]: Number(e.target.value) || 0 })} style={{ marginTop: 3 }} />
+                </label>
+              ))}
             </div>
-          </Card>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-          {finance.savingsGoals.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Финансовых целей пока нет.</div></Card>}
-          {finance.savingsGoals.map(g => {
-            const done = g.saved >= g.target;
-            return (
-              <Card key={g.id}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{g.type === 'emergency' ? '🛡️ ' : ''}{g.title} {done && '✅'}</div>
-                  <button className="lrpg-btn" onClick={() => deleteSavingsGoal(g.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <Bar value={g.saved} max={g.target || 1} color={COLORS.teal} />
-                  <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>{g.saved} / {g.target}</div>
-                </div>
-                {!done && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <input className="lrpg-input" type="number" min={0} placeholder="Отложить сумму" value={saveAmounts[g.id] || ''}
-                      onChange={e => setSaveAmounts(v => ({ ...v, [g.id]: Number(e.target.value) }))} />
-                    <button className="lrpg-btn" onClick={() => { contributeSaving(g.id, saveAmounts[g.id] || 0); setSaveAmounts(v => ({ ...v, [g.id]: '' })); }}
-                      style={{ background: COLORS.teal, color: '#fbf9f4', borderRadius: 8, padding: '0 14px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>
-                      Отложить
-                    </button>
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+          </div>
+          <ObligationsSummaryCard debts={finance.debts} />
+        </>
+      )}
+
+      {sheet && (
+        <QuickEntrySheet mode={sheet} expenseCats={expenseCats} incomeCats={incomeCats} recentCats={recentCats}
+          commissionPct={finance.taxi.commissionPct ?? 9} showOrder={usesTaxi || sheet === 'order'}
+          onSubmit={submitSheet} onClose={() => setSheet(null)} />
       )}
     </div>
   );
