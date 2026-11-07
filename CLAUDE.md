@@ -13,6 +13,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 |---|---|
 | `src/App.jsx` | The whole game: logic, state, UI, all tabs. Theme = `COLORS` (paper palette) + the CSS block in `LifeRPG` ("PAPER THEME" overrides at its end) |
 | `src/actionsUI.jsx` | Game UI for the Actions section: `DayRoad`, `ActionTicket` (stamp «ГОТОВО»), `PixelIcon`/`StatTile`, `StreakFlame`/`FlameIcon` (8 flame tiers, `flameTier`), `ChestCeremony` (portal), `EnergyPips`, `TrainingSoon`; `STAT_RU`/`STAT_COLOR` |
+| `src/goalsUI.jsx` | Goals section UI ("atlas of expeditions"): `RidgePanorama` (goal = mountain), `GoalTrail` (camps 25/50/75 + summit flag), `DeadlineSeal`, `TrophyShelf`/`TrophyCup`, `SpherePicker`, `GoalCeremony` (camp toast / summit portal), `SPHERE_META`/`sphereMeta`, `GOAL_CAMPS`/`GOAL_SUMMIT` rewards |
 | `src/progressUI.jsx` | Progress section UI: `WorldMapPixel` (9 lands = 9 stats, 6 stages, fog, roads), `LANDS`, `stageOf`, `StageMini`, `HeroRankCard` (`rankOf`), `StatRow` |
 | `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts`, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
@@ -40,10 +41,10 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 - 2315–2510 Basic UI: `Bar`, `Card`, `Tag`, `SubNav`, `PillTabs`, `ScreenHeader`…
 
 **Navigation and hubs (v14, 5 sections)** — 2440
-- 2568 `ActionsHub`, 2804 `GoalsHub`, 3020 `ProgressWorldMap`, 3111 `ProgressHub`, 4262 `ProfileHub`
+- 2568 `ActionsHub`, `GoalsHub` (+`GoalForm`, goal AI prompts `GOAL_ENGINE_SYSTEM_PROMPT`/`GOAL_REALITY_SYSTEM_PROMPT` right above it), 3020 `ProgressWorldMap`, 3111 `ProgressHub`, 4262 `ProfileHub`
 - NPC council: `COUNCIL_NPCS`, `mentorBrief`/`npcDailyLine`/`pickMeetingSpeakers`/`mentorSystemPrompt`, `applyMentorActions`/`undoMentorItems` (mentor edits with undo), `CouncilTab` (hall / round-table meeting / DM); handlers `askMentor`, `askBanter`, `talkToNpc`, `approveMentorDecision` live in `LifeRPG`
 
-**3746 `LifeRPG` — the main component** (state, effects, handlers; ~2000 lines, up to ~5840)
+**3746 `LifeRPG` — the main component** (state, effects, handlers; ~2000 lines, up to ~5840). Goal rewards: `goalProgressState` (camps/summit, once per goal), `advanceGoalByQuest` (linked quest completion moves progress up to 90%), `goalFx` → `GoalCeremony`
 
 **Main screen / HUD** — 5837
 - `PlayerCharacter` 5867, `GameModal` 5911, `LeftGameMenu` 6032, `RightStatsPanel` 6053, `DailyGoalsPanel` 6103, `GameSceneCenter` 6136, `BottomGameNav` 6170
@@ -54,7 +55,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | Line | Tab | Line | Tab |
 |---|---|---|---|
 | 7568 | QuestsTab (+QuestCard 6546) | 9643 | MentorTab |
-| 7743 | GoalsTab | 9802 | WorldTab |
+| — | (GoalsTab removed; see GoalsHub) | 9802 | WorldTab |
 | 8031 | StatsTab | 9877 | EventsTab |
 | 8134 | ShopTab | 9219/9598 | YouTubeHQ / YouTubeTab |
 | 8313 | ChronicleTab | 10709 | GarageTab |
