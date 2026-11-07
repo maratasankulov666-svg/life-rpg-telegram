@@ -1,6 +1,7 @@
 // rarityFX.jsx — единая система редкости: Обычный → Редкий → Эпический → Легендарный → Мифический (+ Лимит).
 // Чем выше редкость, тем богаче рамка, свечение, частицы и церемония открытия.
 import React from 'react';
+import { ItemArt, hasItemArt } from './artFX.jsx';
 
 export const RARITY_ORDER = ['Common', 'Rare', 'Epic', 'Legendary', 'Mythic'];
 export const RARITY_META = {
@@ -38,6 +39,14 @@ const CSS = `
 @keyframes rfTextShine { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 @keyframes rfFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 .rf-card { position: relative; isolation: isolate; }
+@keyframes rfBeams { to { transform: rotate(360deg); } }
+@keyframes rfAurora { 0% { transform: translateX(-30%) skewX(-12deg); } 100% { transform: translateX(30%) skewX(-12deg); } }
+@keyframes rfGem { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.8) drop-shadow(0 0 2px #fff); } }
+@keyframes rfHalo { 0%,100% { box-shadow: 0 0 0 1px var(--g), 0 0 18px 2px var(--g), 0 10px 30px -8px var(--g); } 50% { box-shadow: 0 0 0 1px var(--g), 0 0 34px 8px var(--g), 0 14px 40px -6px var(--g); } }
+.rf-beams { position: absolute; left: 50%; top: 50%; width: 260%; aspect-ratio: 1; margin-left: -130%; margin-top: -130%; animation: rfBeams 18s linear infinite; pointer-events: none; z-index: 0; mix-blend-mode: soft-light; }
+.rf-aurora { position: absolute; inset: -20% -40%; animation: rfAurora 7s ease-in-out infinite alternate; pointer-events: none; z-index: 0; mix-blend-mode: soft-light; }
+.rf-gem { animation: rfGem 2s ease-in-out infinite; }
+.rf-halo { animation: rfHalo 2.6s ease-in-out infinite; }
 .rf-ring { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; z-index: -2; }
 .rf-ring > i { position: absolute; left: 50%; top: 50%; width: 220%; aspect-ratio: 1; margin-left: -110%; margin-top: -110%; animation: rfSpin 4s linear infinite; }
 .rf-inner { position: absolute; border-radius: inherit; z-index: -1; }
@@ -58,7 +67,7 @@ const CSS = `
 .rf-rays { animation: rfRays 14s linear infinite; }
 .rf-banner { animation: rfBanner .9s cubic-bezier(.2,1.2,.3,1) both; }
 .rf-flash { animation: rfFlash .8s ease-out both; }
-@media (prefers-reduced-motion: reduce) { .rf-ring > i, .rf-shine::after, .rf-twinkle, .rf-ember, .rf-pulse, .rf-holo, .rf-holo-text, .rf-gold-text, .rf-gold-ink, .rf-holo-ink, .rf-float, .rf-rays { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .rf-ring > i, .rf-shine::after, .rf-twinkle, .rf-ember, .rf-pulse, .rf-beams, .rf-aurora, .rf-gem, .rf-halo, .rf-holo, .rf-holo-text, .rf-gold-text, .rf-gold-ink, .rf-holo-ink, .rf-float, .rf-rays { animation: none !important; } }
 body.lrpg-calm .rf-ember, body.lrpg-calm .rf-twinkle { display: none; }
 `;
 let injected = false;
@@ -68,9 +77,21 @@ export function useRarityCss() {
 }
 
 function ringGradient(r) {
-  if (r === 'Mythic') return 'conic-gradient(#7a5af0, #f07ad0, #f0b05a, #5ad0f0, #7a5af0)';
-  if (r === 'Legendary') return 'conic-gradient(#a06a1a, #f6d08a, #fff6dc, #e0a83a, #a06a1a, #f6d08a, #a06a1a)';
+  if (r === 'Mythic') return 'conic-gradient(#7a5af0, #f07ad0, #f0b05a, #5ad0f0, #9af0a0, #7a5af0)';
+  if (r === 'Legendary') return 'conic-gradient(#7a4a10, #f6d08a, #fff6dc, #e0a83a, #7a4a10, #f6d08a, #fff6dc, #7a4a10)';
+  if (r === 'Epic') return 'conic-gradient(#6a1e3e, #d6709a, #ffd0e4, #a83e66, #6a1e3e, #d6709a, #6a1e3e)';
   return null;
+}
+// Гербовый камень сверху карточки легендарных и мифических.
+function Crest({ mythic }) {
+  return (
+    <svg viewBox="0 0 20 12" aria-hidden="true" style={{ position: 'absolute', top: -1, left: '50%', width: 30, height: 18, marginLeft: -15, zIndex: 4, pointerEvents: 'none' }}>
+      <path d="M2 0 H18 L15 7 L10 11 L5 7 Z" fill={mythic ? '#231a40' : '#3a2418'} />
+      <path d="M2 0 H18 L15 7 L10 11 L5 7 Z" fill="none" stroke={mythic ? '#f07ad0' : '#f6d08a'} strokeWidth="1" />
+      <path d="M10 2 L13 5 L10 9 L7 5 Z" fill={mythic ? '#5ad0f0' : '#ff5a3a'} className="rf-gem" />
+      <path d="M10 2 L13 5 L10 5.6 Z" fill="#fff" opacity=".7" />
+    </svg>
+  );
 }
 
 // Пиксельные уголки-оправа для легендарных и мифических.
@@ -88,7 +109,7 @@ function Corners({ color }) {
  * Карточка с оформлением по редкости.
  * rarity, theme (для Legendary/Mythic), limited (строка, напр. «Ноябрь 2026»), radius, as ('div'|'button'), остальное — пропсы элемента.
  */
-export function RarityCard({ rarity = 'Common', theme, limited, radius = 14, as = 'div', style, children, locked, particles = true, className, ...rest }) {
+export function RarityCard({ rarity = 'Common', theme, limited, radius = 14, as = 'div', style, children, locked, particles = true, crest = true, className, ...rest }) {
   useRarityCss();
   const r = locked ? 'Common' : rarity;
   const m = rarityMeta(r);
@@ -96,30 +117,38 @@ export function RarityCard({ rarity = 'Common', theme, limited, radius = 14, as 
   const th = RARITY_THEMES[theme || (r === 'Mythic' ? 'holo' : r === 'Legendary' ? 'gold' : '')] || null;
   const Tag = as;
   const ring = ringGradient(r);
-  const border = rank >= 3 ? 2 : rank >= 1 ? 2 : 1;
-  const inner = th && rank >= 3 ? th.bg : rank === 2 ? `linear-gradient(160deg, #fff 0%, ${m.bg} 70%)` : rank === 1 ? `linear-gradient(160deg, #fbf9f4 0%, ${m.bg} 100%)` : (locked ? '#f6f2e9' : '#fbf9f4');
-  const pColors = th ? th.p : [m.c2, m.c];
+  const border = rank >= 3 ? 3 : rank >= 1 ? 2 : 1;
+  const inner = th && rank >= 3 ? th.bg : rank === 2 ? `radial-gradient(120% 90% at 50% 0%, #fff 0%, ${m.bg} 70%, #f0d6e2 100%)` : rank === 1 ? `linear-gradient(160deg, #fbf9f4 0%, ${m.bg} 100%)` : (locked ? '#f6f2e9' : '#fbf9f4');
+  const pColors = th ? th.p : rank === 2 ? ['#ff8ad0', '#d6709a', '#ffd0e4'] : [m.c2, m.c];
+  const on = !locked;
+  const embers = rank >= 4 ? 9 : rank === 3 ? 7 : rank === 2 ? 4 : 0;
   return (
-    <Tag {...rest} className={'rf-card' + (rank >= 2 && !locked ? ' rf-pulse' : '') + (className ? ' ' + className : '')}
-      style={{ borderRadius: radius, padding: 0, border: 'none', background: 'transparent', overflow: 'hidden', '--g': m.c + (rank >= 3 ? '88' : '55'), ...style }}>
-      {ring ? (
-        <span className="rf-ring" aria-hidden="true"><i style={{ background: ring }} /></span>
+    <Tag {...rest} className={'rf-card' + (on && rank >= 3 ? ' rf-halo' : on && rank === 2 ? ' rf-pulse' : '') + (className ? ' ' + className : '')}
+      style={{ borderRadius: radius, padding: 0, border: 'none', background: 'transparent', overflow: 'hidden', '--g': m.c + (rank >= 3 ? 'aa' : '66'), ...style }}>
+      {ring && on ? (
+        <span className="rf-ring" aria-hidden="true"><i style={{ background: ring, animationDuration: rank >= 4 ? '3s' : rank === 3 ? '4s' : '6s' }} /></span>
       ) : (
-        <span className="rf-ring" aria-hidden="true" style={{ background: locked ? '#e2dbcc' : rank === 0 ? '#e2dbcc' : m.c }} />
+        <span className="rf-ring" aria-hidden="true" style={{ background: !on || rank === 0 ? '#e2dbcc' : m.c }} />
       )}
-      <span className={'rf-inner' + (r === 'Mythic' && !locked ? ' rf-holo' : '')} aria-hidden="true" style={{ inset: border, background: inner }} />
-      {r === 'Mythic' && !locked && <span className="rf-inner" aria-hidden="true" style={{ inset: border, background: 'linear-gradient(115deg, transparent 20%, rgba(255,255,255,.55) 35%, transparent 50%, rgba(240,122,208,.18) 65%, transparent 80%)', mixBlendMode: 'soft-light', zIndex: -1 }} />}
-      {rank === 1 && !locked && (
+      <span className={'rf-inner' + (r === 'Mythic' && on ? ' rf-holo' : '')} aria-hidden="true" style={{ inset: border, background: inner, overflow: 'hidden' }}>
+        {on && rank >= 3 && (
+          <span className="rf-beams" style={{ background: rank >= 4 ? 'repeating-conic-gradient(from 0deg, rgba(255,255,255,.9) 0deg 5deg, transparent 5deg 22deg)' : 'repeating-conic-gradient(from 0deg, rgba(255,246,220,.95) 0deg 6deg, transparent 6deg 24deg)', opacity: rank >= 4 ? .55 : .5 }} />
+        )}
+        {on && rank >= 4 && <span className="rf-aurora" style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(122,90,240,.55) 20%, rgba(90,208,240,.5) 40%, rgba(154,240,160,.45) 60%, rgba(240,122,208,.55) 80%, transparent 100%)' }} />}
+      </span>
+      {rank === 1 && on && (
         <svg viewBox="0 0 4 4" shapeRendering="crispEdges" aria-hidden="true" style={{ position: 'absolute', top: 6, right: 6, width: 8, height: 8, zIndex: 3 }}><rect x="1" y="0" width="2" height="4" fill={m.c2} /><rect x="0" y="1" width="4" height="2" fill={m.c2} /><rect x="1" y="1" width="1" height="1" fill="#fff" /></svg>
       )}
-      {rank >= 2 && !locked && <span className="rf-shine" aria-hidden="true" style={{ inset: border }} />}
-      {rank >= 2 && !locked && particles && [[12, 16], [78, 10], [88, 62], [8, 70]].slice(0, rank === 2 ? 2 : 4).map(([x, y], i) => (
+      {rank >= 2 && on && <span className="rf-shine" aria-hidden="true" style={{ inset: border }} />}
+      {rank >= 2 && on && particles && [[12, 16], [78, 10], [88, 62], [8, 70], [50, 8], [30, 88]].slice(0, rank === 2 ? 3 : rank === 3 ? 4 : 6).map(([x, y], i) => (
         <span key={i} className="rf-twinkle" aria-hidden="true" style={{ left: x + '%', top: y + '%', color: pColors[i % pColors.length], animationDelay: `${-i * 0.55}s` }} />
       ))}
-      {rank >= 3 && !locked && particles && [14, 32, 50, 68, 86].map((x, i) => (
-        <span key={'e' + i} className="rf-ember" aria-hidden="true" style={{ left: x + '%', background: pColors[i % pColors.length], '--dx': `${(i % 2 ? 1 : -1) * (6 + i * 2)}px`, animationDelay: `${-i * 0.52}s`, boxShadow: `0 0 6px ${pColors[i % pColors.length]}` }} />
-      ))}
-      {rank >= 3 && !locked && <Corners color={r === 'Mythic' ? '#7a5af0' : '#a06a1a'} />}
+      {embers > 0 && on && particles && Array.from({ length: embers }, (_, i) => {
+        const x = 8 + (i * 84) / Math.max(1, embers - 1);
+        return <span key={'e' + i} className="rf-ember" aria-hidden="true" style={{ left: x + '%', background: pColors[i % pColors.length], '--dx': `${(i % 2 ? 1 : -1) * (6 + (i % 4) * 3)}px`, animationDelay: `${-i * 0.41}s`, boxShadow: `0 0 ${rank >= 3 ? 8 : 5}px ${pColors[i % pColors.length]}`, width: rank >= 3 ? 4 : 3, height: rank >= 3 ? 4 : 3 }} />;
+      })}
+      {rank >= 2 && on && <Corners color={r === 'Mythic' ? '#7a5af0' : r === 'Legendary' ? '#a06a1a' : '#a83e66'} />}
+      {rank >= 3 && on && crest && <Crest mythic={r === 'Mythic'} />}
       {limited && (
         <span aria-label={`Лимитированный: ${limited}`} style={{ position: 'absolute', top: 8, right: -26, zIndex: 4, transform: 'rotate(38deg)', background: '#1e2230', color: '#f6d08a', fontFamily: "'JetBrains Mono', monospace", fontSize: 7.5, fontWeight: 800, letterSpacing: '.12em', padding: '2px 26px', boxShadow: '0 2px 4px rgba(0,0,0,.25)', pointerEvents: 'none' }}>ЛИМИТ</span>
       )}
@@ -170,10 +199,13 @@ export function RarityBurst({ rarity = 'Rare', banner = true }) {
 }
 
 /** Значок предмета в рамке редкости (для сеток коллекций, миниатюр). */
-export function RarityIcon({ rarity = 'Common', theme, size = 56, children, locked, limited }) {
+export function RarityIcon({ rarity = 'Common', theme, size = 56, children, locked, limited, art }) {
+  const drawn = art && hasItemArt(art) && !locked;
   return (
-    <RarityCard rarity={rarity} theme={theme} radius={12} locked={locked} limited={limited} particles={size >= 52} style={{ width: size, height: size, display: 'block' }}>
-      <span className={rarityRank(rarity) >= 3 && !locked ? 'rf-float' : undefined} style={{ width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.48, filter: locked ? 'grayscale(1) opacity(.35)' : 'none' }}>{children}</span>
+    <RarityCard rarity={rarity} theme={theme} radius={12} locked={locked} limited={limited} particles={size >= 52} crest={size >= 100} style={{ width: size, height: size, display: 'block' }}>
+      <span className={rarityRank(rarity) >= 3 && !locked && !drawn ? 'rf-float' : undefined} style={{ width: size, height: size, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.48, filter: locked ? 'grayscale(1) opacity(.35)' : 'none' }}>
+        {drawn ? <ItemArt id={art} size={size * 0.84} /> : children}
+      </span>
     </RarityCard>
   );
 }
