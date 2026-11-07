@@ -269,3 +269,133 @@ export function StatRow({ stat, value, delta, active, onClick, index = 0 }) {
 }
 
 export { PixelIcon };
+
+// ---------- Парящие острова: карта мира 3.0 ----------
+// Каждая земля — остров в небе со своей стихией. Растёт по стадиям: голая скала → трава и шатёр → постройки →
+// город → столица с флагом → легендарный остров с сиянием, рунами и птицами. Открытые острова связаны мостами,
+// закрытые прячутся в облаках. Небо следует реальному времени суток. Рост стадии отмечается вспышкой острова.
+const SKY_POS = {
+  knowledge: [.24, .27], focus: [.55, .17], career: [.76, .33], discipline: [.12, .53], mental: [.47, .49],
+  creator: [.85, .6], physical: [.2, .79], finance: [.45, .8], social: [.74, .85],
+};
+const SKY_BIOME = {
+  knowledge: 'forest', focus: 'desert', career: 'plains', discipline: 'stone', mental: 'lake', creator: 'volcano', physical: 'dunes', finance: 'mines', social: 'isles',
+};
+const SKY_COL = { forest: ['#5fa05a', '#3a6a2a'], desert: ['#e8c87a', '#b08a40'], plains: ['#9cc86a', '#5a8a3a'], stone: ['#a8b0bc', '#6a7480'], lake: ['#9ac8b0', '#5a8a7a'], volcano: ['#7a5a4a', '#4a2a1a'], dunes: ['#ecd29a', '#b8965a'], mines: ['#b8a07a', '#7a6440'], isles: ['#9ad0c0', '#4a8a8a'] };
+const SKY_W = 360, SKY_H = 380;
+function skyRng(seed) { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
+function skyPhase() { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 5.5 || h >= 21 ? 'night' : h < 8 ? 'dawn' : h >= 18 ? 'dusk' : 'day'; }
+
+function drawIsland(ctx, z, s, t, sel, birds, burst) {
+  const bob = Math.sin(t / 1100 + z.ph) * 3, x = z.x, y = z.y + bob, w = z.w * (0.8 + s * 0.06);
+  const [top, deep] = s === 0 ? ['#b8b0a0', '#7a7060'] : SKY_COL[z.b];
+  if (s === 5) {
+    ctx.save();
+    const g = ctx.createRadialGradient(x, y - 10, 4, x, y - 10, w * 1.6); g.addColorStop(0, 'rgba(255,230,150,.55)'); g.addColorStop(1, 'rgba(255,230,150,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - 10, w * 1.6, 0, 6.3); ctx.fill();
+    ctx.translate(x, y - 14); ctx.rotate(t / 3000); ctx.strokeStyle = 'rgba(255,240,190,.75)'; ctx.setLineDash([3, 5]); ctx.beginPath(); ctx.arc(0, 0, w * 1.15, 0, 6.3); ctx.stroke(); ctx.setLineDash([]);
+    for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; ctx.fillStyle = '#ffe6a0'; ctx.beginPath(); ctx.arc(Math.cos(a) * w * 1.15, Math.sin(a) * w * 1.15, 1.8, 0, 6.3); ctx.fill(); }
+    ctx.restore();
+  }
+  if (burst) {
+    const p = burst; ctx.save(); ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = '#ffd86a'; ctx.lineWidth = 3 * (1 - p) + .5; ctx.beginPath(); ctx.ellipse(x, y, w + p * 60, (w + p * 60) * .5, 0, 0, 6.3); ctx.stroke();
+    const g = ctx.createRadialGradient(x, y - 10, 2, x, y - 10, w * 2); g.addColorStop(0, 'rgba(255,250,220,.9)'); g.addColorStop(1, 'rgba(255,250,220,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - 10, w * 2, 0, 6.3); ctx.fill();
+    for (let k = 0; k < 14; k++) { const a = k / 14 * 6.28, r = 10 + p * 70; ctx.fillStyle = k % 2 ? '#ffd86a' : '#fff'; ctx.beginPath(); ctx.arc(x + Math.cos(a) * r, y - 10 + Math.sin(a) * r * .7 - p * 20, 2.2, 0, 6.3); ctx.fill(); }
+    ctx.restore(); ctx.lineWidth = 1;
+  }
+  ctx.beginPath(); ctx.moveTo(x - w, y); ctx.quadraticCurveTo(x - w * .6, y + w * .7, x - w * .1, y + w * 1.15); ctx.quadraticCurveTo(x + w * .2, y + w * .8, x + w * .5, y + w * .6); ctx.quadraticCurveTo(x + w * .9, y + w * .3, x + w, y); ctx.closePath();
+  const rg = ctx.createLinearGradient(0, y, 0, y + w * 1.15); rg.addColorStop(0, '#8a7a68'); rg.addColorStop(1, '#4a4038'); ctx.fillStyle = rg; ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.15)'; for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(x - w * (1 - k * .2), y + k * 6); ctx.lineTo(x + w * (1 - k * .2), y + k * 5); ctx.stroke(); }
+  ctx.beginPath(); ctx.ellipse(x, y, w, w * .36, 0, 0, 6.3); ctx.fillStyle = top; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x, y + 2, w, w * .36, 0, 0, Math.PI); ctx.strokeStyle = deep; ctx.lineWidth = 3; ctx.stroke(); ctx.lineWidth = 1;
+  const b = z.b;
+  if (s > 0) {
+    if (b === 'forest' || b === 'plains') for (let k = 0; k < 2 + s * 2; k++) { const tx = x - w * .7 + ((k * 37) % (w * 1.4)), ty = y - 4 + (k % 3) * 3; ctx.fillStyle = b === 'forest' ? '#2a5a2a' : '#6a9a3a'; ctx.beginPath(); ctx.moveTo(tx, ty - 10); ctx.lineTo(tx + 4, ty); ctx.lineTo(tx - 4, ty); ctx.fill(); }
+    if (b === 'stone') for (let k = 0; k < 2 + s; k++) { const tx = x - w * .6 + k * 10, ty = y - 2, hh = 14 + (k % 2) * 5; ctx.fillStyle = '#6a7480'; ctx.beginPath(); ctx.moveTo(tx - 6, ty); ctx.lineTo(tx, ty - hh); ctx.lineTo(tx + 6, ty); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(tx - 2, ty - hh + 4); ctx.lineTo(tx, ty - hh); ctx.lineTo(tx + 2, ty - hh + 4); ctx.fill(); }
+    if (b === 'lake') { ctx.beginPath(); ctx.ellipse(x + w * .3, y, w * .3, w * .12, 0, 0, 6.3); ctx.fillStyle = '#6ab0d0'; ctx.fill(); if (s >= 3) { ctx.strokeStyle = 'rgba(180,230,255,.85)'; ctx.lineWidth = 3; ctx.setLineDash([4, 3]); ctx.lineDashOffset = -t / 40; ctx.beginPath(); ctx.moveTo(x + w * .55, y + 4); ctx.lineTo(x + w * .55, y + 60); ctx.stroke(); ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.lineWidth = 1; } }
+    if (b === 'volcano') { ctx.fillStyle = '#4a2a1a'; ctx.beginPath(); ctx.moveTo(x - 16, y); ctx.lineTo(x - 4, y - 22); ctx.lineTo(x + 4, y - 22); ctx.lineTo(x + 16, y); ctx.fill(); ctx.fillStyle = '#ff6a1a'; ctx.fillRect(x - 3, y - 23, 6, 3); for (let k = 0; k < 3; k++) { const p = ((t / 1200 + k / 3) % 1); ctx.globalAlpha = 1 - p; ctx.fillStyle = k ? '#9a8a7a' : '#ffb03a'; ctx.beginPath(); ctx.arc(x + Math.sin(p * 5) * 3, y - 26 - p * 20, 2 + p * 5, 0, 6.3); ctx.fill(); ctx.globalAlpha = 1; } }
+    if (b === 'desert' || b === 'dunes') { ctx.strokeStyle = '#b08a40'; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(x - 14 + k * 12, y + 3, 7, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); } }
+    if (b === 'desert' && s >= 3) { ctx.fillStyle = '#f0e8d8'; ctx.fillRect(x + w * .45, y - 30, 7, 28); ctx.fillStyle = '#c48a2a'; ctx.beginPath(); ctx.arc(x + w * .45 + 3.5, y - 32, 4.5, 0, 6.3); ctx.fill(); }
+    if (b === 'mines') { ctx.fillStyle = '#5a4630'; ctx.beginPath(); ctx.arc(x - w * .4, y, 8, Math.PI, 0); ctx.fill(); ctx.fillStyle = Math.sin(t / 300) > 0 ? '#ffd86a' : '#fff0b0'; ctx.fillRect(x - w * .4 - 2, y - 4, 3, 3); }
+    if (b === 'isles') for (let k = 0; k < 3; k++) { ctx.fillStyle = '#3a8a6a'; ctx.fillRect(x - 14 + k * 12, y - 12, 2, 10); ctx.beginPath(); ctx.ellipse(x - 13 + k * 12, y - 12, 6, 2, -.4, 0, 6.3); ctx.fill(); }
+    if (s === 1) { ctx.fillStyle = '#e8d8b8'; ctx.beginPath(); ctx.moveTo(x - 6, y); ctx.lineTo(x, y - 9); ctx.lineTo(x + 6, y); ctx.fill(); ctx.fillStyle = '#c8b090'; ctx.beginPath(); ctx.moveTo(x, y - 9); ctx.lineTo(x + 6, y); ctx.lineTo(x, y); ctx.fill(); }
+    if (s >= 2) {
+      const bx = x + (b === 'volcano' ? 16 : 0), by = y - 2;
+      for (let k = 0; k < Math.min(4, s - 1); k++) { const hx = bx - 8 + k * 7, hh = 6 + (k === 1 ? s * 3 : 2); ctx.fillStyle = '#f0e8d8'; ctx.fillRect(hx, by - hh, 6, hh); ctx.fillStyle = s >= 4 && k === 1 ? '#c8861a' : '#a4412a'; ctx.beginPath(); ctx.moveTo(hx - 1, by - hh); ctx.lineTo(hx + 3, by - hh - 5); ctx.lineTo(hx + 7, by - hh); ctx.fill(); }
+      if (s >= 4) { ctx.fillStyle = '#5a4636'; ctx.fillRect(bx, by - 30, 1, 10); ctx.fillStyle = s === 5 ? '#ffd86a' : '#a4412a'; ctx.fillRect(bx + 1, by - 30, 6 + Math.sin(t / 200), 3); }
+    }
+  } else {
+    ctx.fillStyle = 'rgba(240,240,245,.88)';
+    for (let k = 0; k < 6; k++) { ctx.beginPath(); ctx.arc(x - w + k * w * .4 + Math.sin(t / 1000 + k) * 3, y - 4 + (k % 2) * 6, 12, 0, 6.3); ctx.fill(); }
+    ctx.fillStyle = '#6b6f7a'; ctx.font = '700 8px Manrope, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('в облаках', x, y + 2);
+  }
+  if (s >= 4) birds.forEach((bd, k) => { if (k > s - 3) return; const a = bd.a + t / 1500, px = x + Math.cos(a) * bd.r * 1.4, py = y - 30 + Math.sin(a) * bd.r * .4, f = 2 * Math.abs(Math.sin(t / 150 + k)); ctx.strokeStyle = '#3a3a4a'; ctx.beginPath(); ctx.moveTo(px - 3, py); ctx.quadraticCurveTo(px - 1.5, py - f, px, py); ctx.quadraticCurveTo(px + 1.5, py - f, px + 3, py); ctx.stroke(); });
+  return { x, y, w };
+}
+
+export function SkyIslandsMap({ stats, selected, onSelect, celebrate }) {
+  const ref = React.useRef(null);
+  const live = React.useRef({ stats, selected, celebrate, burstAt: 0 });
+  live.current.stats = stats; live.current.selected = selected;
+  if (celebrate && live.current.celebrate !== celebrate) { live.current.celebrate = celebrate; live.current.burstAt = performance.now(); }
+  const isl = React.useMemo(() => { const R = skyRng(5); return LANDS.map(l => ({ k: l.key, n: l.name, b: SKY_BIOME[l.key], x: 40 + SKY_POS[l.key][0] * 280, y: 40 + SKY_POS[l.key][1] * 300, ph: R() * 6, w: 34 + (l.key === 'career' ? 4 : 0) })); }, []);
+  React.useEffect(() => {
+    const cv = ref.current; if (!cv) return undefined;
+    const ctx = cv.getContext('2d');
+    const R = skyRng(9);
+    const clouds = Array.from({ length: 9 }, () => ({ x: R() * 400, y: R() * 380, s: R() * .6 + .5, v: R() * .15 + .05 }));
+    const birds = Array.from({ length: 5 }, () => ({ a: R() * 6, r: 16 + R() * 10 }));
+    const stars = Array.from({ length: 50 }, () => [R() * SKY_W, R() * SKY_H * .7, R() * 6]);
+    const reduce = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0, visible = true, alive = true;
+    const fit = () => { const dpr = Math.min(2, window.devicePixelRatio || 1), r = cv.getBoundingClientRect(); cv.width = Math.max(1, r.width * dpr); cv.height = Math.max(1, r.width * SKY_H / SKY_W * dpr); ctx.setTransform(cv.width / SKY_W, 0, 0, cv.height / SKY_H, 0, 0); };
+    fit();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null; if (ro) ro.observe(cv);
+    const io = typeof IntersectionObserver !== 'undefined' ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible && !raf && alive) raf = requestAnimationFrame(draw); }) : null; if (io) io.observe(cv);
+    function draw(t) {
+      raf = 0; if (!alive) return;
+      const { stats: st, selected: sel, burstAt } = live.current;
+      const stage = (k) => stageOf(st[k]);
+      const ph = skyPhase(), calm = document.body.classList.contains('lrpg-calm');
+      const g = ctx.createLinearGradient(0, 0, 0, SKY_H);
+      const sky = { day: ['#7ab0e0', '#cfe4f2', '#f6e8d8'], dawn: ['#f0a8a0', '#f6d0b0', '#fbeedd'], dusk: ['#6a5aa0', '#e89a8a', '#f6d0a8'], night: ['#0c1430', '#1e2a58', '#3a3a6a'] }[ph];
+      g.addColorStop(0, sky[0]); g.addColorStop(.6, sky[1]); g.addColorStop(1, sky[2]); ctx.fillStyle = g; ctx.fillRect(0, 0, SKY_W, SKY_H);
+      if (ph === 'night') stars.forEach(([x, y, p]) => { ctx.globalAlpha = .3 + Math.abs(Math.sin(t / 700 + p)) * .7; ctx.fillStyle = '#fff'; ctx.fillRect(x, y, 1.2, 1.2); });
+      ctx.globalAlpha = 1;
+      const sx = ph === 'night' ? 60 : 300, sun = ctx.createRadialGradient(sx, 50, 4, sx, 50, 80);
+      sun.addColorStop(0, ph === 'night' ? 'rgba(230,236,255,.85)' : 'rgba(255,250,220,.9)'); sun.addColorStop(1, 'rgba(255,250,220,0)'); ctx.fillStyle = sun; ctx.fillRect(0, 0, SKY_W, SKY_H);
+      clouds.forEach(c => { if (!calm) c.x += c.v; if (c.x > 420) c.x = -60; ctx.fillStyle = ph === 'night' ? 'rgba(160,170,210,.35)' : 'rgba(255,255,255,.7)'; for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.arc(c.x + k * 14 * c.s, c.y + (k % 2) * 4, 12 * c.s, 0, 6.3); ctx.fill(); } });
+      ROADS.forEach(([a, b]) => {
+        const A = isl.find(z => z.k === a), B = isl.find(z => z.k === b); if (!A || !B || !(stage(a) > 0 && stage(b) > 0)) return;
+        const ay = A.y + Math.sin(t / 1100 + A.ph) * 3, by = B.y + Math.sin(t / 1100 + B.ph) * 3;
+        ctx.strokeStyle = '#8a6a4a'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(A.x, ay); ctx.quadraticCurveTo((A.x + B.x) / 2, (ay + by) / 2 + 16, B.x, by); ctx.stroke();
+        ctx.setLineDash([2, 3]); ctx.strokeStyle = '#c8a070'; ctx.beginPath(); ctx.moveTo(A.x, ay + 2); ctx.quadraticCurveTo((A.x + B.x) / 2, (ay + by) / 2 + 18, B.x, by + 2); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+      });
+      const bp = burstAt ? (t - burstAt) / 2200 : 2;
+      isl.slice().sort((a, b) => a.y - b.y).forEach(z => {
+        const on = z.k === sel, s = stage(z.k);
+        const r = drawIsland(ctx, z, s, t, on, birds, bp >= 0 && bp < 1 && z.k === live.current.celebrate ? bp : 0);
+        ctx.font = `${on ? 800 : 700} ${on ? 10.5 : 9}px Manrope, sans-serif`; ctx.textAlign = 'center';
+        const ly = r.y + r.w * .36 + 13;
+        if (on) { const tw = ctx.measureText(z.n).width + 12; ctx.fillStyle = 'rgba(30,34,48,.82)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(r.x - tw / 2, ly - 10, tw, 14, 7) : ctx.rect(r.x - tw / 2, ly - 10, tw, 14); ctx.fill(); ctx.fillStyle = '#ffd86a'; }
+        else ctx.fillStyle = ph === 'night' ? '#e8ecff' : '#1e2230';
+        ctx.fillText(z.n, r.x, ly);
+        if (on) { ctx.strokeStyle = '#a4412a'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.ellipse(r.x, r.y, r.w + 8, r.w * .36 + 8, 0, 0, 6.3); ctx.stroke(); ctx.setLineDash([]); }
+      });
+      if (!reduce && visible) raf = requestAnimationFrame(draw);
+    }
+    raf = requestAnimationFrame(draw);
+    return () => { alive = false; cancelAnimationFrame(raf); if (ro) ro.disconnect(); if (io) io.disconnect(); };
+  }, [isl]);
+  const onClick = (e) => {
+    const r = ref.current.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * SKY_W, y = (e.clientY - r.top) / r.height * SKY_H;
+    let best = null, bd = 1e9; isl.forEach(z => { const d = (z.x - x) ** 2 + (z.y - y) ** 2; if (d < bd) { bd = d; best = z; } });
+    if (best && bd < 60 * 60 && onSelect) onSelect(best.k);
+  };
+  const onKey = (e) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault(); const i = LANDS.findIndex(l => l.key === selected), n = (i + (e.key === 'ArrowRight' ? 1 : LANDS.length - 1)) % LANDS.length; onSelect && onSelect(LANDS[n].key);
+  };
+  return <canvas ref={ref} role="img" tabIndex={0} onClick={onClick} onKeyDown={onKey} aria-label={`Карта мира: парящие острова. Выбрана земля ${(LANDS.find(l => l.key === selected) || {}).name || ''}. Стрелки влево-вправо переключают землю`} style={{ display: 'block', width: '100%', aspectRatio: `${SKY_W} / ${SKY_H}`, cursor: 'pointer', touchAction: 'manipulation' }} />;
+}
