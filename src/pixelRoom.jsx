@@ -495,7 +495,7 @@ function Placed({ slot, it, p, pulse }) {
  * props: room (state.room), tier (0..7 телосложение), heightScale, time ('day'|'dawn'|'evening'|'night'),
  * weather ('clear'|'rain'|'snow'|...), still (без анимаций), highlight (ключ слота для подсветки).
  */
-export function PixelRoomScene({ room, tier = 3, heightScale = 1, time, weather = 'clear', still = false, highlight = null }) {
+export function PixelRoomScene({ room, tier = 3, heightScale = 1, time, weather = 'clear', still = false, highlight = null, aura = null }) {
   useSceneCss();
   const r = normalizeRoom(room);
   const t = time || sceneTime();
@@ -554,6 +554,11 @@ export function PixelRoomScene({ room, tier = 3, heightScale = 1, time, weather 
 
       <path d="M0 0H195V422H0Z M52 73V218H172V73Z" fillRule="evenodd" fill="#1a2040" opacity={p.dark} pointerEvents="none" />
 
+      {aura && (() => {
+        const hh = 53 * 2.95 * Math.max(0.88, Math.min(1.12, heightScale));
+        const sc = (hh * 1.25) / 150;
+        return <svg x={97.5 - 50 * sc} y={378 - 150 * sc} width={100 * sc} height={160 * sc} viewBox="0 0 100 160" overflow="visible" aria-hidden="true">{aura}</svg>;
+      })()}
       <Hero tier={tier} heightScale={heightScale} />
 
       {hb && (

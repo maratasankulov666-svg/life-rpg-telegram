@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PAPER, PixelIcon } from './actionsUI.jsx';
 import { RarityCard, RarityLabel, RarityBurst, rarityRank, useRarityCss } from './rarityFX.jsx';
+import { AuraArt } from './artFX.jsx';
 
 const FONT = "'Manrope', system-ui, -apple-system, sans-serif";
 export const RARITY_TONE = {
@@ -91,7 +92,7 @@ function HeroSprite({ tint = {}, height = 150 }) {
  * Карточка героя-«кукла»: герой в центре, вокруг 7 слотов экипировки.
  * slots: [{ slot, label, theme, tier: { roman, rarity, label }, value, next: { roman, min } | null, statLabel }]
  */
-export function HeroPaperDoll({ slots, onSlot, active }) {
+export function HeroPaperDoll({ slots, onSlot, active, aura }) {
   useProfileCss();
   const left = ['helmet', 'armor', 'gloves', 'weapon'];
   const right = ['accessory', 'artifact', 'shoes'];
@@ -120,6 +121,7 @@ export function HeroPaperDoll({ slots, onSlot, active }) {
         <div style={{ position: 'relative', height: 232, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <div className="pf-glow" style={{ position: 'absolute', left: '50%', bottom: 18, width: 150, height: 150, marginLeft: -75, borderRadius: '50%', background: 'radial-gradient(circle, rgba(196,138,42,.28), transparent 65%)' }} />
           <div style={{ position: 'absolute', left: '50%', bottom: 6, width: 120, height: 16, marginLeft: -60, background: '#d8cdb8', borderRadius: '50%', boxShadow: 'inset 0 -3px 0 #c4b69c' }} />
+          {aura && <AuraArt id={aura} width={150} height={240} style={{ position: 'absolute', left: '50%', bottom: -4, marginLeft: -75 }} />}
           <div style={{ position: 'relative', marginBottom: 12 }}><HeroSprite tint={tint} height={190} /></div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{right.map(k => <Slot key={k} s={by[k]} />)}<div style={{ height: 52 }} /></div>

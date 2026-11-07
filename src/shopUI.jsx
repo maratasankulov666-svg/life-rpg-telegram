@@ -120,7 +120,7 @@ export function ItemTile({ it, owned, afford, onBuy, big }) {
     <RarityCard rarity={it.rarity} theme={it.theme} limited={it.limited} className="sh-pop" style={{ gridColumn: big ? '1 / -1' : 'auto' }}>
       <div style={{ padding: big ? 12 : 10, display: 'flex', flexDirection: big ? 'row' : 'column', gap: big ? 12 : 8, alignItems: big ? 'center' : 'stretch', position: 'relative' }}>
         {it.featured && <span className="lrpg-mono" style={{ position: 'absolute', top: -2, left: 10, background: r.c, color: '#fbf9f4', fontSize: 8, padding: '2px 6px', borderRadius: 4, zIndex: 2 }}>хит дня</span>}
-        <span style={{ alignSelf: big ? 'center' : 'stretch', display: 'flex', justifyContent: 'center' }}><RarityIcon rarity={it.rarity} theme={it.theme} size={big ? 72 : 64}>{it.icon}</RarityIcon></span>
+        <span style={{ alignSelf: big ? 'center' : 'stretch', display: 'flex', justifyContent: 'center' }}><RarityIcon rarity={it.rarity} theme={it.theme} art={it.id} size={big ? 84 : 64}>{it.icon}</RarityIcon></span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: big ? 16 : 13, fontWeight: 700, lineHeight: 1.2 }}>{it.title}</div>
           <div style={{ marginTop: 2 }}><RarityLabel rarity={it.rarity} size={8} /></div>
@@ -178,7 +178,7 @@ export function ReceiptModal({ reward, coinsLeft, onClose, sound }) {
 }
 
 /** Окно приза (колесо/сундук). */
-export function PrizeModal({ title, icon, rarity, sub, onClose, chest, theme }) {
+export function PrizeModal({ title, icon, rarity, sub, onClose, chest, theme, art }) {
   useShopCss();
   const r = RAR[rarity] || RAR.Rare;
   const [phase, setPhase] = useState(chest ? 'shake' : 'open');
@@ -196,7 +196,7 @@ export function PrizeModal({ title, icon, rarity, sub, onClose, chest, theme }) 
         ) : (
           <>
             <div className="lrpg-mono" style={{ fontSize: 10, color: '#f6d08a' }}>{sub || 'Твой приз'}</div>
-            <div className="sh-pop" style={{ margin: '12px auto', width: 120, display: 'flex', justifyContent: 'center', filter: `drop-shadow(0 0 ${8 + rarityRank(rarity) * 8}px ${r.c}aa)` }}><RarityIcon rarity={rarity || 'Rare'} theme={theme} size={120}>{icon || '🎁'}</RarityIcon></div>
+            <div className="sh-pop" style={{ margin: '12px auto', width: 140, display: 'flex', justifyContent: 'center', filter: `drop-shadow(0 0 ${8 + rarityRank(rarity) * 8}px ${r.c}aa)` }}><RarityIcon rarity={rarity || 'Rare'} theme={theme} art={art} size={140}>{icon || '🎁'}</RarityIcon></div>
             <div className={'lrpg-display' + (rarity === 'Legendary' ? ' rf-gold-text' : rarity === 'Mythic' ? ' rf-holo-text' : '')} style={{ fontSize: 24, fontWeight: 700 }}>{title}</div>
             {rarity && <div style={{ marginTop: 4 }}><RarityLabel rarity={rarity} size={9} dark style={{ color: rarity === 'Common' ? '#cfc8b8' : undefined }} /></div>}
             <button className="lrpg-btn" onClick={onClose} style={{ marginTop: 18, padding: '12px 34px', borderRadius: 12, background: PAPER.terra, color: '#fbf9f4', border: 'none', fontSize: 15, fontWeight: 700, boxShadow: '0 3px 0 #7a2e1c', fontFamily: 'inherit' }}>Забрать</button>
