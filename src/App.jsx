@@ -138,6 +138,7 @@ import { ShopScene, DailyLoginStrip, ItemTile, MiniChest, ReceiptModal, PrizeMod
 import { DayScale, ActivityHeatmap, WeekBalance, useLifeCss } from './lifeUI.jsx';
 import { SaveCrystal, Toggle, HoldButton, SettingsSection, useSettingsCss } from './settingsUI.jsx';
 import { DayBoard, HeroBubble, MentorNote, useHomeCss } from './homeUI.jsx';
+import { RarityCard, RarityLabel, RarityIcon, RarityBurst, rarityRank, rarityMeta, RARITY_META } from './rarityFX.jsx';
 import { HeroPaperDoll, GearIcon, Medal, AchievementBoard, AchievementToast, SectionTile, TitleSheet, useProfileCss, RARITY_TONE } from './profileUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
 import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, emptyRoom, normalizeRoom, RARITY_RU as ROOM_RARITY_RU, RARITY_COLOR as ROOM_RARITY_COLOR, sceneTime, slotBottomPx } from './pixelRoom.jsx';
@@ -223,7 +224,12 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 // 16.7  Живая Главная: доска дня (маршрут до сундука и два ближайших шага — выполняются прямо с главной, «Сундук
 //       ждёт!»), герой разговаривает по тапу (приветствие по времени суток, сон, сундук, следующий шаг, серия, цель —
 //       с кнопкой перехода), записка Кайлена с дневной фразой (тап — в штаб). Панель роста/веса убрана с главной.
-const APP_VERSION = '16.7';
+// 16.8  Единая система редкости (rarityFX): Обычный — простая рамка; Редкий — цветная рамка и камешек; Эпический —
+//       свечение, блик, искры; Легендарный — вращающаяся золотая рамка, угольки, оправа, тема (огонь/пустота/лёд/
+//       природа/золото/осень); Мифический (новый) — голографическая рамка и переливы. Церемонии по редкости
+//       («ЛЕГЕНДАРНЫЙ!», лучи, вспышка), баннеры достижений с золотой/радужной рамкой. Новые легендарки и мифическая
+//       «Корона Пути» (только из эпического сундука), лимитка месяца в лавке и два лимитированных достижения в месяц.
+const APP_VERSION = '16.8';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -805,10 +811,10 @@ const ACHIEVEMENTS = [
   achDef('lvl5', 'Искатель приключений', 'Достигни 5 уровня', 'Common', 40, 30, 'path', 'discipline', 5, s => s.character.level),
   achDef('lvl10', 'Ветеран', 'Достигни 10 уровня', 'Rare', 80, 60, 'path', 'discipline', 10, s => s.character.level),
   achDef('lvl25', 'Мастер жизни', 'Достигни 25 уровня', 'Epic', 150, 120, 'path', 'discipline', 25, s => s.character.level),
-  achDef('lvl50', 'Легенда', 'Достигни 50 уровня', 'Legendary', 400, 300, 'path', 'discipline', 50, s => s.character.level),
+  { ...achDef('lvl50', 'Легенда', 'Достигни 50 уровня', 'Mythic', 400, 300, 'path', 'discipline', 50, s => s.character.level), theme: 'holo' },
   achDef('days7', 'Неделя в пути', '7 дней в игре', 'Common', 20, 20, 'path', 'mental', 7, daysInGame),
   achDef('days30', 'Месяц героя', '30 дней в игре', 'Rare', 60, 50, 'path', 'mental', 30, daysInGame),
-  achDef('days100', 'Сотня рассветов', '100 дней в игре', 'Epic', 160, 120, 'path', 'mental', 100, daysInGame),
+  { ...achDef('days100', 'Сотня рассветов', '100 дней в игре', 'Legendary', 160, 120, 'path', 'mental', 100, daysInGame), theme: 'gold' },
   achDef('quest1', 'Первый шаг', 'Заверши первый квест', 'Common', 15, 10, 'deeds', 'quest', 1, doneQuests),
   achDef('quest25', 'Деятель', 'Заверши 25 квестов', 'Rare', 60, 40, 'deeds', 'quest', 25, doneQuests),
   achDef('quest100', 'Неудержимый', 'Заверши 100 квестов', 'Epic', 150, 100, 'deeds', 'quest', 100, doneQuests),
@@ -818,7 +824,7 @@ const ACHIEVEMENTS = [
   achDef('streak3', 'Искра', 'Серия 3 дня в привычке', 'Common', 15, 10, 'habit', 'focus', 3, bestStreak),
   achDef('streak7', 'Постоянство', 'Серия 7 дней в привычке', 'Rare', 50, 30, 'habit', 'focus', 7, bestStreak),
   achDef('streak30', 'Железная дисциплина', 'Серия 30 дней в привычке', 'Epic', 130, 100, 'habit', 'focus', 30, bestStreak),
-  achDef('streak100', 'Несокрушимый', 'Серия 100 дней в привычке', 'Legendary', 350, 250, 'habit', 'focus', 100, bestStreak),
+  { ...achDef('streak100', 'Несокрушимый', 'Серия 100 дней в привычке', 'Mythic', 350, 250, 'habit', 'focus', 100, bestStreak), theme: 'holo' },
   achDef('habits5', 'Ритуалист', 'Заведи 5 привычек', 'Common', 20, 15, 'habit', 'physical', 5, s => (s.habits || []).length),
   achDef('shop1', 'Побалуй себя', 'Первая покупка в лавке наград', 'Common', 10, 0, 'wealth', 'finance', 1, s => ((s.chronicle || []).some(c => c.type === 'REWARD_PURCHASED') ? 1 : 0)),
   achDef('coins1000', 'Казначей', 'Заработай 1000 монет за всё время', 'Rare', 70, 50, 'wealth', 'finance', 1000, s => s.coinsEarnedAllTime || 0),
@@ -831,9 +837,29 @@ const ACHIEVEMENTS = [
   achDef('council1', 'Голос совета', 'Проведи первый совет наставников', 'Common', 25, 20, 'world', 'social', 1, s => ((s.council && s.council.meetings) || []).length),
   achDef('council10', 'Свой в штабе', 'Проведи 10 советов', 'Rare', 80, 60, 'world', 'social', 10, s => ((s.council && s.council.meetings) || []).length),
 ];
+ACHIEVEMENTS.forEach(a => { if (a.id === 'debt_free') a.theme = 'gold'; if (a.id === 'goal5') { a.rarity = 'Legendary'; a.theme = 'nature'; } });
+// Лимитированные достижения месяца: получить можно только в этом календарном месяце.
+const RU_MONTH_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const SEASON_THEME = ['frost', 'frost', 'nature', 'nature', 'nature', 'gold', 'fire', 'fire', 'gold', 'autumn', 'autumn', 'frost'];
+const inMonth = (ts, mk) => { if (!ts) return false; const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` === mk; };
+function limitedAchievementsFor(mk) {
+  const m = Number(mk.slice(5, 7)) - 1;
+  const label = monthKeyLabel(mk);
+  return [
+    { ...achDef(`lim_q_${mk}`, `Марафон ${RU_MONTH_GEN[m]}`, `20 квестов за ${RU_MONTHS[m].toLowerCase()}`, 'Epic', 120, 100, 'limited', 'quest', 20, s => (s.quests || []).filter(q => q.status === 'completed' && inMonth(q.completedAt, mk)).length), limited: label, theme: SEASON_THEME[m] },
+    { ...achDef(`lim_l_${mk}`, `Чистый ${RU_MONTHS[m].toLowerCase()}`, '15 полезных событий жизни за месяц', 'Legendary', 160, 140, 'limited', 'mental', 15, s => (s.lifeLog || []).filter(l => !l.bad && inMonth(l.ts, mk)).length), limited: label, theme: SEASON_THEME[m] },
+  ];
+}
+// Все достижения игрока: постоянные + лимитки текущего месяца + уже полученные лимитки прошлых месяцев.
+function allAchievements(st) {
+  const mk = monthStr();
+  const past = [...new Set(((st && st.unlockedAchievements) || []).filter(id => /^lim_[ql]_\d{4}-\d{2}$/.test(id)).map(id => id.slice(6)))].filter(x => x !== mk);
+  const pastDefs = past.flatMap(limitedAchievementsFor).filter(a => st.unlockedAchievements.includes(a.id));
+  return [...ACHIEVEMENTS, ...limitedAchievementsFor(mk), ...pastDefs];
+}
 const ACH_CATS = [
   { key: 'all', label: 'Все' }, { key: 'path', label: 'Путь' }, { key: 'deeds', label: 'Дела' },
-  { key: 'habit', label: 'Привычки' }, { key: 'wealth', label: 'Богатство' }, { key: 'world', label: 'Мир' },
+  { key: 'habit', label: 'Привычки' }, { key: 'wealth', label: 'Богатство' }, { key: 'world', label: 'Мир' }, { key: 'limited', label: 'Лимит' },
 ];
 // Старые английские титулы → русские (у игроков в сохранении может лежать прежний вариант).
 const LEGACY_TITLES = {
@@ -1161,7 +1187,12 @@ const RPG_ITEM_POOL = [
   { id: 'focus-lens', title: 'Линза фокуса', rarity: 'Common', category: 'accessory', icon: '🔍', cost: 90, currency: 'coins', effect: 'Мелочь для фокуса', collection: 'focus' },
   { id: 'iron-badge', title: 'Железный знак', rarity: 'Common', category: 'badge', icon: '🛡️', cost: 80, currency: 'coins', collection: 'warrior' },
   { id: 'gold-thread', title: 'Золотая нить', rarity: 'Rare', category: 'cosmetic', icon: '✨', cost: 380, currency: 'coins', collection: 'wealth' },
-  { id: 'void-cloak', title: 'Плащ пустоты', rarity: 'Legendary', category: 'armor', icon: '🌑', cost: 8, currency: 'crystals', effect: 'Плащ пустоты', collection: 'void' },
+  { id: 'void-cloak', title: 'Плащ пустоты', rarity: 'Legendary', theme: 'void', category: 'armor', icon: '🌑', cost: 8, currency: 'crystals', effect: 'Сотканный из тишины между звёздами', collection: 'void', lore: 'Говорят, в нём не слышно сомнений.' },
+  { id: 'phoenix-feather', title: 'Перо феникса', rarity: 'Legendary', theme: 'fire', category: 'artifact', icon: '🪶', cost: 9, currency: 'crystals', effect: 'Горит после каждого срыва — и снова встаёт', collection: 'warrior', lore: 'Для тех, кто возвращается.' },
+  { id: 'sun-crown', title: 'Солнечный венец', rarity: 'Legendary', theme: 'gold', category: 'title', icon: '👑', cost: 10, currency: 'crystals', effect: 'Сияет над казной без долгов', collection: 'wealth', lore: 'Золото, которое не тянет вниз.' },
+  { id: 'frost-heart', title: 'Ледяное сердце', rarity: 'Legendary', theme: 'frost', category: 'accessory', icon: '❄️', cost: 8, currency: 'crystals', effect: 'Холодная голова в любом шторме', collection: 'focus', lore: 'Фокус, который не тает.' },
+  { id: 'world-sprout', title: 'Росток мирового древа', rarity: 'Legendary', theme: 'nature', category: 'artifact', icon: '🌱', cost: 8, currency: 'crystals', effect: 'Растёт вместе с каждой привычкой', collection: 'creator', lore: 'Маленький, но корни — до центра мира.' },
+  { id: 'path-crown', title: 'Корона Пути', rarity: 'Mythic', theme: 'holo', category: 'title', icon: '💎', cost: 25, currency: 'crystals', collection: 'relic', effect: 'Мифическая реликвия: выпадает только из эпических сундуков', lore: 'Её видели всего несколько героев.' },
   { id: 'streak-charm', title: 'Оберег серии', rarity: 'Rare', category: 'accessory', icon: '🔥', cost: 420, currency: 'coins', collection: 'discipline' },
   { id: 'taxi-coin', title: 'Жетон такси', rarity: 'Common', category: 'cosmetic', icon: '🚕', cost: 70, currency: 'coins', collection: 'wealth' },
   { id: 'creator-mic', title: 'Микрофон автора', rarity: 'Rare', category: 'weapon', icon: '🎤', cost: 560, currency: 'coins', collection: 'creator' },
@@ -1217,13 +1248,13 @@ function RoomShopPanel({ room, coins, buyRoomItem, equipRoomSlot, slot: slotProp
           const on = r.equipped[it.slot] === it.id;
           const poor = (coins || 0) < it.cost;
           return (
-            <div key={it.id} className="lrpg-paper lrpg-stagger" style={{ animationDelay: `${i * 45}ms`, padding: 10, display: 'flex', flexDirection: 'column', gap: 8, borderColor: on ? COLORS.gold : undefined, boxShadow: on ? `inset 0 0 0 1px ${COLORS.gold}` : undefined }}>
+            <RarityCard key={it.id} rarity={it.rarity} className="lrpg-stagger" style={{ animationDelay: `${i * 45}ms`, outline: on ? `2px solid ${COLORS.gold}` : 'none', outlineOffset: 2 }}><div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${COLORS.border}`, alignSelf: 'stretch', display: 'flex', justifyContent: 'center', background: '#d8cdb8' }}>
                 <RoomItemThumb it={it} />
               </div>
               <div style={{ minHeight: 34 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.2 }}>{it.name}</div>
-                <div className="lrpg-mono" style={{ fontSize: 9, color: ROOM_RARITY_COLOR[it.rarity] || COLORS.textMuted, marginTop: 3 }}>{ROOM_RARITY_RU[it.rarity] || it.rarity}</div>
+                <div style={{ marginTop: 3 }}><RarityLabel rarity={it.rarity} size={8.5} /></div>
               </div>
               {!owned ? (
                 <button className="lrpg-btn" onClick={() => buy(it)} style={{
@@ -1238,7 +1269,7 @@ function RoomShopPanel({ room, coins, buyRoomItem, equipRoomSlot, slot: slotProp
                   border: `1px solid ${on ? COLORS.border : COLORS.text}`,
                 }}>{on ? 'Убрать' : 'Поставить'}</button>
               )}
-            </div>
+            </div></RarityCard>
           );
         })}
       </div>
@@ -1281,7 +1312,7 @@ function applyTicketLedger(prev, type, amount) {
 
 function buildDailyShop(dateKey, salt) {
   const rnd = rng(hashSeed(dateKey + ':' + (salt || 'liferpg')));
-  const pool = [...RPG_ITEM_POOL];
+  const pool = RPG_ITEM_POOL.filter(i => i.rarity !== 'Mythic');
   const pick = (rarity) => {
     const bag = pool.filter(i => i.rarity === rarity);
     return bag[Math.floor(rnd() * bag.length)] || pool[Math.floor(rnd() * pool.length)];
@@ -4507,7 +4538,7 @@ const COUNCIL_SYSTEM = `Ты секретарь штаба Life RPG. Дирек�
 
 
 function achievementItems(state) {
-  return ACHIEVEMENTS.map(a => {
+  return allAchievements(state).map(a => {
     let cur = 0;
     try { cur = Math.max(0, Math.floor(Number(a.value(state)) || 0)); } catch (e) { cur = 0; }
     return { ...a, cur, unlocked: (state.unlockedAchievements || []).includes(a.id) };
@@ -4528,7 +4559,7 @@ function AchievementsPage({ state }) {
   const items = achievementItems(state);
   const got = items.filter(a => a.unlocked);
   const nearest = items.filter(a => !a.unlocked).sort((a, b) => (b.cur / b.target) - (a.cur / a.target))[0];
-  const byRarity = ['Common', 'Rare', 'Epic', 'Legendary'].map(r => ({ r, n: got.filter(a => a.rarity === r).length, t: items.filter(a => a.rarity === r).length }));
+  const byRarity = ['Common', 'Rare', 'Epic', 'Legendary', 'Mythic'].map(r => ({ r, n: got.filter(a => a.rarity === r).length, t: items.filter(a => a.rarity === r).length }));
   return (
     <div>
       <div style={{ marginBottom: 12 }}>
@@ -5341,13 +5372,14 @@ export default function LifeRPG() {
         if ((prev.coins || 0) < ch.cost) return prev;
         next = { ...next, ...applyCoinLedger(next, 'spend', ch.cost, 'chest', ch.title) };
       }
-      const rarity = ch.id === 'epic' ? 'Epic' : ch.id === 'iron' ? 'Rare' : 'Common';
+      const roll = Math.random();
+      const rarity = ch.id === 'epic' ? (roll < 0.06 ? 'Mythic' : roll < 0.3 ? 'Legendary' : 'Epic') : ch.id === 'iron' ? (roll < 0.08 ? 'Epic' : 'Rare') : 'Common';
       const bag = RPG_ITEM_POOL.filter(i => i.rarity === rarity);
       const item = bag[Math.floor(Math.random() * bag.length)] || RPG_ITEM_POOL[0];
       const eco = normalizeEconomy(next.economy);
       const owned = eco.inventory.some(x => x.id === item.id);
       if (owned) eco.fragments += 2; else eco.inventory = [...eco.inventory, { ...item, gotAt: Date.now(), source: 'chest' }];
-      eco.lastChest = { title: item.title, icon: item.icon, rarity: item.rarity, dup: owned, ts: Date.now(), chestTitle: ch.title }; eco.stats.chests = (eco.stats.chests || 0) + 1;
+      eco.lastChest = { title: item.title, icon: item.icon, rarity: item.rarity, theme: item.theme, dup: owned, ts: Date.now(), chestTitle: ch.title }; eco.stats.chests = (eco.stats.chests || 0) + 1;
       return { ...next, economy: eco, chronicle: pushChronicle(next.chronicle, 'SYSTEM', 'Сундук: ' + item.title) };
     });
   }
@@ -6534,7 +6566,7 @@ function addYouTubeQuest(ch, metric, delta) {
 
   useEffect(() => {
     if (!loaded || !state) return;
-    const toUnlock = ACHIEVEMENTS.filter(a => !state.unlockedAchievements.includes(a.id) && a.check(state));
+    const toUnlock = allAchievements(state).filter(a => !state.unlockedAchievements.includes(a.id) && a.check(state));
     const toUnlockSets = ITEM_SETS.filter(s => !state.unlockedSets.includes(s.key) && setCompletionTier(s, state.stats) >= 2);
     const toUnlockLevels = LEVEL_UNLOCKS.filter(l => !state.unlockedLevels.includes(l.level) && state.character.level >= l.level);
     if (toUnlock.length === 0 && toUnlockSets.length === 0 && toUnlockLevels.length === 0) return;
@@ -6575,7 +6607,7 @@ function addYouTubeQuest(ch, metric, delta) {
         character, chronicle, unlockedAchievements: unlocked, unlockedSets, unlockedLevels,
       };
     });
-    if (toUnlock.length) setAchQueue(q => [...q, ...toUnlock.filter(a => !q.some(x => x.id === a.id)).map(a => ({ id: a.id, label: a.label, desc: a.desc, rarity: a.rarity, kind: a.kind, xp: a.xp, coins: a.coins }))]);
+    if (toUnlock.length) setAchQueue(q => [...q, ...toUnlock.filter(a => !q.some(x => x.id === a.id)).map(a => ({ id: a.id, label: a.label, desc: a.desc, rarity: a.rarity, kind: a.kind, xp: a.xp, coins: a.coins, theme: a.theme, limited: a.limited }))]);
   }, [loaded, state]);
 
   // Собранная коллекция предметов лавки: +2 кристалла один раз.
@@ -8484,13 +8516,34 @@ const DAILY_LOGIN_TABLE = [
   { kind: 'coins', amount: 40 }, { kind: 'coins', amount: 60 }, { kind: 'ticket', amount: 1 }, { kind: 'coins', amount: 90 },
   { kind: 'crystals', amount: 1 }, { kind: 'coins', amount: 120 }, { kind: 'crystals', amount: 2 },
 ];
+// Лимитка месяца: доступна только в свой календарный месяц, у купивших остаётся навсегда с печатью.
+const LIMITED_MONTHLY = [
+  { title: 'Снежный шарф', icon: '🧣', rarity: 'Legendary', theme: 'frost', lore: 'Связан из первого снега года.' },
+  { title: 'Сердце из стекла', icon: '💗', rarity: 'Legendary', theme: 'holo', lore: 'Хрупкое снаружи, крепкое внутри.' },
+  { title: 'Подснежник', icon: '🌷', rarity: 'Legendary', theme: 'nature', lore: 'Пробивается сквозь лёд — как ты.' },
+  { title: 'Ветер перемен', icon: '🪁', rarity: 'Legendary', theme: 'frost', lore: 'Поднимает того, кто не стоит на месте.' },
+  { title: 'Цветущий урюк', icon: '🌸', rarity: 'Legendary', theme: 'nature', lore: 'Ташкентская весна в кармане.' },
+  { title: 'Летнее солнце', icon: '🌞', rarity: 'Legendary', theme: 'gold', lore: 'Длинные дни — длинные серии.' },
+  { title: 'Жаркий асфальт', icon: '🔥', rarity: 'Legendary', theme: 'fire', lore: 'Июльская смена на 40 градусах.' },
+  { title: 'Звездопад', icon: '🌠', rarity: 'Legendary', theme: 'void', lore: 'Загадай — и сделай.' },
+  { title: 'Первый звонок', icon: '🔔', rarity: 'Legendary', theme: 'gold', lore: 'Новый учебный год для героя.' },
+  { title: 'Золотая хурма', icon: '🍊', rarity: 'Legendary', theme: 'autumn', lore: 'Осень, которая сладкая.' },
+  { title: 'Кленовый вихрь', icon: '🍁', rarity: 'Legendary', theme: 'autumn', lore: 'Листопад собирается вокруг тех, кто не сдаётся.' },
+  { title: 'Северное сияние', icon: '🌌', rarity: 'Mythic', theme: 'holo', lore: 'Раз в году небо открывает свои цвета.' },
+];
+function limitedItemFor(date = new Date()) {
+  const m = date.getMonth();
+  const mk = `${date.getFullYear()}-${String(m + 1).padStart(2, '0')}`;
+  const d = LIMITED_MONTHLY[m];
+  return { id: 'lim-' + mk, ...d, category: 'limited', cost: d.rarity === 'Mythic' ? 12 : 6, currency: 'crystals', limited: monthKeyLabel(mk), effect: d.lore, collection: 'limited' };
+}
 const SHOP_CHESTS = [
   { id: 'wood', title: 'Деревянный', cost: 250, cur: 'coins', odds: 'обычные предметы' },
   { id: 'iron', title: 'Железный', cost: 700, cur: 'coins', odds: 'редкие предметы' },
   { id: 'epic', title: 'Эпический', cost: 3, cur: 'crystals', odds: 'эпические предметы' },
 ];
 const FORGE_RATE = 20; // осколков за 1 кристалл
-const COLLECTION_RU = { discipline: 'Дисциплина', focus: 'Фокус', wealth: 'Богатство', warrior: 'Воин', creator: 'Творец', neon: 'Неон', void: 'Пустота' };
+const COLLECTION_RU = { discipline: 'Дисциплина', focus: 'Фокус', wealth: 'Богатство', warrior: 'Воин', creator: 'Творец', neon: 'Неон', void: 'Пустота', relic: 'Реликвии', other: 'Разное', limited: 'Лимитированные' };
 const REWARD_ICONS = ['🎁', '🎮', '🍔', '🎬', '😴', '☕', '🍰', '🛍️', '🎧', '📚', '🏖️', '🍕'];
 
 function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTransactions, cosmetics, lastPurchase, lastRefundAt, buyReward, buyCosmetic, equipCosmetic, buyRoomItem, equipRoomSlot, refundLastPurchase, showAddReward, setShowAddReward, addReward, deleteReward, setRewardEnabled, state, buyShopItem, rerollShopSlot, spinDailyWheel, openChest, claimDailyLogin, ensureDailyShop, forgeFragments }) {
@@ -8529,7 +8582,11 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
   const weekSpent = weekTx.filter(t => t.type === 'spend').reduce((s, t) => s + t.amount, 0);
   const canRefund = lastPurchase && lastPurchase.isCustom && (!lastRefundAt || Date.now() - lastRefundAt >= 86400000);
   const real = rewards.filter(r => r.category !== 'cosmetic');
-  const collections = Object.entries(RPG_ITEM_POOL.reduce((m, it) => { (m[it.collection || 'other'] = m[it.collection || 'other'] || []).push(it); return m; }, {}));
+  const collections = Object.entries(RPG_ITEM_POOL.reduce((m, it) => { (m[it.collection || 'other'] = m[it.collection || 'other'] || []).push(it); return m; }, {}))
+    .sort((a, b) => Math.max(...b[1].map(i => rarityRank(i.rarity))) - Math.max(...a[1].map(i => rarityRank(i.rarity))));
+  const ownedLimited = eco.inventory.filter(i => i.limited);
+  const lim = limitedItemFor();
+  const limDaysLeft = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate() + 1;
   const chestDone = chestAt && eco.lastChest && (eco.lastChest.ts || 0) >= chestAt;
 
   async function doSpin() {
@@ -8590,10 +8647,19 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
 
       {sub === 'showcase' && (
         <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Лимитка месяца</span>
+            <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.crimson }}>исчезнет через {limDaysLeft} {plural(limDaysLeft, 'день', 'дня', 'дней')}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr' }}>
+            <ItemTile it={lim} big owned={owned.has(lim.id)} afford={afford(lim)}
+              onBuy={() => { buyShopItem(lim); gameFeedback('PURCHASE'); setPrize({ title: lim.title, icon: lim.icon, rarity: lim.rarity, theme: lim.theme, sub: `Лимит · ${lim.limited}` }); }} />
+          </div>
+          <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>Витрина дня</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
             {shop.map((it, i) => (
               <ItemTile key={it.shopId || it.id + i} it={it} big={!!it.featured} owned={owned.has(it.id)} afford={afford(it)}
-                onBuy={() => { buyShopItem(it); gameFeedback('PURCHASE'); setPrize({ title: it.title, icon: it.icon, rarity: it.rarity, sub: 'Куплено в лавке' }); }} />
+                onBuy={() => { buyShopItem(it); gameFeedback('PURCHASE'); setPrize({ title: it.title, icon: it.icon, rarity: it.rarity, theme: it.theme, sub: 'Куплено в лавке' }); }} />
             ))}
           </div>
           <button className="lrpg-btn" disabled={coins < 50 * Math.pow(2, eco.shopRerolls || 0)} onClick={() => { rerollShopSlot(); gameFeedback('PAGE_TURN'); }} style={{ ...smallBtn(), opacity: coins < 50 * Math.pow(2, eco.shopRerolls || 0) ? .5 : 1 }}>
@@ -8694,7 +8760,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                     const r = RAR[item.rarity] || RAR.Common;
                     const look = COSMETIC_LOOK[item.id] || {};
                     return (
-                      <div key={item.id} style={{ border: `1.5px solid ${on ? r.c : COLORS.border}`, borderRadius: 12, padding: 8, background: on ? r.bg : COLORS.bgCard, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <RarityCard key={item.id} rarity={item.rarity} radius={12} style={{ outline: on ? `2px solid ${COLORS.text}` : 'none', outlineOffset: 2 }}><div style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <div style={{ height: 46, borderRadius: 8, background: look.bg || COLORS.bgCardAlt, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {type === 'frame' && <span style={{ width: 32, height: 32, borderRadius: 9, background: '#e6e0d3', border: look.frame, boxShadow: look.glow }} />}
                           {type === 'nameColor' && <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, color: look.color }}>Герой</span>}
@@ -8707,7 +8773,7 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                         ) : (
                           <button className="lrpg-btn" disabled={coins < item.cost} onClick={() => { buyCosmetic(item); gameFeedback('PURCHASE'); }} style={{ padding: '6px 0', borderRadius: 8, fontSize: 12, fontWeight: 800, background: coins >= item.cost ? COLORS.gold : COLORS.bgCardAlt, color: coins >= item.cost ? '#fbf9f4' : COLORS.textMuted, border: coins >= item.cost ? 'none' : `1px solid ${COLORS.border}` }}>{item.cost}</button>
                         )}
-                      </div>
+                      </div></RarityCard>
                     );
                   })}
                 </div>
@@ -8739,8 +8805,8 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
                     const has = owned.has(it.id);
                     const r = RAR[it.rarity] || RAR.Common;
                     return (
-                      <div key={it.id} title={it.title} style={{ textAlign: 'center' }}>
-                        <div style={{ height: 50, borderRadius: 10, background: has ? r.bg : '#ece7dc', border: `2px solid ${has ? r.c : COLORS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, filter: has ? 'none' : 'grayscale(1) opacity(.35)' }}>{has ? it.icon : '?'}</div>
+                      <div key={it.id} title={it.title} style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <RarityIcon rarity={it.rarity} theme={it.theme} size={54} locked={!has}>{has ? it.icon : '?'}</RarityIcon>
                         <div style={{ fontSize: 9.5, color: has ? COLORS.text : COLORS.textMuted, lineHeight: 1.15, marginTop: 3 }}>{has ? it.title : r.ru}</div>
                       </div>
                     );
@@ -8751,6 +8817,21 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
             );
           })}
         </>
+      )}
+
+      {sub === 'collection' && ownedLimited.length > 0 && (
+        <div className="lrpg-paper" style={{ padding: 12 }}>
+          <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Лимитированные</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+            {ownedLimited.map(it => (
+              <div key={it.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                <RarityIcon rarity={it.rarity} theme={it.theme} size={64} limited={it.limited}>{it.icon}</RarityIcon>
+                <div style={{ fontSize: 11, fontWeight: 700, marginTop: 4, lineHeight: 1.15 }}>{it.title}</div>
+                <div className="lrpg-mono" style={{ fontSize: 7.5, color: COLORS.textMuted }}>{it.limited}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {sub === 'wallet' && (
@@ -8783,9 +8864,9 @@ function ShopTab({ rewards, coins, coinsEarnedAllTime, coinsSpentAllTime, coinTr
       {prize && (() => {
         const w = prize.wheelAt && eco.lastWheel && (eco.lastWheel.ts || 0) >= prize.wheelAt && eco.lastWheel.item;
         const shown = w ? { ...prize, title: w.title, icon: w.icon, rarity: w.rarity, sub: w.dup ? `Колесо · повтор → осколки` : prize.sub } : prize;
-        return <PrizeModal title={shown.title} icon={shown.icon} rarity={shown.rarity} sub={shown.sub} onClose={() => setPrize(null)} />;
+        return <PrizeModal title={shown.title} icon={shown.icon} rarity={shown.rarity} theme={shown.theme} sub={shown.sub} onClose={() => setPrize(null)} />;
       })()}
-      {chestDone && <PrizeModal key={eco.lastChest.ts} chest={chestAt && SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle) ? SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle).id : 'wood'} title={eco.lastChest.title} icon={eco.lastChest.icon} rarity={eco.lastChest.rarity} sub={eco.lastChest.dup ? 'Повтор → +2 осколка' : 'Из сундука'} onClose={() => { setChestAt(null); gameFeedback('REWARD_POP'); }} />}
+      {chestDone && <PrizeModal key={eco.lastChest.ts} chest={chestAt && SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle) ? SHOP_CHESTS.find(c => c.title === eco.lastChest.chestTitle).id : 'wood'} title={eco.lastChest.title} icon={eco.lastChest.icon} rarity={eco.lastChest.rarity} theme={eco.lastChest.theme} sub={eco.lastChest.dup ? 'Повтор → +2 осколка' : 'Из сундука'} onClose={() => { setChestAt(null); gameFeedback('REWARD_POP'); }} />}
     </div>
   );
 }
@@ -11444,6 +11525,7 @@ function TelegramDiagnosticsCard() {
 }
 
 const WHATS_NEW = [
+  { v: '16.8', t: 'Редкость по-настоящему: от простой рамки до золотых и мифических карточек с частицами; лимитки месяца и лимитированные достижения' },
   { v: '16.7', t: 'Живая Главная: доска дня с шагами прямо с главной, герой говорит по тапу, записка от Кайлена' },
   { v: '16.6', t: 'Настройки — меню игры: кристалл сохранения, авто-копии с откатом, сброс удержанием, вибрация, спокойный режим' },
   { v: '16.5', t: 'События жизни — дневник дня с весами и «днями без…», хроника с картой активности и главами' },

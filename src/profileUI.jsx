@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PAPER, PixelIcon } from './actionsUI.jsx';
+import { RarityCard, RarityLabel, RarityBurst, rarityRank, useRarityCss } from './rarityFX.jsx';
 
 const FONT = "'Manrope', system-ui, -apple-system, sans-serif";
 export const RARITY_TONE = {
@@ -10,6 +11,7 @@ export const RARITY_TONE = {
   Rare: { c: '#2f6b6e', bg: '#e1ecea', ru: 'Редкий' },
   Epic: { c: '#a83e66', bg: '#f2e1e7', ru: 'Эпический' },
   Legendary: { c: '#c48a2a', bg: '#f6ebd3', ru: 'Легендарный' },
+  Mythic: { c: '#7a5af0', bg: '#f1ecff', ru: 'Мифический' },
 };
 
 const CSS = `
@@ -101,15 +103,13 @@ export function HeroPaperDoll({ slots, onSlot, active }) {
     const tone = RARITY_TONE[s.tier.rarity] || RARITY_TONE.Common;
     const on = active === s.slot;
     return (
-      <button type="button" className="lrpg-btn" onClick={() => onSlot && onSlot(on ? null : s.slot)} aria-label={`${s.label}: ${s.theme} ${s.tier.roman}`} aria-pressed={on} style={{
-        position: 'relative', width: 52, height: 52, borderRadius: 10, background: tone.bg, padding: 0,
-        border: `2px solid ${on ? PAPER.ink : tone.c}`, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: s.tier.rarity === 'Legendary' ? `0 0 0 3px ${tone.c}33, 0 0 14px ${tone.c}66` : 'inset 0 -3px 0 rgba(0,0,0,.06)',
-      }}>
-        {s.tier.rarity !== 'Common' && <span className="pf-shine" />}
-        <GearIcon slot={s.slot} color={tone.c} size={28} />
-        <span className="lrpg-num" style={{ position: 'absolute', right: 3, bottom: 1, fontSize: 9, fontWeight: 800, color: tone.c }}>{s.tier.roman}</span>
-      </button>
+      <RarityCard as="button" type="button" rarity={s.tier.rarity} radius={10} particles={false} onClick={() => onSlot && onSlot(on ? null : s.slot)} aria-label={`${s.label}: ${s.theme} ${s.tier.roman}`} aria-pressed={on}
+        style={{ width: 52, height: 52, cursor: 'pointer', outline: on ? `2px solid ${PAPER.ink}` : 'none', outlineOffset: 2 }}>
+        <span style={{ width: 52, height: 52, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+          <GearIcon slot={s.slot} color={tone.c} size={28} />
+          <span className="lrpg-num" style={{ position: 'absolute', right: 4, bottom: 2, fontSize: 9, fontWeight: 800, color: tone.c }}>{s.tier.roman}</span>
+        </span>
+      </RarityCard>
     );
   };
   const sel = active && by[active];
@@ -144,8 +144,10 @@ export function HeroPaperDoll({ slots, onSlot, active }) {
 export function Medal({ kind, rarity = 'Common', locked, size = 54 }) {
   const tone = RARITY_TONE[rarity] || RARITY_TONE.Common;
   const c = locked ? '#b9b2a2' : tone.c;
+  const rank = locked ? 0 : rarityRank(rarity);
+  useRarityCss();
   return (
-    <div style={{ position: 'relative', width: size, height: size * 1.18 }}>
+    <div className={rank >= 3 ? 'rf-float' + (rank >= 4 ? ' rf-holo' : '') : undefined} style={{ position: 'relative', width: size, height: size * 1.18, filter: rank >= 2 ? `drop-shadow(0 0 ${rank * 3}px ${tone.c}aa)` : 'none' }}>
       <svg width={size} height={size * 1.18} viewBox="0 0 22 26" shapeRendering="crispEdges" aria-hidden="true" style={{ display: 'block' }}>
         <rect x="5" y="0" width="5" height="9" fill={locked ? '#cfc8b8' : PAPER.terra} /><rect x="12" y="0" width="5" height="9" fill={locked ? '#bdb6a6' : PAPER.navy} />
         <rect x="3" y="8" width="16" height="16" fill={c} /><rect x="5" y="6" width="12" height="2" fill={c} /><rect x="5" y="24" width="12" height="2" fill={c} />
@@ -181,19 +183,22 @@ export function AchievementBoard({ items, cats, cat, setCat }) {
           const tone = RARITY_TONE[a.rarity] || RARITY_TONE.Common;
           const pct = Math.max(0, Math.min(1, a.cur / a.target));
           return (
-            <div key={a.id} className="lrpg-paper lrpg-stagger" style={{ padding: '10px 6px 9px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', animationDelay: `${Math.min(i, 12) * 0.03}s`, borderColor: a.unlocked ? tone.c + '66' : undefined, background: a.unlocked ? '#fbf9f4' : '#f6f2e9' }}>
+            <RarityCard key={a.id} rarity={a.rarity} theme={a.theme} limited={a.limited ? a.limited : undefined} locked={!a.unlocked} particles={a.unlocked} className="lrpg-stagger" style={{ animationDelay: `${Math.min(i, 12) * 0.03}s` }}>
+            <div style={{ padding: '10px 6px 9px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
               <Medal kind={a.kind} rarity={a.rarity} locked={!a.unlocked} size={42} />
               <div style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.2, marginTop: 5, color: a.unlocked ? PAPER.ink : '#6b6f7a', minHeight: 29, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{a.label}</div>
               <div style={{ fontSize: 10.5, color: PAPER.muted, lineHeight: 1.25, marginTop: 2, minHeight: 26 }}>{a.desc}</div>
               {a.unlocked ? (
-                <span className="lrpg-mono" style={{ fontSize: 7.5, color: tone.c, marginTop: 5 }}>{tone.ru}</span>
+                <span style={{ marginTop: 5 }}><RarityLabel rarity={a.rarity} size={7.5} /></span>
               ) : (
                 <div style={{ width: '100%', marginTop: 6 }}>
                   <div style={{ height: 4, borderRadius: 2, background: '#e2dbcc', overflow: 'hidden' }}><div style={{ width: `${pct * 100}%`, height: '100%', background: tone.c }} /></div>
                   <div className="lrpg-num" style={{ fontSize: 9.5, color: PAPER.muted, marginTop: 3 }}>{Math.min(a.cur, a.target)}/{a.target} · +{a.coins}</div>
+                  <div className="lrpg-mono" style={{ fontSize: 7, color: tone.c, marginTop: 2 }}>{tone.ru}</div>
                 </div>
               )}
             </div>
+            </RarityCard>
           );
         })}
       </div>
@@ -203,23 +208,28 @@ export function AchievementBoard({ items, cats, cat, setCat }) {
 
 /** Баннер «Достижение получено» сверху экрана. */
 export function AchievementToast({ a, onDone, sound }) {
-  useProfileCss();
+  useProfileCss(); useRarityCss();
   useEffect(() => {
     if (sound) sound('ACHIEVEMENT_UNLOCK');
     const t = setTimeout(onDone, 3800);
     return () => clearTimeout(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const tone = RARITY_TONE[a.rarity] || RARITY_TONE.Common;
+  const rank = rarityRank(a.rarity);
+  const ring = rank >= 4 ? 'conic-gradient(#7a5af0, #f07ad0, #f0b05a, #5ad0f0, #7a5af0)' : rank >= 3 ? 'conic-gradient(#a06a1a, #f6d08a, #fff6dc, #e0a83a, #a06a1a)' : null;
   const view = (
-    <div className="pf-drop" role="status" onClick={onDone} style={{
+    <div className="pf-drop rf-card" role="status" onClick={onDone} style={{
       position: 'fixed', left: '50%', top: 'calc(14px + env(safe-area-inset-top, 0px))', zIndex: 220, width: 'min(360px, calc(100vw - 32px))', fontFamily: FONT,
-      background: '#1e2230', color: '#f2eee5', borderRadius: 16, padding: '10px 14px 10px 10px', display: 'flex', alignItems: 'center', gap: 12,
-      boxShadow: `0 14px 34px rgba(0,0,0,.35), 0 0 0 2px ${tone.c}`, cursor: 'pointer',
+      background: ring ? 'transparent' : '#1e2230', color: '#f2eee5', borderRadius: 16, padding: '10px 14px 10px 10px', display: 'flex', alignItems: 'center', gap: 12,
+      boxShadow: ring ? `0 14px 34px rgba(0,0,0,.35), 0 0 24px ${tone.c}aa` : `0 14px 34px rgba(0,0,0,.35), 0 0 0 2px ${tone.c}`, cursor: 'pointer', overflow: 'hidden',
     }}>
+      {ring && <span className="rf-ring" aria-hidden="true"><i style={{ background: ring }} /></span>}
+      {ring && <span className="rf-inner" aria-hidden="true" style={{ inset: 2, background: rank >= 4 ? 'linear-gradient(135deg, #231a40, #1e2230 60%, #2e1f3a)' : 'linear-gradient(135deg, #2e2418, #1e2230 60%, #2e2418)' }} />}
+      {rank >= 2 && <span className="rf-shine" aria-hidden="true" style={{ inset: 2 }} />}
       <div className="pf-spin" style={{ perspective: 200 }}><Medal kind={a.kind} rarity={a.rarity} size={40} /></div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="lrpg-mono" style={{ fontSize: 8.5, color: '#f6d08a' }}>Достижение · {tone.ru}</div>
-        <div style={{ fontSize: 15.5, fontWeight: 800, lineHeight: 1.2 }}>{a.label}</div>
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: '#f6d08a' }}>{a.limited ? `Лимит · ${a.limited}` : 'Достижение'} · <span className={rank >= 4 ? 'rf-holo-text' : rank >= 3 ? 'rf-gold-text' : ''}>{tone.ru}</span></div>
+        <div className={rank >= 4 ? 'rf-holo-text' : rank >= 3 ? 'rf-gold-text' : ''} style={{ fontSize: 15.5, fontWeight: 800, lineHeight: 1.2 }}>{a.label}</div>
         <div style={{ fontSize: 11.5, opacity: .75 }}>{a.desc}</div>
       </div>
       <div style={{ textAlign: 'right', flexShrink: 0 }}>

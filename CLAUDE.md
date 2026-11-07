@@ -21,6 +21,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | `src/lifeUI.jsx` | Life events + chronicle UI: `DayScale` (good/bad scale), `ActivityHeatmap` (weeks × days, tap to filter), `WeekBalance` |
 | `src/settingsUI.jsx` | Settings UI: `SaveCrystal`, `Toggle`, `HoldButton` (press-and-hold confirm), `SettingsSection` (accordion) |
 | `src/homeUI.jsx` | Home HUD: `DayBoard` (route progress + next steps with quick complete), `HeroBubble` (tap-hero lines with action), `MentorNote` (Kaylen's daily line) |
+| `src/rarityFX.jsx` | Unified rarity system: `RARITY_ORDER`/`RARITY_META` (Common→Mythic), `RARITY_THEMES` (gold/fire/void/frost/nature/autumn/holo), `RarityCard` (frame by tier, particles, LIMIT ribbon), `RarityLabel`, `RarityIcon`, `RarityBurst` (reveal background + banner) |
 | `src/progressUI.jsx` | Progress section UI: `WorldMapPixel` (9 lands = 9 stats, 6 stages, fog, roads), `LANDS`, `stageOf`, `StageMini`, `HeroRankCard` (`rankOf`), `StatRow` |
 | `src/councilUI.jsx` | Kaylen HQ UI: `NpcPortrait` (16×16 pixel mentors), `RoundTable` scene, `NPC_BRAIN` (AI provider per mentor), `NPC_POWERS` (which section each mentor may edit), `npcPresence` (daily schedule), `AffinityHearts`; living meeting: `useWalkers`/`pathToSeat`/`NpcBody`/`CouncilStage` (walk-in with bubbles), `localBanter`, voices: `NPC_VOICE` (Gemini voice + style per mentor), `speakLine` (queued AI voice via `/api/tts`, device-voice fallback), `unlockVoices`, `stopSpeaking`, `PortraitFrame` (hall gallery) |
 | `src/pixelRoom.jsx` | Home scene: pixel room SVG (195×422 units) with the Tashkent window, time of day, the hero sprite; room catalog/slots (`ROOM_CATALOG`, `ROOM_SLOTS`, `SLOT_BOX`), `RoomItemThumb` |
@@ -48,7 +49,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 - 2315–2510 Basic UI: `Bar`, `Card`, `Tag`, `SubNav`, `PillTabs`, `ScreenHeader`…
 
 **Navigation and hubs (v14, 5 sections)** — 2440
-- `ACHIEVEMENTS` (built with `achDef`: cat/kind/target/value → progress), `ACH_CATS`, `LEGACY_TITLES`
+- `ACHIEVEMENTS` (built with `achDef`: cat/kind/target/value → progress; optional `theme`), `ACH_CATS`, `LEGACY_TITLES`; limited monthly achievements `limitedAchievementsFor(mk)` and `allAchievements(state)` (use this, not ACHIEVEMENTS, for checks/lists)
 - 2568 `ActionsHub`, `GoalsHub` (+`GoalForm`, goal AI prompts `GOAL_ENGINE_SYSTEM_PROMPT`/`GOAL_REALITY_SYSTEM_PROMPT` right above it), 3020 `ProgressWorldMap`, 3111 `ProgressHub`, `ProfileHub` (+`AchievementsPage`, `achievementItems`, `equipmentSlotsView`)
 - NPC council: `COUNCIL_NPCS`, `mentorBrief`/`npcDailyLine`/`pickMeetingSpeakers`/`mentorSystemPrompt`, `applyMentorActions`/`undoMentorItems` (mentor edits with undo), `CouncilTab` (hall / round-table meeting / DM); handlers `askMentor`, `askBanter`, `talkToNpc`, `approveMentorDecision` live in `LifeRPG`
 
@@ -65,7 +66,7 @@ Commands: `npm run dev`, `npm run build` (the only check available — there are
 | 7568 | QuestsTab (+QuestCard 6546) | 9643 | MentorTab |
 | — | (GoalsTab removed; see GoalsHub) | 9802 | WorldTab |
 | 8031 | StatsTab | 9877 | EventsTab (+`lifeHistory`, `dayKeyOf`; `state.lifeLog`, `logLifeEvent` once-per-day for positive, `undoLifeEvent`) |
-| 8134 | ShopTab (+`DAILY_LOGIN_TABLE`, `SHOP_CHESTS`, `FORGE_RATE`, `COSMETIC_LOOK`; EconomyPanel merged in) | 9219 | YouTubeHQ (+`parseAiIdeas`, `ytWeekStart`; YouTubeTab merged in; rewards via `onCreatorAction` stage/publish) |
+| 8134 | ShopTab (+`DAILY_LOGIN_TABLE`, `LIMITED_MONTHLY`/`limitedItemFor`, `SHOP_CHESTS`, `FORGE_RATE`, `COSMETIC_LOOK`; EconomyPanel merged in) | 9219 | YouTubeHQ (+`parseAiIdeas`, `ytWeekStart`; YouTubeTab merged in; rewards via `onCreatorAction` stage/publish) |
 | 8313 | ChronicleTab (+`CHRONICLE_IMPORTANT`, chapters by week, diary moods) | 10709 | GarageTab |
 | 8397 | HabitsTab | 11031 | SettingsTab (+`WHATS_NEW`, `DIFFICULTY_INFO`; snapshots `listSnapshots`/`takeSnapshot` near `LOCAL_BACKUP_KEY`; `applyCalmMode`, `hapticsOn` pref) |
 | 8723 | FinanceTab (+`financeScore`, `DEBT_TACTICS`) | 11430 | BodyTab (+NutritionCard 10249) |
