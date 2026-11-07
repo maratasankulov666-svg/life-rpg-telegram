@@ -131,7 +131,7 @@ import {
 } from 'recharts';
 import { GoalTrail, RidgePanorama, DeadlineSeal, TrophyShelf, TrophyCup, SpherePicker, GoalCeremony, useGoalsCss, useHighlight, sphereMeta, daysLeft, plural, GOAL_CAMPS, GOAL_SUMMIT } from './goalsUI.jsx';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
-import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf, rankOf } from './progressUI.jsx';
+import { WorldMapPixel, SkyIslandsMap, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf, rankOf } from './progressUI.jsx';
 import { TreasuryScene, DebtBossSprite, HpBar, DamagePop, PiggyJar, WeekBars, GradeBadge, QuickEntrySheet, CatIcon, CatBadge, CAT_COLOR, fmtMoney, useFinanceCss } from './financeUI.jsx';
 import { StudioScene, PlayPlaque, RhythmDots, StageTrack, SUB_MILESTONES, milestoneInfo, fmtCompact, useCreatorCss } from './creatorUI.jsx';
 import { ShopScene, DailyLoginStrip, ItemTile, MiniChest, ReceiptModal, PrizeModal, useShopCss, RAR } from './shopUI.jsx';
@@ -243,7 +243,9 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       новые легендарные и мифические предметы и достижения.
 // 17.1 — снаряжение видно на герое (профиль и комната): стихия и облик растут по уровням I–V; премиальные
 //       плитки лавки для легендарок и мифов; новые тематические рамки (5) и ауры (6).
-const APP_VERSION = '17.1';
+// 17.2 — карта мира «Парящие острова»: 9 островов-стихий растут по стадиям, мосты, облака, небо по времени суток,
+//       вспышка острова при переходе на новую стадию.
+const APP_VERSION = '17.2';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -3503,10 +3505,10 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
       <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden', animationDelay: '.05s' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 14px 8px' }}>
           <span className="lrpg-display" style={{ fontSize: 19, fontWeight: 700 }}>Карта мира</span>
-          <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>{LANDS.filter(l => stageOf(stats[l.key]) > 0).length}/{LANDS.length} земель открыто</span>
+          <span className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>{LANDS.filter(l => stageOf(stats[l.key]) > 0).length}/{LANDS.length} островов открыто</span>
         </div>
         <div style={{ borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}` }}>
-          <WorldMapPixel stats={stats} selected={selected} onSelect={k => { if (k !== selected) gameFeedback('PAGE_TURN'); setSelected(k); setGrown(null); }} />
+          <SkyIslandsMap stats={stats} selected={selected} celebrate={grown && grown.key} onSelect={k => { if (k !== selected) gameFeedback('PAGE_TURN'); setSelected(k); setGrown(null); }} />
         </div>
         <div key={land.key} className="lrpg-fade" style={{ padding: '12px 14px 14px' }}>
           {grown && grown.key === land.key && (
@@ -11649,6 +11651,7 @@ function TelegramDiagnosticsCard() {
 }
 
 const WHATS_NEW = [
+  { v: '17.2', t: 'Новая карта мира: парящие острова-стихии растут от скалы до легендарного острова с рунами, мосты между открытыми землями, небо по времени суток' },
   { v: '17.1', t: 'Герой носит своё снаряжение: от деревянного меча до драконьего клинка и парящей короны. В лавке легендарки и мифы — живые сцены, 5 новых рамок и 6 новых аур' },
   { v: '17.0', t: 'Раскрытие как у мифических скинов: свой сценарий и музыка у каждой темы, живые таблички титулов, снаряжение со стихиями и мифическим V уровнем, 6 новых мифов и 10 легендарок' },
   { v: '16.9', t: 'Нарисованные анимированные легендарки и мифические Драконьи доспехи, рамки «Подводный мир» и «Драконья оправа», ауры героя — в профиле и в комнате' },
