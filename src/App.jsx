@@ -123,12 +123,13 @@ import {
   Backpack, HandMetal, Package, Compass, Sunrise, Sunset, Layers, CalendarClock,
   Utensils, BedDouble, Smartphone, BookMarked, Save, AlertCircle,
   Download, Upload, Copy, ClipboardPaste, TrendingUp as TrendingUpIcon, PauseCircle,
-  Swords, Search, BarChart3, Youtube, User, Globe, RefreshCw, Eye, Sofa, Volume2, VolumeX,
+  Swords, Search, BarChart3, Youtube, User, Globe, RefreshCw, Eye, Sofa, Volume2, VolumeX, SlidersHorizontal,
 } from 'lucide-react';
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar as RBar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from 'recharts';
+import { GoalTrail, RidgePanorama, DeadlineSeal, TrophyShelf, TrophyCup, SpherePicker, GoalCeremony, useGoalsCss, useHighlight, sphereMeta, daysLeft, plural, GOAL_CAMPS, GOAL_SUMMIT } from './goalsUI.jsx';
 import { DayRoad, ActionTicket, EnergyPips, StreakFlame, FlameIcon, flameTier, STREAK_MILESTONES, ChestCeremony, TrainingSoon, StatTile, PixelIcon, STAT_RU, STAT_COLOR, PAPER } from './actionsUI.jsx';
 import { WorldMapPixel, HeroRankCard, StatRow, StageMini, LANDS, STAGES as LAND_STAGES, stageOf } from './progressUI.jsx';
 import { NpcPortrait, RoundTable, CouncilStage, useWalkers, pathToSeat, localBanter, ENTER_EXTRA, GREETS, speakLine, stopSpeaking, unlockVoices, resetVoiceAi, VOICE_MODES, VOICE_MODE_LABEL, PortraitFrame, AffinityHearts, useCouncilCss, NPC_BRAIN, NPC_POWERS, PROVIDER_LABEL, ACTION_LABEL, npcPresence, affinityWord } from './councilUI.jsx';
@@ -179,7 +180,12 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       (Кайлен хриплый, Брум напористый, Каспер ленивый, Нори весёлая, Мира тревожная, Вера холодная, Тио мягкая),
 //       очередь без перебиваний с предзагрузкой, воспроизведение через WebAudio; при сбое/лимите — голос телефона
 //       с подбором мужского/женского; режимы «выкл / ИИ / телефон», голоса и в личных чатах.
-const APP_VERSION = '15.6';
+// 16.0  Цели = атлас походов: панорама хребта (каждая цель — гора с героем на склоне), тропа с лагерями 25/50/75 %
+//       и флагом на вершине, сургучная печать срока, награды за лагеря и вершину (раз за цель; ручной прогресс у цели
+//       младше 12 ч без монет), церемония «Вершина покорена», зал трофеев; выполненные шаги-квесты сами двигают
+//       прогресс (до 90 %); форма «Новый поход» со сферами и быстрыми сроками; починены пропавшие промпты
+//       «Разбить на квесты» и «Reality Check» (раньше всегда падали в «AI не ответил»).
+const APP_VERSION = '16.0';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -2801,64 +2807,407 @@ function ActionsHub({
   );
 }
 
-function GoalsHub({ state, goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgress, deleteGoal, addQuestsFromGoal, setGoalDeadline, resolveAbandonedGoal, sub, setSub }) {
-  const todayGoals = computeDailyGoalsStatus(state);
-  const doneCount = todayGoals.filter(g => g.done).length;
+const GOAL_ENGINE_SYSTEM_PROMPT = 'Ты — Goal Engine в приложении Life RPG. Пользователь даёт крупную жизненную цель, '
+  + 'а ты разбиваешь её на 3-6 конкретных выполнимых квестов-шагов с учётом срока цели. '
+  + 'КРИТИЧЕСКИ ВАЖНО про логику сроков: шаги идут по возрастанию dueInDays, и тип должен соответствовать сроку — '
+  + 'если dueInDays до 14 дней, тип "Weekly"; если больше 14 дней, тип "Monthly"; последний шаг ближе к дедлайну цели '
+  + 'обычно "Goal". НЕЛЬЗЯ давать простому короткому действию (например "сделать 10 отжиманий", "выпить стакан воды") '
+  + 'срок в 1 месяц — это разовые квесты-шаги на пути к цели, а не повторяющиеся привычки. Если шаг по смыслу должен '
+  + 'повторяться каждый день (тренировка, чтение, диета) — сформулируй его как ОДНОРАЗОВОЕ действие вида "составить и '
+  + 'начать план тренировок 3 раза в неделю" или "пройти первую неделю по плану питания", а не как саму ежедневную '
+  + 'повторяющуюся активность — регулярные действия относятся к привычкам (Habits), а не к квестам цели. '
+  + 'Отвечай СТРОГО JSON-массивом, без пояснений, markdown или текста до/после. '
+  + 'Формат каждого элемента: {"title": string, "type": "Weekly"|"Monthly"|"Goal", "difficulty": "Easy"|"Normal"|"Hard", '
+  + '"stat": одно из [physical,discipline,knowledge,focus,finance,career,creator,social,mental], "dueInDays": number}. '
+  + 'dueInDays — через сколько дней от сегодня стоит завершить этот шаг; шаги должны идти по возрастанию и укладываться в срок цели.';
+
+const GOAL_REALITY_SYSTEM_PROMPT = 'Ты — Reality Check Engine в приложении Life RPG. Пользователь даёт крупную цель с дедлайном и текущим прогрессом. '
+  + 'Оцени реалистичность и предложи РОВНО 3 сценария: "Агрессивный" (быстрее исходного срока, выше риск не удержать темп), '
+  + '"Реалистичный" (сбалансированный, ближе всего к здравому смыслу) и "Безопасный" (более мягкий срок, ниже риск выгорания). '
+  + 'Отвечай СТРОГО одним JSON-объектом без пояснений и markdown, формат: '
+  + '{"scenarios": [{"name": string, "pace": string, "probability": string, "risks": string, "deadlineDays": number}]}. '
+  + 'pace — краткое описание темпа в 1 фразе, probability — вероятность успеха словами ("высокая"/"средняя"/"низкая"), '
+  + 'risks — главный риск в 1 фразе, deadlineDays — предлагаемый срок в днях от сегодня для этого сценария.';
+
+const GOAL_DEADLINE_PRESETS = [
+  { key: 'w', label: 'Неделя', days: 7 }, { key: 'm', label: 'Месяц', days: 30 },
+  { key: 'q', label: '3 месяца', days: 91 }, { key: 'y', label: 'Год', days: 365 }, { key: 'none', label: 'Без срока', days: null },
+];
+const isoInDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+
+function GoalForm({ onSubmit, onCancel }) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [sphere, setSphere] = useState(SPHERES[0]);
+  const [deadline, setDeadline] = useState(isoInDays(30));
+  const [split, setSplit] = useState(true);
+  const ok = title.trim().length > 0;
+  return (
+    <div className="lrpg-paper gs-pop" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold }}>Новый поход</div>
+          <div className="lrpg-display" style={{ fontSize: 20, fontWeight: 700 }}>Какую вершину берём?</div>
+        </div>
+        <button className="lrpg-btn" aria-label="Закрыть" onClick={onCancel} style={{ background: 'none', padding: 4 }}><X size={18} color={COLORS.textMuted} /></button>
+      </div>
+      <input className="lrpg-input" autoFocus placeholder="Например: пробежать полумарафон" value={title} onChange={e => setTitle(e.target.value)} />
+      <textarea className="lrpg-input" placeholder="Зачем это тебе? (поможет ИИ составить план)" value={description} onChange={e => setDescription(e.target.value)} rows={2} />
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, marginBottom: 6 }}>Земля похода</div>
+        <SpherePicker value={sphere} onChange={setSphere} spheres={SPHERES} />
+      </div>
+      <div>
+        <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, marginBottom: 6 }}>Срок</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {GOAL_DEADLINE_PRESETS.map(p => {
+            const val = p.days === null ? '' : isoInDays(p.days);
+            const on = deadline === val;
+            return (
+              <button key={p.key} type="button" className="lrpg-btn" onClick={() => setDeadline(val)} aria-pressed={on} style={{
+                padding: '6px 10px', borderRadius: 99, fontSize: 12, fontWeight: 600,
+                background: on ? COLORS.text : COLORS.bgCard, color: on ? COLORS.bg : COLORS.text, border: `1px solid ${on ? COLORS.text : COLORS.border}`,
+              }}>{p.label}</button>
+            );
+          })}
+        </div>
+        <input className="lrpg-input" type="date" value={deadline} onChange={e => setDeadline(e.target.value)} style={{ marginTop: 8 }} />
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: COLORS.text }}>
+        <input type="checkbox" checked={split} onChange={e => setSplit(e.target.checked)} style={{ accentColor: COLORS.gold, width: 16, height: 16 }} />
+        Сразу проложить тропу: ИИ разобьёт цель на шаги-квесты
+      </label>
+      <button className="lrpg-btn" disabled={!ok} onClick={() => onSubmit({ title: title.trim(), description: description.trim(), sphere, deadline }, split)} style={{
+        background: COLORS.gold, color: '#fbf9f4', borderRadius: 12, padding: '12px 0', fontWeight: 700, fontSize: 15, opacity: ok ? 1 : 0.5,
+        boxShadow: ok ? '0 3px 0 #7a2e1c' : 'none',
+      }}>Отправиться в поход</button>
+    </div>
+  );
+}
+
+function GoalsHub({ state, goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgress, deleteGoal, addQuestsFromGoal, setGoalDeadline, resolveAbandonedGoal, completeQuest, sub, setSub }) {
+  useGoalsCss();
+  const tab = ['all', 'week', 'month', 'long', 'trophies'].includes(sub) ? sub : 'all';
+  const [hi, setHi] = useHighlight();
+  const [busy, setBusy] = useState({});
+  const [aiNote, setAiNote] = useState({});
+  const [reality, setReality] = useState({});
+  const [fine, setFine] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [confirmTop, setConfirmTop] = useState(null);
+
   const now = new Date();
-  const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + 7);
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const open = goals.filter(g => g.progress < 100);
+  const done = goals.filter(g => g.progress >= 100).sort((a, b) => (b.completedAt || b.updatedAt || 0) - (a.completedAt || a.updatedAt || 0));
+  const byHorizon = {
+    all: open,
+    week: open.filter(g => { const d = daysLeft(g.deadline); return d !== null && d <= 7; }),
+    month: open.filter(g => g.deadline && new Date(g.deadline) <= monthEnd),
+    long: open.filter(g => !g.deadline || new Date(g.deadline) > monthEnd),
+  };
+  const ordered = [...open].sort((a, b) => {
+    const da = daysLeft(a.deadline), db = daysLeft(b.deadline);
+    return (da === null ? 1e6 : da) - (db === null ? 1e6 : db);
+  });
+  const list = tab === 'all' ? ordered : ordered.filter(g => (byHorizon[tab] || []).includes(g));
+  const linkedOf = (g) => (state.quests || []).filter(q => q.goalId === g.id);
+  const nextSteps = ordered.map(g => {
+    const q = linkedOf(g).filter(x => x.status === 'active').sort((a, b) => new Date(a.deadline || 0) - new Date(b.deadline || 0))[0];
+    return q ? { g, q } : null;
+  }).filter(Boolean).slice(0, 3);
 
-  const openGoals = goals.filter(g => g.progress < 100);
-  const weekGoals = openGoals.filter(g => g.deadline && new Date(g.deadline) <= weekEnd);
-  const monthGoals = openGoals.filter(g => g.deadline && new Date(g.deadline) <= monthEnd);
-  const longGoals = openGoals.filter(g => !g.deadline || new Date(g.deadline) > monthEnd);
+  const hour = now.getHours();
+  const night = hour >= 21 || hour < 6;
+  const nearest = ordered.find(g => g.deadline);
+  const abandoned = open.filter(g => daysBetween(new Date(g.updatedAt || g.createdAt || Date.now()).toISOString().slice(0, 10), todayStr()) >= 14);
+  const intens = open.filter(g => g.deadline).map(g => ({ g, perWeek: (100 - g.progress) / (Math.max(0.5, (new Date(g.deadline) - Date.now()) / 86400000) / 7) }));
+  const hot = intens.filter(i => i.perWeek > 40);
+  const hoursNeeded = Math.round(intens.reduce((s, i) => s + i.perWeek / 10, 0));
+  const overBudget = state.availableHoursPerWeek && hoursNeeded > state.availableHoursPerWeek;
 
-  const list = sub === 'week' ? weekGoals : sub === 'month' ? monthGoals : longGoals;
+  function pick(id) {
+    gameFeedback('BUTTON_PRESS');
+    if (tab !== 'all' && !list.some(g => g.id === id)) setSub('all');
+    setHi(id);
+    setTimeout(() => { const el = document.getElementById('goal-' + id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 60);
+  }
+
+  const ctx = (g) => `Цель: "${g.title}"\nОписание: ${g.description || '—'}\nСфера: ${g.sphere}\nДедлайн: ${g.deadline || 'не указан'}\nТекущий прогресс: ${g.progress}%\n\nКонтекст персонажа:\n${buildContextSummary(state)}`;
+
+  async function breakdown(g) {
+    setBusy(b => ({ ...b, [g.id]: 'split' }));
+    setAiNote(n => ({ ...n, [g.id]: null }));
+    try {
+      const text = await callClaudeAPIWithRetry(GOAL_ENGINE_SYSTEM_PROMPT, [{ role: 'user', content: ctx(g) }]);
+      const specs = parseJsonLoose(text);
+      if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: model returned no valid steps');
+      addQuestsFromGoal(g, normalizeGoalSteps(specs, g));
+      gameFeedback('ITEM_UNLOCK');
+    } catch (e) {
+      setAiNote(n => ({ ...n, [g.id]: friendlyAIError(e) }));
+    } finally {
+      setBusy(b => ({ ...b, [g.id]: null }));
+    }
+  }
+  function offlinePlan(g) {
+    addQuestsFromGoal(g, normalizeGoalSteps(ruleBasedGoalSplit(g), g));
+    setAiNote(n => ({ ...n, [g.id]: null }));
+    gameFeedback('ITEM_UNLOCK');
+  }
+  async function realityCheck(g) {
+    setBusy(b => ({ ...b, [g.id]: 'reality' }));
+    setReality(r => ({ ...r, [g.id]: null }));
+    try {
+      const text = await callClaudeAPIWithRetry(GOAL_REALITY_SYSTEM_PROMPT, [{ role: 'user', content: ctx(g) }]);
+      const parsed = parseJsonObjectLoose(text);
+      if (!parsed || !Array.isArray(parsed.scenarios) || !parsed.scenarios.length) throw new Error('EMPTY: no scenarios returned');
+      setReality(r => ({ ...r, [g.id]: { scenarios: parsed.scenarios.slice(0, 3) } }));
+    } catch (e) {
+      setReality(r => ({ ...r, [g.id]: { error: friendlyAIError(e) } }));
+    } finally {
+      setBusy(b => ({ ...b, [g.id]: null }));
+    }
+  }
+  function takeScenario(g, sc) {
+    if (sc.deadlineDays) setGoalDeadline(g.id, isoInDays(Math.max(1, Math.round(sc.deadlineDays))));
+    setReality(r => ({ ...r, [g.id]: null }));
+    gameFeedback('BUTTON_PRESS');
+  }
+  function bump(g, delta) {
+    const val = Math.min(99, g.progress + delta);
+    if (val <= g.progress) return;
+    gameFeedback('BUTTON_PRESS');
+    updateGoalProgress(g.id, val);
+  }
+  function submitGoal(data, split) {
+    const id = uid();
+    const goal = { ...data, id, progress: 0, createdAt: Date.now() };
+    addGoal({ ...data, id });
+    gameFeedback('ITEM_UNLOCK');
+    if (split) setTimeout(() => breakdown(goal), 50);
+    setSub('all');
+    setTimeout(() => pick(id), 120);
+  }
+
+  const smallBtn = (color) => ({ background: COLORS.bgCard, color: color || COLORS.text, border: `1px solid ${color ? color + '55' : COLORS.border}`, borderRadius: 10, padding: '7px 10px', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 });
 
   return (
     <div>
-      <ScreenHeader title="Цели" icon={Target} />
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
+        <div>
+          <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.textMuted }}>Атлас походов · {open.length} {plural(open.length, 'активный', 'активных', 'активных')}</div>
+          <div className="lrpg-display" style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.05, marginTop: 2 }}>Цели</div>
+        </div>
+        <button className="lrpg-btn" onClick={() => setSub('trophies')} aria-label="Зал трофеев" style={{ display: 'flex', alignItems: 'center', gap: 6, background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: '5px 10px 5px 6px' }}>
+          <TrophyCup color={COLORS.gold} size={24} />
+          <span style={{ textAlign: 'left' }}>
+            <span className="lrpg-num" style={{ display: 'block', fontSize: 16, fontWeight: 800, lineHeight: 1 }}>{done.length}</span>
+            <span className="lrpg-mono" style={{ fontSize: 7.5, color: COLORS.textMuted }}>{plural(done.length, 'вершина', 'вершины', 'вершин')}</span>
+          </span>
+        </button>
+      </div>
+
+      <div className="lrpg-paper lrpg-stagger" style={{ overflow: 'hidden', marginBottom: 12 }}>
+        <RidgePanorama goals={ordered} onPick={pick} summits={done.length} night={night} />
+        <div style={{ padding: '10px 14px 12px', borderTop: `1px solid ${COLORS.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ fontSize: 13.5, color: '#4a4e5a', lineHeight: 1.35, minWidth: 0 }}>
+            {open.length === 0
+              ? 'Хребет пуст. Выбери первую вершину, и на карте вырастет гора.'
+              : nearest
+                ? <>Ближайший срок: <b style={{ color: COLORS.text }}>{nearest.title}</b> · {(() => { const d = daysLeft(nearest.deadline); return d < 0 ? 'просрочено' : d === 0 ? 'сегодня' : `${d} ${plural(d, 'день', 'дня', 'дней')}`; })()}</>
+                : <>Тапни по горе, чтобы открыть поход. Сроков пока нет.</>}
+          </div>
+          <button className="lrpg-btn" onClick={() => { gameFeedback('SHEET_OPEN'); setShowAddGoal(true); }} style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, background: COLORS.gold, color: '#fbf9f4', borderRadius: 12, padding: '9px 12px', fontSize: 13, fontWeight: 700, boxShadow: '0 3px 0 #7a2e1c' }}>
+            <Plus size={15} /> Поход
+          </button>
+        </div>
+      </div>
+
+      {showAddGoal && <div style={{ marginBottom: 12 }}><GoalForm onSubmit={submitGoal} onCancel={() => setShowAddGoal(false)} /></div>}
+
       <PillTabs
-        options={[{ key: 'today', label: 'Сегодня' }, { key: 'week', label: 'Неделя' }, { key: 'month', label: 'Месяц' }, { key: 'long', label: 'Долгосрочные' }]}
-        active={sub} onChange={setSub}
+        options={[{ key: 'all', label: 'Все' }, { key: 'week', label: 'Неделя' }, { key: 'month', label: 'Месяц' }, { key: 'long', label: 'Долгие' }]}
+        active={tab} onChange={setSub}
       />
 
-      {sub === 'today' && (
-        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, fontWeight: 700 }}>Мои цели</span>
-            <button className="lrpg-btn" onClick={() => { setSub('long'); setShowAddGoal(true); }} style={{ background: 'none', color: COLORS.violet, fontSize: 12, fontWeight: 700 }}>+ Добавить</button>
+      {tab === 'trophies' ? (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span className="lrpg-display" style={{ fontSize: 18, fontWeight: 700 }}>Зал трофеев</span>
+            <button className="lrpg-btn" onClick={() => setSub('all')} style={{ background: 'none', color: COLORS.gold, fontSize: 13, fontWeight: 700 }}>← К походам</button>
           </div>
-          {openGoals.slice(0, 4).map(g => (
-            <div key={g.id} className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>{g.title}</div>
-              <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '4px 0 6px' }}>Прогресс: {g.progress}%{g.deadline ? ` · до ${g.deadline}` : ''}</div>
-              <Bar value={g.progress} max={100} color={COLORS.violet} height={6} />
-            </div>
-          ))}
+          <TrophyShelf goals={done} />
         </div>
-      )}
-
-      {sub !== 'today' && (
-        <div style={{ marginTop: 12 }}>
-          {list.length === 0 && sub !== 'long' && (
-            <div className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 14, fontSize: 12, color: COLORS.textMuted, marginBottom: 10 }}>
-              Нет целей на этот горизонт. Долгосрочные цели живут в последней вкладке.
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+          {tab === 'all' && nextSteps.length > 0 && (
+            <div className="lrpg-paper lrpg-stagger" style={{ padding: '10px 12px' }}>
+              <div className="lrpg-mono" style={{ fontSize: 9, color: COLORS.gold, marginBottom: 6 }}>Следующий шаг по тропе</div>
+              {nextSteps.map(({ g, q }, i) => (
+                <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: i ? `1px dashed ${COLORS.border}` : 'none' }}>
+                  <PixelIcon kind={sphereMeta(g.sphere).stat} color={sphereMeta(g.sphere).color} size={16} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.title}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.title}{q.deadline ? ` · до ${new Date(q.deadline).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}` : ''}</div>
+                  </div>
+                  {completeQuest && <button className="lrpg-btn" onClick={() => completeQuest(q)} style={{ background: COLORS.text, color: COLORS.bg, borderRadius: 10, padding: '7px 11px', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>Шаг</button>}
+                </div>
+              ))}
             </div>
           )}
-          {list.map(g => (
-            <div key={g.id} className="lrpg-glass lrpg-chamfer" style={{ borderRadius: 14, padding: 12, marginBottom: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>{g.title}</div>
-              <div style={{ fontSize: 10, color: COLORS.textMuted, margin: '4px 0 6px' }}>{g.progress}%{g.deadline ? ` · ${g.deadline}` : ''}</div>
-              <Bar value={g.progress} max={100} color={COLORS.teal} height={6} />
+
+          {abandoned.map(g => (
+            <div key={'ab' + g.id} className="lrpg-paper" style={{ padding: 12, background: '#f7efd9', borderColor: '#e2cf9e', position: 'relative' }}>
+              <span aria-hidden="true" style={{ position: 'absolute', top: -5, left: 18, width: 10, height: 10, borderRadius: '50%', background: COLORS.crimson, boxShadow: 'inset -2px -2px 0 rgba(0,0,0,.2)' }} />
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.gold }}>Записка проводника</div>
+              <div style={{ fontSize: 13.5, lineHeight: 1.45, marginTop: 3 }}>Тропа к «{g.title}» зарастает: 14+ дней без движения ({g.progress}%). Что делаем?</div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'resume')} style={smallBtn()}>Иду дальше</button>
+                <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'extend')} style={smallBtn(COLORS.teal)}>+30 дней</button>
+                <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'reduce')} style={smallBtn(COLORS.gold)}>Засчитать как есть</button>
+                <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'abandon')} style={smallBtn(COLORS.crimson)}>Свернуть лагерь</button>
+              </div>
             </div>
           ))}
-          <GoalsTab
-            goals={goals} showAddGoal={showAddGoal} setShowAddGoal={setShowAddGoal}
-            addGoal={addGoal} updateGoalProgress={updateGoalProgress} deleteGoal={deleteGoal}
-            addQuestsFromGoal={addQuestsFromGoal} state={state}
-            setGoalDeadline={setGoalDeadline} resolveAbandonedGoal={resolveAbandonedGoal}
-          />
+
+          {(hot.length >= 2 || overBudget) && (
+            <div className="lrpg-paper" style={{ padding: 12, background: '#f6e4dc', borderColor: '#e2b9a8' }}>
+              <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.crimson }}>Перегруз на тропах</div>
+              {hot.length >= 2 && <div style={{ fontSize: 13, lineHeight: 1.45, marginTop: 3 }}>Сразу {hot.length} похода требуют высокого темпа: {hot.map(i => `«${i.g.title}»`).join(', ')}. Сдвинь сроки или выбери главный.</div>}
+              {overBudget && <div style={{ fontSize: 13, lineHeight: 1.45, marginTop: 4 }}>Нужно около {hoursNeeded} ч в неделю, а свободно {state.availableHoursPerWeek} ч. Оценка грубая, но стоит свериться.</div>}
+            </div>
+          )}
+
+          {list.length === 0 && (
+            <div className="lrpg-paper" style={{ padding: 14, fontSize: 13.5, color: COLORS.textMuted, lineHeight: 1.45 }}>
+              {open.length === 0 ? 'Пока ни одного похода. Нажми «Поход», чтобы выбрать первую вершину.' : 'На этом горизонте походов нет. Загляни во «Все».'}
+            </div>
+          )}
+
+          {list.map((g, idx) => {
+            const m = sphereMeta(g.sphere);
+            const linked = linkedOf(g);
+            const stepsDone = linked.filter(q => q.status === 'completed').length;
+            const d = daysLeft(g.deadline);
+            const rem = 100 - g.progress;
+            const pace = d === null ? null : d < 0 ? 'Срок прошёл — продли его или пересобери план.' : d === 0 ? 'Сегодня последний день.' : `Темп: ~${Math.ceil(rem / Math.max(1, d / 7))}% в неделю, чтобы успеть.`;
+            const nextCamp = GOAL_CAMPS.find(c => c.at > g.progress);
+            const r = reality[g.id];
+            return (
+              <div key={g.id} id={'goal-' + g.id} className={'lrpg-paper lrpg-stagger' + (hi === g.id ? ' gs-hi' : '')} style={{ overflow: 'hidden', animationDelay: `${Math.min(idx, 6) * 0.04}s` }}>
+                <div style={{ display: 'flex', gap: 10, padding: '12px 12px 8px', alignItems: 'flex-start' }}>
+                  <span style={{ width: 26, height: 26, borderRadius: 8, background: m.color + '1c', border: `1px solid ${m.color}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span className="lrpg-num" style={{ fontSize: 12, fontWeight: 800, color: m.color }}>{ordered.indexOf(g) + 1}</span>
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="lrpg-mono" style={{ fontSize: 8.5, color: m.color }}>{m.ru}{nextCamp ? ` · до лагеря ${nextCamp.at}%` : ' · штурм вершины'}</div>
+                    <div className="lrpg-display" style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2, marginTop: 1 }}>{g.title}</div>
+                    {g.description && <div style={{ fontSize: 12.5, color: COLORS.textMuted, marginTop: 3, fontStyle: 'italic', lineHeight: 1.35 }}>{g.description}</div>}
+                  </div>
+                  <DeadlineSeal deadline={g.deadline} />
+                </div>
+                <div style={{ borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}` }}>
+                  <GoalTrail progress={g.progress} color={m.color} />
+                </div>
+                <div style={{ padding: '10px 12px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                    <span className="lrpg-num" style={{ fontSize: 22, fontWeight: 800 }}>{g.progress}<span style={{ fontSize: 13, color: COLORS.textMuted }}>%</span></span>
+                    {pace && <span style={{ fontSize: 12, color: d !== null && d <= 3 ? COLORS.crimson : COLORS.textMuted, textAlign: 'right' }}>{pace}</span>}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                    {[5, 10, 25].map(n => (
+                      <button key={n} className="lrpg-btn" disabled={g.progress >= 99} onClick={() => bump(g, n)} style={{ ...smallBtn(), flex: 1, opacity: g.progress >= 99 ? .5 : 1 }}>+{n}%</button>
+                    ))}
+                    <button className="lrpg-btn" aria-label="Точная настройка" onClick={() => setFine(fine === g.id ? null : g.id)} style={{ ...smallBtn(), background: fine === g.id ? COLORS.bgCardAlt : COLORS.bgCard }}><SlidersHorizontal size={14} /></button>
+                  </div>
+                  {fine === g.id && <GoalProgressControl goal={g} updateGoalProgress={updateGoalProgress} />}
+                  {g.progress >= 75 && (
+                    confirmTop === g.id ? (
+                      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, background: COLORS.goldSoft, borderRadius: 10, padding: '8px 10px' }}>
+                        <span style={{ flex: 1, fontSize: 12.5 }}>Цель правда достигнута?</span>
+                        <button className="lrpg-btn" onClick={() => { setConfirmTop(null); updateGoalProgress(g.id, 100); }} style={{ background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700 }}>Да!</button>
+                        <button className="lrpg-btn" onClick={() => setConfirmTop(null)} style={{ ...smallBtn(), padding: '6px 10px' }}>Нет</button>
+                      </div>
+                    ) : (
+                      <button className="lrpg-btn ag-pulse" onClick={() => setConfirmTop(g.id)} style={{ marginTop: 8, width: '100%', background: COLORS.gold, color: '#fbf9f4', borderRadius: 12, padding: '10px 0', fontSize: 14, fontWeight: 700, boxShadow: '0 3px 0 #7a2e1c' }}>
+                        Водрузить флаг на вершине
+                      </button>
+                    )
+                  )}
+
+                  {linked.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.textMuted, marginBottom: 5 }}>Шаги тропы · {stepsDone}/{linked.length}</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {[...linked].sort((a, b) => new Date(a.deadline || 0) - new Date(b.deadline || 0)).map(q => {
+                          const qd = q.status === 'completed';
+                          const gone = q.status !== 'active' && !qd;
+                          return (
+                            <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, background: qd ? 'rgba(63,122,74,.08)' : COLORS.bgCardAlt, opacity: gone ? .55 : 1 }}>
+                              <span style={{ width: 14, height: 14, flexShrink: 0, border: `1.5px solid ${qd ? COLORS.green : COLORS.textMuted}`, background: qd ? COLORS.green : 'transparent', borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                {qd && <Check size={10} color="#fbf9f4" strokeWidth={3} />}
+                              </span>
+                              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, textDecoration: qd ? 'line-through' : 'none', color: qd ? COLORS.textMuted : COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.title}</span>
+                              {q.status === 'active' && completeQuest && <button className="lrpg-btn" onClick={() => completeQuest(q)} aria-label={`Выполнить: ${q.title}`} style={{ background: 'none', color: COLORS.gold, fontSize: 11.5, fontWeight: 700, padding: '0 2px', flexShrink: 0 }}>готово</button>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 5 }}>Каждый выполненный шаг сам двигает героя по тропе.</div>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                    <button className="lrpg-btn" disabled={!!busy[g.id]} onClick={() => breakdown(g)} style={{ ...smallBtn(COLORS.violet), flex: 1.4, opacity: busy[g.id] ? .6 : 1 }}>
+                      <Wand2 size={13} /> {busy[g.id] === 'split' ? 'Прокладываю…' : linked.length ? 'Ещё шаги' : 'Проложить тропу'}
+                    </button>
+                    <button className="lrpg-btn" disabled={!!busy[g.id] || !g.deadline} onClick={() => realityCheck(g)} title={g.deadline ? '' : 'Нужен срок'} style={{ ...smallBtn(COLORS.teal), flex: 1, opacity: busy[g.id] || !g.deadline ? .5 : 1 }}>
+                      <Compass size={13} /> {busy[g.id] === 'reality' ? 'Смотрю…' : 'Реально?'}
+                    </button>
+                    {confirmDel === g.id ? (
+                      <button className="lrpg-btn" onClick={() => { setConfirmDel(null); deleteGoal(g.id); }} style={{ ...smallBtn(COLORS.crimson), background: COLORS.crimsonSoft }}>Удалить?</button>
+                    ) : (
+                      <button className="lrpg-btn" aria-label="Удалить цель" onClick={() => { setConfirmDel(g.id); setTimeout(() => setConfirmDel(c => (c === g.id ? null : c)), 3000); }} style={smallBtn()}><Trash2 size={14} color={COLORS.textMuted} /></button>
+                    )}
+                  </div>
+
+                  {aiNote[g.id] && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 10, padding: '8px 10px' }}>
+                      ИИ не ответил: {aiNote[g.id]}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                        <button className="lrpg-btn" onClick={() => breakdown(g)} style={{ ...smallBtn(COLORS.violet), flex: 1 }}>Повторить</button>
+                        <button className="lrpg-btn" onClick={() => offlinePlan(g)} style={{ ...smallBtn(), flex: 1 }}>Простой план</button>
+                      </div>
+                    </div>
+                  )}
+                  {r && r.error && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 10, padding: '8px 10px' }}>
+                      ИИ не ответил: {r.error}
+                      <button className="lrpg-btn" onClick={() => realityCheck(g)} style={{ ...smallBtn(COLORS.teal), marginTop: 6, width: '100%' }}>Повторить</button>
+                    </div>
+                  )}
+                  {r && r.scenarios && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                      <div className="lrpg-mono" style={{ fontSize: 8.5, color: COLORS.teal }}>Три маршрута к вершине</div>
+                      {r.scenarios.map((sc, i) => (
+                        <div key={i} style={{ background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: '8px 10px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+                            <span style={{ fontSize: 13.5, fontWeight: 700 }}>{sc.name}</span>
+                            <span className="lrpg-mono" style={{ fontSize: 8, color: COLORS.textMuted }}>шанс: {sc.probability}{sc.deadlineDays ? ` · ${sc.deadlineDays} дн.` : ''}</span>
+                          </div>
+                          <div style={{ fontSize: 12.5, marginTop: 3, lineHeight: 1.4 }}>{sc.pace}</div>
+                          {sc.risks && <div style={{ fontSize: 12, color: COLORS.crimson, marginTop: 2 }}>Риск: {sc.risks}</div>}
+                          {sc.deadlineDays ? <button className="lrpg-btn" onClick={() => takeScenario(g, sc)} style={{ ...smallBtn(COLORS.teal), marginTop: 6, padding: '5px 10px' }}>Взять этот срок</button> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -4350,9 +4699,10 @@ export default function LifeRPG() {
     return () => clearTimeout(timer);
   }, [loaded, hasExportedThisSession]);
   const [tab, setTab] = useState('home');
-  const [subTab, setSubTab] = useState({ actions: 'all', goals: 'today', progress: 'stats', profile: 'hub', more: 'shop' });
+  const [subTab, setSubTab] = useState({ actions: 'all', goals: 'all', progress: 'stats', profile: 'hub', more: 'shop' });
   const [showAddQuest, setShowAddQuest] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
+  const [goalFx, setGoalFx] = useState(null);
   const [showAddReward, setShowAddReward] = useState(false);
   const [skipTarget, setSkipTarget] = useState(null);
   const [levelUpFlash, setLevelUpFlash] = useState(null);
@@ -4631,7 +4981,8 @@ export default function LifeRPG() {
       }
       const ledger1 = applyCoinLedger(prev, 'earn', awardedCoins, 'quest', q.title, q.id);
       const ledger2 = bonusCoins > 0 ? applyCoinLedger({ ...prev, ...ledger1 }, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : ledger1;
-      return { ...prev, ...ledger2, character, stats, quests, chronicle };
+      const after = { ...prev, ...ledger2, character, stats, quests, chronicle };
+      return q.goalId ? advanceGoalByQuest(after, q.goalId) : after;
     });
     gameFeedback('QUEST_COMPLETE', { xp: Math.max(1, Math.round(q.xp)), coins: Math.max(0, Math.round(q.coins)) });
     if (q.xp) gameFeedback('XP_GAIN', { xp: Math.max(1, Math.round(q.xp)) });
@@ -4667,7 +5018,8 @@ export default function LifeRPG() {
         quests = prev.quests.map(x => x.id === id ? { ...x, bossHPRemaining: remaining } : x);
         chronicle = pushChronicle(chronicle, 'SYSTEM', `⚔️ Удар по «${q.title}»: -${amount} HP (осталось ${remaining})`);
       }
-      return { ...prev, quests, chronicle, character, stats, ...ledger };
+      const after = { ...prev, quests, chronicle, character, stats, ...ledger };
+      return defeated && q.goalId ? advanceGoalByQuest(after, q.goalId) : after;
     });
   }
 
@@ -4759,8 +5111,8 @@ export default function LifeRPG() {
     setState(prev => ({
       ...prev,
       goals: [...prev.goals, {
-        id: uid(), title: data.title, description: data.description,
-        deadline: data.deadline || null, sphere: data.sphere, progress: 0,
+        id: data.id || uid(), title: data.title, description: data.description,
+        deadline: data.deadline || null, sphere: data.sphere, progress: 0, camps: [],
         createdAt: Date.now(), updatedAt: Date.now(),
       }],
       chronicle: pushChronicle(prev.chronicle, 'GOAL_CREATED', `Новая цель: ${data.title}`),
@@ -4768,17 +5120,70 @@ export default function LifeRPG() {
     setShowAddGoal(false);
   }
 
-  function updateGoalProgress(id, val) {
-    setState(prev => {
-      const goal = prev.goals.find(g => g.id === id);
-      const wasComplete = goal.progress >= 100;
-      const goals = prev.goals.map(g => g.id === id ? { ...g, progress: val, updatedAt: Date.now() } : g);
-      let chronicle = prev.chronicle;
-      if (val >= 100 && !wasComplete) {
-        chronicle = pushChronicle(chronicle, 'GOAL_COMPLETED', `Цель достигнута: ${goal.title}!`);
+  // Прогресс цели: лагеря 25/50/75 % и вершина 100 % дают награды один раз за цель.
+  // auto — шаг пришёл от выполненного квеста (реальная работа); ручной ползунок у «молодой» цели (<12 ч) наград не даёт.
+  function goalProgressState(prev, id, value, auto) {
+    const goal = prev.goals.find(g => g.id === id);
+    if (!goal) return prev;
+    const val = Math.max(0, Math.min(100, Math.round(value)));
+    const old = goal.progress || 0;
+    const young = !auto && Date.now() - (goal.createdAt || 0) < 12 * 3600 * 1000;
+    const paid = goal.camps || [];
+    const crossed = GOAL_CAMPS.filter(c => c.at <= val && c.at > old);
+    const toPay = young ? [] : crossed.filter(c => !paid.includes(c.at));
+    const summit = val >= 100 && old < 100;
+    const paySummit = summit && !young && !goal.summitPaid;
+    let coins = toPay.reduce((sum, c) => sum + c.coins, 0) + (paySummit ? GOAL_SUMMIT.coins : 0);
+    const xp = paySummit ? GOAL_SUMMIT.xp : 0;
+    let levelAfter = null;
+    const nextGoal = {
+      ...goal, progress: val, updatedAt: Date.now(),
+      camps: [...paid, ...toPay.map(c => c.at)],
+      summitPaid: goal.summitPaid || paySummit,
+      completedAt: summit ? Date.now() : (val < 100 ? null : goal.completedAt),
+    };
+    let next = { ...prev, goals: prev.goals.map(g => g.id === id ? nextGoal : g) };
+    let chronicle = next.chronicle;
+    crossed.forEach(c => { chronicle = pushChronicle(chronicle, 'SYSTEM', `⛺ ${c.name} в походе «${goal.title}» (${c.at}%)`); });
+    if (summit) chronicle = pushChronicle(chronicle, 'GOAL_COMPLETED', `🏔 Цель достигнута: ${goal.title}!${paySummit ? ` (+${GOAL_SUMMIT.coins} монет, +${GOAL_SUMMIT.xp} XP)` : ''}`);
+    if (xp) {
+      const res = applyXP(next.character, xp);
+      next = { ...next, character: res.character };
+      coins += res.bonusCoins || 0;
+      if (res.leveledUp) {
+        chronicle = pushChronicle(chronicle, 'LEVEL_UP', `Level Up! Теперь ты ${res.character.level} уровня.`);
+        levelAfter = res.character.level;
       }
-      return { ...prev, goals, chronicle };
-    });
+    }
+    if (coins > 0) next = { ...next, ...applyCoinLedger(next, 'earn', coins, 'goal', goal.title, goal.id) };
+    next.chronicle = chronicle;
+    if (summit) setGoalFx({ kind: 'summit', goal: nextGoal, coins, xp, young: young && !goal.summitPaid, levelUp: levelAfter });
+    else if (crossed.length) setGoalFx({ kind: 'camp', goal: nextGoal, camp: crossed[crossed.length - 1], coins, xp: 0, young: young && crossed.some(c => !paid.includes(c.at)) });
+    return next;
+  }
+
+  // Выполненный шаг цели двигает героя: делим остаток до 90 % между оставшимися шагами. Последний рывок — вручную.
+  function advanceGoalByQuest(prev, goalId) {
+    const goal = prev.goals.find(g => g.id === goalId);
+    if (!goal || goal.progress >= 90) return prev;
+    const left = prev.quests.filter(q => q.goalId === goalId && q.status === 'active').length + 1;
+    const inc = Math.max(1, Math.round((90 - goal.progress) / left));
+    return goalProgressState(prev, goalId, Math.min(90, goal.progress + inc), true);
+  }
+
+  // Новый уровень после вершины показываем, когда игрок закрыл церемонию, а не поверх неё.
+  function closeGoalFx() {
+    const lvl = goalFx && goalFx.levelUp;
+    setGoalFx(null);
+    if (lvl) {
+      setLevelUpFlash(lvl);
+      gameFeedback('LEVEL_UP', { level: lvl });
+      setTimeout(() => setLevelUpFlash(null), 3200);
+    }
+  }
+
+  function updateGoalProgress(id, val) {
+    setState(prev => goalProgressState(prev, id, val, false));
   }
 
   function setGoalDeadline(id, deadline) {
@@ -6140,7 +6545,7 @@ useEffect(() => {
     setSubTab(s => ({ ...s, profile: section || 'hub' }));
   }
 
-  const TAB_HOME = { home: null, actions: 'all', goals: 'today', progress: 'stats', profile: 'hub' };
+  const TAB_HOME = { home: null, actions: 'all', goals: 'all', progress: 'stats', profile: 'hub' };
   function goMainTab(key) {
     if (key !== tab) gameFeedback('NAV');
     setTab(key);
@@ -6386,6 +6791,11 @@ useEffect(() => {
       `}</style>
 
 
+      {goalFx && (
+        <GoalCeremony key={goalFx.goal.id + goalFx.kind + (goalFx.camp ? goalFx.camp.at : '')} fx={goalFx} sound={(e) => gameFeedback(e)}
+          onClose={() => closeGoalFx()}
+          onTrophies={() => { closeGoalFx(); setTab('goals'); setSubTab(s => ({ ...s, goals: 'trophies' })); }} />
+      )}
       {levelUpFlash && (
         <div aria-live="polite" style={{ position: 'fixed', inset: 0, zIndex: 150, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'lrpg-lvl-wrap 3.2s ease both' }}>
           <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 45%, rgba(58,42,58,.82) 0%, rgba(30,34,48,.9) 60%, rgba(18,20,28,.94) 100%)' }} />
@@ -6454,8 +6864,8 @@ useEffect(() => {
               showAddGoal={showAddGoal} setShowAddGoal={setShowAddGoal}
               addGoal={addGoal} updateGoalProgress={updateGoalProgress} deleteGoal={deleteGoal}
               addQuestsFromGoal={addQuestsFromGoal} setGoalDeadline={setGoalDeadline}
-              resolveAbandonedGoal={resolveAbandonedGoal}
-              sub={subTab.goals || 'today'} setSub={k => setSubTab(s => ({ ...s, goals: k }))}
+              resolveAbandonedGoal={resolveAbandonedGoal} completeQuest={completeQuest}
+              sub={subTab.goals || 'all'} setSub={k => setSubTab(s => ({ ...s, goals: k }))}
             />
           )}
 
@@ -7737,239 +8147,6 @@ function GoalProgressControl({ goal, updateGoalProgress }) {
         </div>
       )}
     </div>
-  );
-}
-
-function GoalsTab({ goals, showAddGoal, setShowAddGoal, addGoal, updateGoalProgress, deleteGoal, addQuestsFromGoal, state, setGoalDeadline, resolveAbandonedGoal }) {
-  const [breakingId, setBreakingId] = useState(null);
-  const [fallbackNoticeId, setFallbackNoticeId] = useState(null);
-  const [fallbackReason, setFallbackReason] = useState(null);
-  const [checkingId, setCheckingId] = useState(null);
-  const [realityResults, setRealityResults] = useState({});
-  const [realityError, setRealityError] = useState({});
-
-  async function handleRealityCheck(goal) {
-    setCheckingId(goal.id);
-    setRealityError(e => ({ ...e, [goal.id]: null }));
-    try {
-      const userMsg = `Цель: "${goal.title}"\nОписание: ${goal.description || '—'}\nСфера: ${goal.sphere}\nТекущий дедлайн: ${goal.deadline || 'не указан'}\nТекущий прогресс: ${goal.progress}%\n\nКонтекст персонажа:\n${buildContextSummary(state)}`;
-      const text = await callClaudeAPIWithRetry(GOAL_REALITY_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
-      const parsed = parseJsonObjectLoose(text);
-      if (!parsed.scenarios || !Array.isArray(parsed.scenarios) || parsed.scenarios.length === 0) throw new Error('EMPTY: no scenarios returned');
-      setRealityResults(r => ({ ...r, [goal.id]: parsed.scenarios }));
-    } catch (e) {
-      setRealityError(er => ({ ...er, [goal.id]: friendlyAIError(e) }));
-    } finally {
-      setCheckingId(null);
-    }
-  }
-
-  function acceptScenario(goal, scenario) {
-    if (scenario.deadlineDays) {
-      const d = new Date(Date.now() + scenario.deadlineDays * 86400000);
-      setGoalDeadline(goal.id, d.toISOString().slice(0, 10));
-    }
-    setRealityResults(r => { const next = { ...r }; delete next[goal.id]; return next; });
-  }
-
-  async function handleBreakdown(goal) {
-    setBreakingId(goal.id);
-    setFallbackNoticeId(null);
-    setFallbackReason(null);
-    try {
-      const userMsg = `Цель: "${goal.title}"\nОписание: ${goal.description || '—'}\nСфера: ${goal.sphere}\nДедлайн: ${goal.deadline || 'не указан'}\nТекущий прогресс: ${goal.progress}%\n\nКонтекст персонажа:\n${buildContextSummary(state)}`;
-      const text = await callClaudeAPIWithRetry(GOAL_ENGINE_SYSTEM_PROMPT, [{ role: 'user', content: userMsg }]);
-      const specs = parseJsonLoose(text);
-      if (!Array.isArray(specs) || specs.length === 0) throw new Error('EMPTY: model returned no valid steps');
-      addQuestsFromGoal(goal, normalizeGoalSteps(specs, goal));
-    } catch (e) {
-      setFallbackNoticeId(goal.id);
-      setFallbackReason(friendlyAIError(e));
-    } finally {
-      setBreakingId(null);
-    }
-  }
-
-  function useOfflinePlan(goal) {
-    addQuestsFromGoal(goal, normalizeGoalSteps(ruleBasedGoalSplit(goal), goal));
-    setFallbackNoticeId(null);
-    setFallbackReason(null);
-  }
-
-  const activeWithDeadline = goals.filter(g => g.progress < 100 && g.deadline);
-  const intensities = activeWithDeadline.map(g => {
-    const daysLeft = Math.max(0.5, (new Date(g.deadline) - Date.now()) / 86400000);
-    const perWeek = (100 - g.progress) / (daysLeft / 7);
-    return { goal: g, perWeek };
-  });
-  const highIntensity = intensities.filter(i => i.perWeek > 40);
-  const estimatedHoursNeeded = Math.round(intensities.reduce((sum, i) => sum + i.perWeek / 10, 0));
-  const overBudget = state.availableHoursPerWeek && estimatedHoursNeeded > state.availableHoursPerWeek;
-  const hasConflict = highIntensity.length >= 2 || overBudget;
-  const abandonedGoals = goals.filter(g => g.progress < 100
-    && daysBetween(new Date(g.updatedAt || g.createdAt || Date.now()).toISOString().slice(0, 10), todayStr()) >= 14);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <button className="lrpg-btn" onClick={() => setShowAddGoal(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 10, padding: '10px 0', fontWeight: 700, fontSize: 13 }}>
-        <Plus size={16} /> Новая цель
-      </button>
-      {abandonedGoals.map(g => (
-        <Card key={g.id} style={{ border: `1px solid ${COLORS.gold}55`, background: COLORS.goldSoft }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <PauseCircle size={15} color={COLORS.gold} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ fontSize: 12, color: COLORS.text, lineHeight: 1.5 }}>
-              Цель «{g.title}» не двигалась 14+ дней ({g.progress}%). Что делаем?
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-            <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'resume')} style={{ background: COLORS.bgCardAlt, color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: '5px 10px', fontSize: 11, fontWeight: 700 }}>Продолжаю</button>
-            <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'extend')} style={{ background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`, borderRadius: 6, padding: '5px 10px', fontSize: 11, fontWeight: 700 }}>Продлить срок</button>
-            <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'reduce')} style={{ background: COLORS.bgCardAlt, color: COLORS.gold, border: `1px solid ${COLORS.gold}55`, borderRadius: 6, padding: '5px 10px', fontSize: 11, fontWeight: 700 }}>Принять как есть</button>
-            <button className="lrpg-btn" onClick={() => resolveAbandonedGoal(g.id, 'abandon')} style={{ background: COLORS.bgCardAlt, color: COLORS.crimson, border: `1px solid ${COLORS.crimson}55`, borderRadius: 6, padding: '5px 10px', fontSize: 11, fontWeight: 700 }}>Отменить цель</button>
-          </div>
-        </Card>
-      ))}
-      {hasConflict && (
-        <Card style={{ border: `1px solid ${COLORS.crimson}55`, background: COLORS.crimsonSoft }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <AlertTriangle size={15} color={COLORS.crimson} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ fontSize: 12, color: COLORS.text, lineHeight: 1.5 }}>
-              {highIntensity.length >= 2 && <div>Сразу {highIntensity.length} цели требуют высокого темпа одновременно: {highIntensity.map(i => `«${i.goal.title}»`).join(', ')}. Рассмотри приоритизацию или сдвиг сроков.</div>}
-              {overBudget && <div style={{ marginTop: highIntensity.length >= 2 ? 6 : 0 }}>Нужно примерно {estimatedHoursNeeded} ч/неделю на все цели, а указано свободного времени — {state.availableHoursPerWeek} ч. Это грубая оценка, но стоит свериться.</div>}
-            </div>
-          </div>
-        </Card>
-      )}
-      {showAddGoal && <AddGoalForm onSubmit={addGoal} onCancel={() => setShowAddGoal(false)} />}
-      {goals.length === 0 && <Card><div style={{ fontSize: 13, color: COLORS.textMuted }}>Целей пока нет.</div></Card>}
-      {goals.map(g => {
-        let realityText = null;
-        if (g.deadline) {
-          const daysLeft = Math.max(0, Math.ceil((new Date(g.deadline) - Date.now()) / 86400000));
-          const remaining = 100 - g.progress;
-          if (daysLeft > 0 && remaining > 0) {
-            const perWeek = (remaining / (daysLeft / 7)).toFixed(0);
-            realityText = `Нужно ~${perWeek}% прогресса в неделю, чтобы успеть к сроку.`;
-          } else if (daysLeft === 0 && remaining > 0) {
-            realityText = 'Срок наступил, а цель не завершена — стоит пересмотреть план.';
-          }
-        }
-        const linkedQuests = state.quests.filter(q => q.goalId === g.id);
-        return (
-          <Card key={g.id}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div style={{ fontWeight: 700 }}>{g.title}</div>
-                {g.sphere && <Tag color={COLORS.violet}>{g.sphere}</Tag>}
-              </div>
-              <button className="lrpg-btn" onClick={() => deleteGoal(g.id)} style={{ background: 'none' }}><Trash2 size={14} color={COLORS.textMuted} /></button>
-            </div>
-            {g.description && <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 6 }}>{g.description}</div>}
-            <div style={{ marginTop: 10 }}>
-              <Bar value={g.progress} color={g.progress >= 100 ? COLORS.gold : COLORS.violet} />
-              <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 4 }}>{g.progress}%{g.deadline ? ` · до ${fmtDeadline(g.deadline)}` : ''}</div>
-              <GoalProgressControl goal={g} updateGoalProgress={updateGoalProgress} />
-            </div>
-            {linkedQuests.length > 0 && (
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 5 }}>
-                <div style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Квесты этой цели ({linkedQuests.filter(q => q.status === 'active').length} активных)</div>
-                {[...linkedQuests].sort((a, b) => new Date(a.deadline || 0) - new Date(b.deadline || 0)).map(q => (
-                  <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, background: COLORS.bgCardAlt, borderRadius: 8, padding: '6px 8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      {q.status === 'done'
-                        ? <Check size={12} color={COLORS.teal} style={{ flexShrink: 0 }} />
-                        : <span style={{ width: 8, height: 8, borderRadius: 99, border: `1px solid ${COLORS.textMuted}`, flexShrink: 0 }} />}
-                      <span style={{ fontSize: 11, textDecoration: q.status === 'done' ? 'line-through' : 'none', color: q.status === 'done' ? COLORS.textMuted : COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.title}</span>
-                    </div>
-                    <Tag color={TYPE_COLOR[q.type]}>{TYPE_LABELS[q.type]}</Tag>
-                  </div>
-                ))}
-              </div>
-            )}
-            {realityText && <div style={{ fontSize: 11, color: COLORS.gold, marginTop: 8, fontStyle: 'italic' }}>{realityText}</div>}
-            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-              <button className="lrpg-btn" disabled={checkingId === g.id} onClick={() => handleRealityCheck(g)} style={{
-                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                background: COLORS.bgCardAlt, color: COLORS.teal, border: `1px solid ${COLORS.teal}55`,
-                borderRadius: 8, padding: '7px 0', fontWeight: 700, fontSize: 11, opacity: checkingId === g.id ? 0.6 : 1,
-              }}>
-                <Compass size={12} /> {checkingId === g.id ? 'Проверяю...' : 'Reality Check (AI)'}
-              </button>
-            </div>
-            {realityError[g.id] && (
-              <div style={{ fontSize: 10, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 8, padding: '5px 8px', marginTop: 6 }}>
-                AI не ответил. Причина: {realityError[g.id]}
-                <button className="lrpg-btn" onClick={() => handleRealityCheck(g)} style={{ display: 'block', marginTop: 4, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '4px 8px', fontSize: 10, fontWeight: 700 }}>Повторить</button>
-              </div>
-            )}
-            {realityResults[g.id] && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-                {realityResults[g.id].map((sc, i) => (
-                  <div key={i} style={{ background: COLORS.bgCardAlt, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: COLORS.gold }}>{sc.name}</span>
-                      <span style={{ fontSize: 10, color: COLORS.textMuted }}>Вероятность: {sc.probability}</span>
-                    </div>
-                    <div style={{ fontSize: 11, marginTop: 4 }}>{sc.pace}</div>
-                    <div style={{ fontSize: 10, color: COLORS.crimson, marginTop: 2 }}>Риск: {sc.risks}</div>
-                    <button className="lrpg-btn" onClick={() => acceptScenario(g, sc)} style={{ marginTop: 6, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '5px 10px', fontSize: 10, fontWeight: 700 }}>
-                      Принять этот срок
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {g.progress < 100 && (
-              <button className="lrpg-btn" disabled={breakingId === g.id} onClick={() => handleBreakdown(g)} style={{
-                marginTop: 10, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                background: COLORS.bgCardAlt, color: COLORS.violet, border: `1px solid ${COLORS.violet}55`,
-                borderRadius: 8, padding: '8px 0', fontWeight: 700, fontSize: 12, opacity: breakingId === g.id ? 0.6 : 1,
-              }}>
-                <Wand2 size={13} /> {breakingId === g.id ? 'AI собирает план...' : linkedQuests.length > 0 ? `Разбить ещё раз (уже ${linkedQuests.length} квестов)` : 'Разбить на квесты (AI)'}
-              </button>
-            )}
-            {fallbackNoticeId === g.id && (
-              <div style={{ marginTop: 6, fontSize: 10, color: COLORS.crimson, background: COLORS.crimsonSoft, borderRadius: 8, padding: '6px 8px' }}>
-                <div>AI сейчас не ответил. Причина: {fallbackReason}</div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                  <button className="lrpg-btn" onClick={() => handleBreakdown(g)} style={{ flex: 1, background: COLORS.violet, color: '#fbf9f4', borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700 }}>Повторить</button>
-                  <button className="lrpg-btn" onClick={() => useOfflinePlan(g)} style={{ flex: 1, background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 6, padding: '5px 0', fontSize: 10, fontWeight: 700, border: `1px solid ${COLORS.border}` }}>Взять простой план</button>
-                </div>
-              </div>
-            )}
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
-function AddGoalForm({ onSubmit, onCancel }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [sphere, setSphere] = useState(SPHERES[0]);
-  const [deadline, setDeadline] = useState('');
-  return (
-    <Card>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <input className="lrpg-input" placeholder="Название цели" value={title} onChange={e => setTitle(e.target.value)} />
-        <textarea className="lrpg-input" placeholder="Описание (необязательно)" value={description} onChange={e => setDescription(e.target.value)} rows={2} />
-        <select className="lrpg-input" value={sphere} onChange={e => setSphere(e.target.value)}>
-          {SPHERES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <input className="lrpg-input" type="date" value={deadline} onChange={e => setDeadline(e.target.value)} />
-        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-          <button className="lrpg-btn" disabled={!title.trim()} onClick={() => onSubmit({ title: title.trim(), description, sphere, deadline })}
-            style={{ flex: 1, background: COLORS.gold, color: '#fbf9f4', borderRadius: 8, padding: '9px 0', fontWeight: 700, fontSize: 13, opacity: title.trim() ? 1 : 0.5 }}>
-            Создать
-          </button>
-          <button className="lrpg-btn" onClick={onCancel} style={{ background: COLORS.bgCardAlt, color: COLORS.textMuted, borderRadius: 8, padding: '9px 14px', fontSize: 13, border: `1px solid ${COLORS.border}` }}>
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-    </Card>
   );
 }
 
