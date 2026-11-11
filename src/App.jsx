@@ -245,7 +245,9 @@ import { PixelRoomScene, RoomItemThumb, ROOM_SLOTS, ROOM_CATALOG, roomItemById, 
 //       плитки лавки для легендарок и мифов; новые тематические рамки (5) и ауры (6).
 // 17.2 — карта мира «Парящие острова»: 9 островов-стихий растут по стадиям, мосты, облака, небо по времени суток,
 //       вспышка острова при переходе на новую стадию.
-const APP_VERSION = '17.2';
+// 17.3 — чистка после аудита: обучающая плашка закрывается и показывается только в первый день, шапка и
+//       подсказки целиком на русском, диагностика без «undefined», подписи графика не обрезаются, сборка разбита на части.
+const APP_VERSION = '17.3';
 
 const COLORS = {
   // Бумажная тема (тёплый «журнальный» минимализм): кремовая бумага, чернильный текст, терракотовый акцент.
@@ -619,23 +621,23 @@ const BODY_TIERS = [
 ];
 
 const STATS_DEF = [
-  { key: 'physical', label: 'Physical', icon: Dumbbell },
-  { key: 'discipline', label: 'Discipline', icon: ShieldCheck },
-  { key: 'knowledge', label: 'Knowledge', icon: BookOpen },
-  { key: 'focus', label: 'Focus', icon: Crosshair },
-  { key: 'finance', label: 'Finance', icon: Wallet },
-  { key: 'career', label: 'Career', icon: Briefcase },
-  { key: 'creator', label: 'Creator', icon: Sparkles },
-  { key: 'social', label: 'Social', icon: Users },
-  { key: 'mental', label: 'Mental', icon: Brain },
+  { key: 'physical', label: 'Тело', icon: Dumbbell },
+  { key: 'discipline', label: 'Дисциплина', icon: ShieldCheck },
+  { key: 'knowledge', label: 'Знания', icon: BookOpen },
+  { key: 'focus', label: 'Фокус', icon: Crosshair },
+  { key: 'finance', label: 'Финансы', icon: Wallet },
+  { key: 'career', label: 'Карьера', icon: Briefcase },
+  { key: 'creator', label: 'Творчество', icon: Sparkles },
+  { key: 'social', label: 'Общение', icon: Users },
+  { key: 'mental', label: 'Разум', icon: Brain },
 ];
 
 const STAT_LABEL = Object.fromEntries(STATS_DEF.map(s => [s.key, s.label]));
 
 const TYPE_LABELS = {
-  Routine: 'Routine', Daily: 'Daily', Weekly: 'Weekly',
-  Bonus: 'Bonus', Monthly: 'Monthly Challenge', Goal: 'Goal Quest',
-  Event: 'Event Quest', Recovery: 'Recovery Quest', Boss: 'Boss Task',
+  Routine: 'Рутина', Daily: 'На день', Weekly: 'На неделю',
+  Bonus: 'Бонус', Monthly: 'Испытание месяца', Goal: 'Квест цели',
+  Event: 'Событие', Recovery: 'Восстановление', Boss: 'Босс',
 };
 
 const QUEST_TYPE_RU = {
@@ -710,11 +712,11 @@ const BONUS_POOL = [
 ];
 
 const MONTHLY_POOL = [
-  { title: 'Career Trial: завершить один крупный проект', stat: 'career' },
-  { title: 'Creator Trial: выпустить одну крупную работу', stat: 'creator' },
-  { title: 'Discipline Trial: 25 дней без пропусков рутины', stat: 'discipline' },
-  { title: 'Knowledge Trial: закончить курс или книгу', stat: 'knowledge' },
-  { title: 'Physical Trial: пройти месячную программу тренировок', stat: 'physical' },
+  { title: 'Испытание карьеры: завершить один крупный проект', stat: 'career' },
+  { title: 'Испытание творца: выпустить одну крупную работу', stat: 'creator' },
+  { title: 'Испытание воли: 25 дней без пропусков рутины', stat: 'discipline' },
+  { title: 'Испытание знаний: закончить курс или книгу', stat: 'knowledge' },
+  { title: 'Испытание тела: пройти месячную программу тренировок', stat: 'physical' },
 ];
 
 const RARITY_COLOR = {
@@ -2460,7 +2462,7 @@ function StatusStrip({ state, energy, weakestStat }) {
     { icon: Zap, label: 'Energy', value: eLabel.label, color: eLabel.color },
     { icon: weakestStat.icon, label: weakestStat.label, value: `${state.stats[weakestStat.key]}/100`, color: COLORS.violet },
   ];
-  if (aliveDebts.length > 0) chips.push({ icon: Skull, label: 'Debt Boss', value: `${aliveDebts.length} активн.`, color: COLORS.crimson });
+  if (aliveDebts.length > 0) chips.push({ icon: Skull, label: 'Долг-босс', value: `${aliveDebts.length} активн.`, color: COLORS.crimson });
   if (bestStreak > 0) chips.push({ icon: Flame, label: 'Streak', value: `${bestStreak}д`, color: COLORS.gold });
 
   return (
@@ -2530,16 +2532,16 @@ function CompactStatusRow({ state, energy, xpNeed }) {
       }}>
         {state.character.photo
           ? <img src={state.character.photo} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          : <span style={{ fontSize: 11, color: COLORS.textMuted }}>Lv</span>}
+          : <span className="lrpg-display" style={{ fontSize: 14, fontWeight: 700, color: COLORS.gold }}>{(state.character.name || 'Г').slice(0, 1)}</span>}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="lrpg-display" style={{ fontSize: 12, color: COLORS.gold, fontWeight: 700 }}>
-          Lv.{state.character.level} {state.character.name}
+          {state.character.name} · ур. {state.character.level}
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 3, fontSize: 10, color: COLORS.textMuted }}>
-          <span style={{ color: COLORS.crimson }}>HP {state.stats.physical}/100</span>
-          <span style={{ color: COLORS.teal }}>EN {energy}/100</span>
-          <span style={{ color: COLORS.gold }}>XP {state.character.xp}/{xpNeed}</span>
+          <span style={{ color: COLORS.crimson }}>Здоровье {Math.round(state.stats.physical)}</span>
+          <span style={{ color: COLORS.teal }}>Энергия {Math.round(energy)}</span>
+          <span style={{ color: COLORS.gold }}>Опыт {state.character.xp}/{xpNeed}</span>
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: COLORS.gold, fontWeight: 700, fontSize: 13 }}>
@@ -3583,7 +3585,7 @@ function ProgressHub({ state, energy, todayCheckin, setDailyCheckin, toggleRecov
         </div>
         <div style={{ height: 150 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={historyData} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
+            <AreaChart data={historyData} margin={{ top: 6, right: 6, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="progHist" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={STAT_COLOR[histStat] || '#a4412a'} stopOpacity={0.3} /><stop offset="100%" stopColor={STAT_COLOR[histStat] || '#a4412a'} stopOpacity={0} /></linearGradient>
               </defs>
@@ -5821,7 +5823,7 @@ export default function LifeRPG() {
             createdAt: Date.now(), category: data.category || 'debt_credit', history: [],
           }],
         },
-        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый Debt Boss: ${data.title} (HP ${Math.round(remaining)})${addToBalance ? ` · +${total} на баланс` : ''}`),
+        chronicle: pushChronicle(prev.chronicle, 'SYSTEM', `Новый долг-босс: ${data.title} (HP ${Math.round(remaining)})${addToBalance ? ` · +${total} на баланс` : ''}`),
       };
     });
   }
@@ -5863,7 +5865,7 @@ export default function LifeRPG() {
       const { character, bonusCoins } = applyXP(prev.character, 20);
       let chronicle = pushChronicle(prev.chronicle, 'DEBT_PAYMENT', `Удар по «${debt.title}»: -${principal} к HP боса (проценты ${interest}, осталось ${remaining})`);
       if (remaining <= 0 && wasAlive) {
-        chronicle = pushChronicle(chronicle, 'DEBT_DEFEATED', `💀 Debt Boss «${debt.title}» повержен!`);
+        chronicle = pushChronicle(chronicle, 'DEBT_DEFEATED', `💀 Долг-босс «${debt.title}» повержен!`);
       }
       return {
         ...prev, character, ...(bonusCoins > 0 ? applyCoinLedger(prev, 'earn', bonusCoins, 'levelup', 'Level-Up Bonus') : {}), chronicle,
@@ -7085,14 +7087,11 @@ useEffect(() => {
         <div style={{ padding: '12px 14px 88px' }}>
           <CompactStatusRow state={state} energy={energy} xpNeed={xpNeeded(state.character.level)} />
 
-      {!state.hasSeenOnboarding && (
-        <div style={{ marginBottom: 10, background: `linear-gradient(135deg, ${COLORS.violetSoft}, ${COLORS.bgCard})`, border: `1px solid ${COLORS.violet}55`, borderRadius: 10, padding: '12px' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-            <MessageCircle size={16} color={COLORS.violet} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ fontSize: 12, color: COLORS.text, lineHeight: 1.5 }}>
-              Я Master Kaylen. Это твоя жизнь в виде RPG: делай реальные действия, получай XP, расти.
-            </div>
-          </div>
+      {!state.hasSeenOnboarding && (state.playLog || []).length <= 1 && (
+        <div style={{ marginBottom: 10, background: COLORS.bgCard, border: `1px dashed ${COLORS.border}`, borderRadius: 12, padding: '10px 12px', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <MessageCircle size={16} color={COLORS.gold} style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, fontSize: 12.5, color: COLORS.text, lineHeight: 1.45 }}>Я Кайлен. Это твоя жизнь в виде игры: делай реальные дела — получай опыт и расти.</div>
+          <button className="lrpg-btn" onClick={dismissOnboarding} style={{ flexShrink: 0, minHeight: 32, padding: '4px 10px', borderRadius: 8, background: COLORS.text, color: COLORS.bg, fontSize: 12, fontWeight: 700 }}>Понятно</button>
         </div>
       )}
 
@@ -10228,13 +10227,13 @@ function buildMentorTips(state) {
   const aliveDebts = state.finance.debts.filter(d => d.remaining > 0);
   if (aliveDebts.length > 0) {
     const top = sortDebts(aliveDebts, state.finance.strategy)[0];
-    tips.push(`Главный Debt Boss сейчас — «${top.title}» (осталось ${top.remaining}). Стратегия ${state.finance.strategy} — держись её, не распыляйся.`);
+    tips.push(`Главный долг-босс сейчас — «${top.title}» (осталось ${top.remaining}). Стратегия ${state.finance.strategy} — держись её, не распыляйся.`);
   }
   const closeGoals = state.goals.filter(g => g.progress < 100 && g.deadline && (new Date(g.deadline) - Date.now()) / 86400000 < 7 && (new Date(g.deadline) - Date.now()) > 0);
   if (closeGoals.length > 0) tips.push(`Цель «${closeGoals[0].title}» близка к дедлайну — стоит проверить темп сегодня.`);
   const streakHabit = state.habits.find(h => h.streakCurrent >= 3);
   if (streakHabit) tips.push(`Привычка «${streakHabit.title}» держится ${streakHabit.streakCurrent} дней подряд — не разрывай серию ради одного дня.`);
-  if (state.coins > 300) tips.push(`Накопилось ${state.coins} Coins. Загляни в Reward Shop — небольшая награда сейчас поддержит мотивацию.`);
+  if (state.coins > 300) tips.push(`Накопилось ${state.coins} монет. Загляни в лавку — небольшая награда сейчас поддержит мотивацию.`);
   const todayStart = new Date(todayStr() + 'T00:00:00').getTime();
   const todayOrdersSum = state.finance.taxi.orders.filter(o => o.ts >= todayStart).reduce((s, o) => s + (o.net ?? o.amount), 0);
   const target = state.finance.taxi.dailyTarget;
@@ -11316,7 +11315,7 @@ function YouTubeHQ({ youtube, quests, addYouTubeChannel, updateYouTubeStats, del
                     <span className="lrpg-num" style={{ position: 'absolute', left: 4, top: 4, background: i < 3 ? COLORS.gold : 'rgba(30,34,48,.75)', color: '#fbf9f4', fontSize: 10, fontWeight: 800, borderRadius: 4, padding: '1px 5px' }}>#{i + 1}</span>
                   </span>
                   <span style={{ minWidth: 0, flex: 1 }}>
-                    <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: COLORS.text, lineHeight: 1.25, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{v.title || v.video}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text, lineHeight: 1.25, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{v.title || v.video}</span>
                     <span style={{ display: 'block', fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>{v.contentType === 'SHORT' ? 'Shorts' : v.contentType === 'LIVE' ? 'Стрим' : 'Видео'} · {formatDurationSec(v.seconds || v.averageViewDuration)}</span>
                     <span className="lrpg-num" style={{ display: 'block', fontSize: 13, fontWeight: 800, color: COLORS.text }}>{formatMetric(v.views)} просм.</span>
                   </span>
@@ -11628,7 +11627,7 @@ function TelegramDiagnosticsCard() {
   const row = (label, value) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 4 }}>
       <span style={{ color: COLORS.textMuted }}>{label}</span>
-      <span style={{ color: COLORS.text, fontWeight: 600 }}>{String(value)}</span>
+      <span style={{ color: COLORS.text, fontWeight: 600 }}>{value === undefined || value === null || value === '' ? '—' : value === true ? 'да' : value === false ? 'нет' : String(value)}</span>
     </div>
   );
   return (
@@ -11651,6 +11650,7 @@ function TelegramDiagnosticsCard() {
 }
 
 const WHATS_NEW = [
+  { v: '17.3', t: 'Чистка: больше места на экранах (обучающая плашка закрывается), всё на русском, поправлены график и диагностика, игра открывается быстрее' },
   { v: '17.2', t: 'Новая карта мира: парящие острова-стихии растут от скалы до легендарного острова с рунами, мосты между открытыми землями, небо по времени суток' },
   { v: '17.1', t: 'Герой носит своё снаряжение: от деревянного меча до драконьего клинка и парящей короны. В лавке легендарки и мифы — живые сцены, 5 новых рамок и 6 новых аур' },
   { v: '17.0', t: 'Раскрытие как у мифических скинов: свой сценарий и музыка у каждой темы, живые таблички титулов, снаряжение со стихиями и мифическим V уровнем, 6 новых мифов и 10 легендарок' },

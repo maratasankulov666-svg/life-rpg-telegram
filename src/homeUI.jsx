@@ -88,7 +88,7 @@ export function MentorNote({ id = 'kaylen', name, line, onOpen }) {
       <span style={{ width: 36, height: 36, borderRadius: 9, overflow: 'hidden', background: '#efe6d2', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><NpcPortrait id={id} size={34} bg="#efe6d2" /></span>
       <span style={{ minWidth: 0 }}>
         <span className="lrpg-mono" style={{ display: 'block', fontSize: 7.5, color: PAPER.terra }}>{name} пишет</span>
-        <span style={{ display: 'block', fontSize: 12, color: PAPER.ink, lineHeight: 1.25, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{line}</span>
+        <span style={{ fontSize: 12, color: PAPER.ink, lineHeight: 1.25, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{line}</span>
       </span>
     </button>
   );
